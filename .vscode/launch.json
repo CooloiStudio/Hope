@@ -5,8 +5,8 @@
       "name": "Hope Desktop (WPF)",
       "type": "coreclr",
       "request": "launch",
-      "preLaunchTask": "build-all",
-      "program": "${workspaceFolder}/src/win-desktop/bin/Debug/net9.0-windows/hope-desktop.dll",
+      "preLaunchTask": "build-desktop-debug",
+      "projectPath": "${workspaceFolder}/src/win-desktop/Hope.Desktop.csproj",
       "cwd": "${workspaceFolder}/src/win-desktop/bin/Debug/net9.0-windows",
       "console": "internalConsole",
       "stopAtEntry": false
@@ -25,6 +25,7 @@
     {
       "name": "Hope 全栈",
       "configurations": ["Hope Headless (Go)", "Hope Desktop (WPF)"],
+      "preLaunchTask": "build-all",
       "stopAll": true
     }
   ]

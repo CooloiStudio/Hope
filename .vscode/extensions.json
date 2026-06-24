@@ -1,7 +1,9 @@
 {
+  // 在 VS Code 打开本仓库时会提示安装。缺少任一项会导致 launch.json 报「debug type is not recognized」。
   "recommendations": [
-    "ms-dotnettools.csharp",
     "ms-dotnettools.csdevkit",
+    "ms-dotnettools.csharp",
+    "ms-dotnettools.vscode-dotnet-runtime",
     "golang.go"
   ]
 }

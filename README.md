@@ -33,7 +33,14 @@ Hope/
 
 前置：Go 1.26+、.NET 9 SDK（Windows x64）。
 
-**调试：** 推荐用 **官方 VS Code** 打开本仓库并 F5（`.vscode/launch.json`）；Cursor 因 `vsdbg` 授权限制无法直接调试 .NET，可用 Cursor 写代码、VS Code 调试。
+**调试（VS Code）：** 用官方 VS Code 打开本仓库根目录，安装扩展提示后按 F5。
+
+1. 首次打开时，按提示安装 `.vscode/extensions.json` 中的推荐扩展（C# Dev Kit、Go 等）。
+2. 在「运行和调试」中选择配置：
+   - **Hope Desktop (WPF)** — 仅调试桌面端（`coreclr`，需 C# 扩展）
+   - **Hope Headless (Go)** — 仅调试 Go 核心（`go`，需 Go 扩展）
+   - **Hope 全栈** — 同时启动两者（两个扩展都必须安装）
+3. 若报 `The debug type is not recognized`，说明对应扩展未安装或未启用，装好后重启 VS Code。
 
 ```powershell
 # 1. 构建并启动 Headless 核心（调试模式带控制台日志）

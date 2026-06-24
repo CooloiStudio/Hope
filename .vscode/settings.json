@@ -1,0 +1,11 @@
+{
+  // C# / .NET（WPF 桌面端）
+  "dotnet.defaultSolution": "disable",
+  "dotnet.completion.showCompletionItemsFromUnimportedNamespaces": true,
+
+  // Go（Headless 核心）
+  "go.toolsManagement.autoUpdate": true,
+  "go.useLanguageServer": true,
+  "go.buildOnSave": "package",
+  "go.lintOnSave": "package"
+}
