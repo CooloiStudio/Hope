@@ -5,6 +5,7 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
 using Hope.Desktop.Ipc;
+using ComboBox = System.Windows.Controls.ComboBox;
 using Color = System.Windows.Media.Color;
 using Brush = System.Windows.Media.Brush;
 using Brushes = System.Windows.Media.Brushes;
