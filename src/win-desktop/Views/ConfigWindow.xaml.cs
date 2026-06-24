@@ -15,14 +15,16 @@ using Brush = System.Windows.Media.Brush;
 using Brushes = System.Windows.Media.Brushes;
 using SolidColorBrush = System.Windows.Media.SolidColorBrush;
 using ColorConverter = System.Windows.Media.ColorConverter;
+using WpfBackdrop = Wpf.Ui.Controls.WindowBackdropType;
 
 namespace Hope.Desktop.Views;
 
 /// <summary>任务配置窗口：多任务 CRUD，通过 IPC 同步至 Headless（文档 §5.3）。</summary>
-public partial class ConfigWindow : Window
+public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
 {
     private const double MinFitWindowHeight = 400;
     private const double EditPanelMeasureWidth = 348;
+    private const double FluentTitleBarFallbackHeight = 48;
 
     private readonly IpcClient _ipc;
     private readonly ObservableCollection<TaskRow> _rows = new();
@@ -42,10 +44,6 @@ public partial class ConfigWindow : Window
         DesktopLog.Info("ConfigWindow ctor: after InitializeComponent");
 
         AppIconHelper.ApplyWindowIcon(this);
-
-        // 跟随系统亮/暗主题；Backdrop=None 避免 FluentWindow Mica 在 Show 时卡死 UI。
-        Wpf.Ui.Appearance.SystemThemeWatcher.Watch(
-            this, Wpf.Ui.Controls.WindowBackdropType.None, updateAccents: true);
 
         _ipc = ipc;
         TaskGrid.ItemsSource = _rows;
@@ -90,10 +88,31 @@ public partial class ConfigWindow : Window
             ScheduleFitHeightToTaskEditor();
         };
 
-        ContentRendered += (_, _) =>
-            DesktopLog.Info($"ConfigWindow ContentRendered IsVisible={IsVisible} ActualSize={ActualWidth}x{ActualHeight}");
+        ContentRendered += (_, _) => EnsureFluentBackdrop();
         OnNew(this, new RoutedEventArgs());
         DesktopLog.Info("ConfigWindow ctor: done");
+    }
+
+    /// <summary>应用 Mica/Acrylic 并跟随系统主题；首帧与再次 Show 时均需调用。</summary>
+    public void EnsureFluentBackdrop()
+    {
+        Dispatcher.BeginInvoke(() =>
+        {
+            var backdrop = ResolveBackdrop();
+            WindowBackdropType = backdrop;
+            Wpf.Ui.Appearance.SystemThemeWatcher.UnWatch(this);
+            Wpf.Ui.Appearance.SystemThemeWatcher.Watch(this, backdrop, updateAccents: true);
+            DesktopLog.Info($"ConfigWindow backdrop ensured={backdrop} IsVisible={IsVisible}");
+        }, DispatcherPriority.ApplicationIdle);
+    }
+
+    private static WpfBackdrop ResolveBackdrop()
+    {
+        if (Wpf.Ui.Controls.WindowBackdrop.IsSupported(WpfBackdrop.Mica))
+            return WpfBackdrop.Mica;
+        if (Wpf.Ui.Controls.WindowBackdrop.IsSupported(WpfBackdrop.Acrylic))
+            return WpfBackdrop.Acrylic;
+        return WpfBackdrop.None;
     }
 
     /// <summary>从 Headless 拉取任务列表与全局设置（在窗口已显示后调用）。</summary>
@@ -176,12 +195,12 @@ public partial class ConfigWindow : Window
         double panelMarginV = TaskEditPanel.Margin.Top + TaskEditPanel.Margin.Bottom;
         double gridMarginV = RootGrid.Margin.Top + RootGrid.Margin.Bottom;
         double leftMinH = 32 + 8 + 32 + 80; // 列表头 + 删除按钮 + 最小表格区
+        double titleBarH = AppTitleBar?.ActualHeight > 0
+            ? AppTitleBar.ActualHeight
+            : FluentTitleBarFallbackHeight;
 
-        double clientH = Math.Max(editContentH + tabHeaderH + panelMarginV, leftMinH) + gridMarginV;
-        // 标题栏 + 可调整边框（避免依赖已废弃的 SystemParameters 边框属性）
-        double nonClientH = SystemParameters.WindowCaptionHeight + 12;
-
-        Height = Math.Max(MinFitWindowHeight, clientH + nonClientH);
+        double clientH = Math.Max(editContentH + tabHeaderH + panelMarginV, leftMinH) + gridMarginV + titleBarH;
+        Height = Math.Max(MinFitWindowHeight, clientH);
     }
 
     private void ScheduleFitHeightToTaskEditor()
@@ -601,6 +620,7 @@ public partial class ConfigWindow : Window
     {
         DesktopLog.Info("ConfigWindow OnClosing: hide to tray");
         _previewTimer.Stop();
+        Wpf.Ui.Appearance.SystemThemeWatcher.UnWatch(this);
         // 关闭窗口仅隐藏到托盘，不退出进程（文档 §5.3）。
         e.Cancel = true;
         Hide();

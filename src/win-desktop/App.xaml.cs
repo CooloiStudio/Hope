@@ -220,11 +220,17 @@ public partial class App : Application
                 DesktopLog.Info("ShowConfigCore: window already visible, skip Show()");
             }
 
-            _config.WindowState = WindowState.Normal;
-            _config.Activate();
-            _config.RequestRefresh();
-            _config.FitHeightToTaskEditor();
-            DesktopLog.Info($"ShowConfigCore: done IsVisible={_config.IsVisible} IsActive={_config.IsActive}");
+            // Show 返回后再激活/拉数据，避免与 FluentWindow 首帧布局争用 UI 线程。
+            Dispatcher.BeginInvoke(() =>
+            {
+                if (_config == null) return;
+                _config.WindowState = WindowState.Normal;
+                _config.Activate();
+                _config.EnsureFluentBackdrop();
+                _config.RequestRefresh();
+                _config.FitHeightToTaskEditor();
+                DesktopLog.Info($"ShowConfigCore: done IsVisible={_config.IsVisible} IsActive={_config.IsActive}");
+            }, System.Windows.Threading.DispatcherPriority.ApplicationIdle);
         }
         catch (Exception ex)
         {
