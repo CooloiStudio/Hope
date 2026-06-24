@@ -19,6 +19,7 @@
 
 ```
 Hope/
+├── Hope.sln                        # VS Code / C# Dev Kit 解决方案（调试必需）
 ├── src/
 │   ├── headless/      # Go 核心（config / task / ipc / engine）
 │   ├── win-desktop/   # WPF 桌面端（Overlay / Tray / Config / Ipc）
@@ -31,7 +32,7 @@ Hope/
 
 ## 本地开发
 
-前置：Go 1.26+、.NET 9 SDK（Windows x64）。
+前置：Go 1.26+、.NET 10 SDK（Windows x64）。
 
 **调试（VS Code）：** 用官方 VS Code 打开本仓库根目录，安装扩展提示后按 F5。
 
@@ -40,7 +41,12 @@ Hope/
    - **Hope Desktop (WPF)** — 仅调试桌面端（`coreclr`，需 C# 扩展）
    - **Hope Headless (Go)** — 仅调试 Go 核心（`go`，需 Go 扩展）
    - **Hope 全栈** — 同时启动两者（两个扩展都必须安装）
-3. 若报 `The debug type is not recognized`，说明对应扩展未安装或未启用，装好后重启 VS Code。
+3. 若报 `The debug type is not recognized` 或 `coreclr is not supported`：
+   - 确认扩展已安装并**启用**：**C# Dev Kit** + **C#** + **.NET Install Tool**（商店里没有叫 “coreclr” 的插件，`coreclr` 由 C# 扩展提供）
+   - 仓库根目录需有 `Hope.sln`（已提供）；`.vscode/settings.json` 中 `dotnet.defaultSolution` 应指向它
+   - `Ctrl+Shift+P` → **Developer: Reload Window** 重载窗口
+   - 查看 **输出** 面板 → 选择 **C#**，看扩展是否激活失败
+   - 若仍失败：扩展页将 **.NET Install Tool** 升级到最新版（≥2.3.3）后重启 VS Code
 
 ```powershell
 # 1. 构建并启动 Headless 核心（调试模式带控制台日志）

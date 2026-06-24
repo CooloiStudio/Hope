@@ -100,6 +100,12 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
             start = s;
         }
 
+        if (!_ipc.IsConnected)
+        {
+            StatusText.Text = "未连接到核心进程（hope-headless），无法保存；请确认核心已启动";
+            return;
+        }
+
         var gif = GifBox.Text.Trim();
         var dto = new TaskDto
         {

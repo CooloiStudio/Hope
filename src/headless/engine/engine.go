@@ -61,10 +61,6 @@ func (e *Engine) ComputeState() ipc.State {
 		st.State = "running"
 		st.Visible = !hidden
 	}
-	if layout.HasActive {
-		st.TimelineStart = layout.TimelineStart.Format(time.RFC3339)
-		st.TimelineEnd = layout.TimelineEnd.Format(time.RFC3339)
-	}
 	return st
 }
 

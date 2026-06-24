@@ -256,63 +256,61 @@ go build -ldflags="-s -w -H=windowsgui" -o hope-headless.exe .
   "version": 1,
   "visible": true,
   "state": "running",
-  "timelineStart": "2026-06-23T08:00:00+08:00",
-  "timelineEnd": "2026-06-23T18:00:00+08:00",
   "segments": [
     {
-      "taskId": "uuid-1",
-      "name": "晨会",
+      "taskId": "uuid-a",
+      "name": "任务A",
       "color": "#E53935",
-      "gif": "C:\\Users\\me\\AppData\\Roaming\\Hope\\gifs\\cat.gif",
       "barStart": 0.0,
       "barEnd": 30.0,
       "percent": 30.0,
-      "fillEnd": 9.0
+      "fillEnd": 30.0
     },
     {
-      "taskId": "uuid-2",
-      "name": "写文档",
+      "taskId": "uuid-b",
+      "name": "任务B",
       "color": "#43A047",
       "barStart": 30.0,
       "barEnd": 60.0,
       "percent": 60.0,
-      "fillEnd": 48.0
+      "fillEnd": 60.0
     },
     {
-      "taskId": "uuid-3",
-      "name": "复盘",
+      "taskId": "uuid-c",
+      "name": "任务C",
       "color": "#FDD835",
+      "gif": "C:\\Users\\me\\AppData\\Roaming\\Hope\\gifs\\cat.gif",
       "barStart": 60.0,
-      "barEnd": 100.0,
+      "barEnd": 90.0,
       "percent": 90.0,
-      "fillEnd": 96.0
+      "fillEnd": 90.0
     }
   ]
 }
 ```
+
+> 上例对应 a=30%、b=60%、c=90%：色段 `[0,30]`、`[30,60]`、`[60,90]`，`[90,100]` 无色段（透明）。布局规则见 §7.2「进度条分段模型 v2」。
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
 | `version` | int | 协议版本 |
 | `visible` | bool | 是否显示顶栏（无任务时为 `false`） |
 | `state` | string | `idle` / `running` / `paused` / `expired`；`paused` 时 `visible=false`，但 `segments` 仍按墙钟更新 |
-| `timelineStart` | string (RFC3339) | 所有的任务中最早有效开始时刻 |
-| `timelineEnd` | string (RFC3339) | 所有任务中最晚截止时刻 |
-| `segments[]` | array | 按时间顺序拼接的色段，**同一物理顶栏** |
+| `segments[]` | array | 按 percent 升序拼接的色段，**同一物理顶栏**；详见 §7.2 v2 |
 | `segments[].color` | string | 用户为任务指定的颜色（`#RRGGBB`） |
-| `segments[].gif` | string | 可选；任务的本地**图片/动图**路径（任意图片格式），挂在进度条**下方**、跟随该段 `fillEnd` 移动；动图循环播放 |
-| `segments[].barStart` / `barEnd` | float | 该任务在整条顶栏上的占比区间（0–100） |
-| `segments[].percent` | float | 该任务自身进度 0–100 |
-| `segments[].fillEnd` | float | 该色段在顶栏上的实际填充右边界（`barStart + (barEnd-barStart)*percent/100`） |
+| `segments[].gif` | string | 可选；任务的本地**图片/动图**路径，挂在进度条**下方**、跟随该段右边界（`fillEnd` = 其 `percent`）移动；动图循环播放 |
+| `segments[].barStart` | float | 该色段左边界 = 前一任务 percent（首段为 0），0–100 |
+| `segments[].barEnd` | float | 该色段右边界 = 本任务 percent，0–100 |
+| `segments[].percent` | float | 该任务自身进度 0–100（= `barEnd`） |
+| `segments[].fillEnd` | float | = `barEnd`（整段满涂）；保留字段供 Overlay 绘制与 GIF 定位 |
 
-**分段布局规则（已确定）：**
+**分段布局规则（v2，已确定，详见 §7.2）：**
 
 1. 仅包含 **未过期** 的任务；全局 `state=paused` 时仍按墙钟计算 `percent`，但不向 Overlay 绘制（`visible=false`）。
-2. `timelineStart` = 所有纳入任务的有效 `startAt` 之最小值；`timelineEnd` = 所有 `endAt` 之最大值。
-3. 每任务占 `[barStart, barEnd]`，宽度 ∝ `(endAt - startAt) / (timelineEnd - timelineStart)`。
-4. 段内填充：自 `barStart` 向右填充至 `fillEnd`，颜色为任务色；段间无间隙，多色拼接。
-5. **未完成部分不绘制任何底色**：超过 `fillEnd` 的区域完全透明、不可点击、悬停不交互（只有已填充的彩色部分才响应悬停）。
-6. 视觉示例：`[==红 30%==][====绿 60%====][======黄 90%======]`（数字为各任务自身 percent）。
+2. 取各活跃任务 `percent` **升序** p₁≤…≤pₙ；第 i 段占 `[p_{i-1}, p_i]`（p₀=0），满涂任务 i 颜色。
+3. 段间首尾相接、无空隙；`percent` 相同的零宽段直接跳过。
+4. **最大 percent pₙ 之后的 `[pₙ,100]` 完全透明**：不绘制任何底色、不可点击、悬停不交互。
+5. 视觉示例（a=30/b=60/c=90）：`[==a 0–30==][==b 30–60==][==c 60–90==][  透明 90–100  ]`。
 
 **单任务 percent（已确定）：**
 
@@ -411,7 +409,7 @@ go build -ldflags="-s -w -H=windowsgui" -o hope-headless.exe .
 
 **采用方案 B 的设计决策**
 
-- [ ] 依赖：`WPF-UI` 4.2.0（NuGet，MIT 许可，兼容 net9.0-windows）。
+- [ ] 依赖：`WPF-UI` 4.2.0（NuGet，MIT 许可，兼容 net10.0-windows）。
 - [ ] `App.xaml` 合并 `ui:ThemesDictionary` + `ui:ControlsDictionary`，基础控件（Button/TextBox/ComboBox/DatePicker/DataGrid 等）自动获得 Fluent 样式。
 - [ ] 配置窗体改用 `ui:FluentWindow` + `ui:TitleBar`，启用 **Mica 背景** 与圆角；主操作按钮用强调色（`Appearance="Primary"`）。
 - [ ] **亮 / 暗自动跟随系统**：启动时 `ApplicationThemeManager.ApplySystemTheme()`；窗口 `SystemThemeWatcher.Watch(this)` 实时跟随系统主题切换。
@@ -570,12 +568,63 @@ Hope/
 
 ### 7.2 任务与进度条语义（已确定）
 
-**多任务 + 单色段拼接（已确定）：**
+**多任务 + 单色段拼接（旧模型，将被 v2 取代）：**
 
 - 支持多个任务同时进行；**物理上仅一根顶栏**
 - 每个任务必须指定 **独立颜色**（`#RRGGBB`）
 - 各任务按时间跨度映射到顶栏上的 **[barStart, barEnd]** 区间，段内按该任务 `percent` 填充；多色从左到右拼接
 - 布局与 IPC 字段见 §5.2
+
+> ⚠️ 旧模型把每个任务按 **时长占比** 分配一个固定槽位、在槽位内填充，导致槽位内出现「已填充 + 未填充」的空隙，多任务时观感为「色块—空隙—色块—空隙」。用户反馈此逻辑不符合预期，见下方 v2。
+
+#### 进度条分段模型 v2（✅ 已确认 2026-06-24，取代上文与 §5.2 旧布局）
+
+> 来源：用户 2026-06-24 反馈。两条核心诉求：**(1) 未填充部分必须完全透明，不得出现任何背景色；(2) 进度条按各任务进度值（percent）依次分段着色。**
+
+**需求 1 — 未完成部分透明、无背景色**
+
+- 顶栏只绘制「已着色的进度部分」，其余一律 **完全透明**（不画任何底色 / 背景色 / 占位色）。
+- 透明区域不可点击、悬停无交互。
+
+**需求 2 — 按 percent 排序的连续分段（嵌套式进度）**
+
+- 取当前所有活跃任务的 `percent`，**按 percent 升序排序**，记为 p₁ ≤ p₂ ≤ … ≤ pₙ（对应任务 t₁…tₙ）。
+- 顶栏从左到右划分为连续色段，**第 i 段占据 [p_{i-1}, p_i]**（p₀ = 0），填充 tᵢ 的颜色。
+- **最大进度 pₙ 之后的 [pₙ, 100] 区间为透明**。
+- 各色段 **首尾相接、无空隙**；位置坐标直接采用 percent 值（0–100 映射到顶栏全宽）。
+
+**示例（三任务 a=30%、b=60%、c=90%）：**
+
+```
+位置:  0% ──── 30% ──── 60% ──── 90% ──── 100%
+颜色: [  a 色  ][  b 色  ][  c 色  ][  透明  ]
+悬停:    任务a     任务b     任务c     无交互
+```
+
+- `0%–30%` → a 的颜色，悬停显示任务 a
+- `30%–60%` → b 的颜色，悬停显示任务 b
+- `60%–90%` → c 的颜色，悬停显示任务 c
+- `90%–100%` → 透明，悬停无交互
+
+**悬停规则（推导）：** 光标位于横向位置 x（0–100）时，命中「percent ≥ x 的任务中 percent 最小者」；若没有任务 percent ≥ x（即 x > pₙ），则无交互。
+
+**已确认决策（2026-06-24）：**
+
+1. ✅ v2 **取代** 原「时长占比槽位」模型；§5.2 的 `barStart/barEnd/fillEnd` 语义随之改为「进度刻度」。
+2. ✅ 排序键 = **percent 升序**；两任务 percent 相同导致 **零宽色段时直接不绘制**（次序无关紧要）。
+3. ✅ 顶栏总宽代表 0–100% 进度刻度，**不再代表时间轴**；广播 **移除** `timelineStart/timelineEnd` 字段。
+4. ✅ 跟随图片（GIF）挂在 **该任务色段右边界（= 其 percent 位置）**。
+5. 影响范围：`task.BuildLayout`（Go）、IPC `segments`/`State` 字段、Overlay `Render` 与悬停命中（C#）、相关单测重写。
+
+**IPC `segments[]` 字段在 v2 下的含义：**
+
+| 字段 | v2 含义 |
+|------|---------|
+| `barStart` | 该色段左边界 = 前一任务的 percent（首段为 0） |
+| `barEnd` | 该色段右边界 = 本任务 percent |
+| `fillEnd` | = `barEnd`（整段满涂；保留字段以兼容 Overlay 绘制与 GIF 定位） |
+| `percent` | 本任务自身 percent（= `barEnd`） |
+| `color` / `name` / `gif` / `taskId` | 同前 |
 
 **跟随图片 / 动图（已确定）：** ✅
 

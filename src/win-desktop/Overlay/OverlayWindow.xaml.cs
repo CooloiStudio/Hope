@@ -72,11 +72,12 @@ public partial class OverlayWindow : Window
     /// <summary>根据广播状态更新顶栏：尺寸、位置与分段填充。</summary>
     public void UpdateState(StateMessage msg, int barHeightPx)
     {
-        _segments = msg.Segments;
+        // Headless 在无活跃任务时广播 "segments": null（Go nil 切片），需规整为空集合，避免空引用。
+        _segments = msg.Segments ?? new List<Segment>();
         _barHeightPx = Math.Clamp(barHeightPx, 1, 10);
 
-        bool show = msg.Visible && msg.Segments.Count > 0;
-        bool hasImage = show && msg.Segments.Any(s => ImageSprite.IsUsable(s.Gif));
+        bool show = msg.Visible && _segments.Count > 0;
+        bool hasImage = show && _segments.Any(s => ImageSprite.IsUsable(s.Gif));
 
         // 进度条本身恒为 barHeightPx；带图片时窗口向下扩展出图片区，但进度条粗细不变。
         Width = SystemParameters.PrimaryScreenWidth;

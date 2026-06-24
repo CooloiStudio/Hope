@@ -22,6 +22,12 @@ public sealed class IpcClient : IDisposable
     private StreamWriter? _writer;
     private readonly object _writeLock = new();
 
+    /// <summary>是否已连接到 Headless 管道。</summary>
+    public bool IsConnected
+    {
+        get { lock (_writeLock) { return _writer != null; } }
+    }
+
     /// <summary>收到状态广播时触发（在后台线程，订阅方需自行切回 UI 线程）。</summary>
     public event Action<StateMessage>? StateReceived;
 

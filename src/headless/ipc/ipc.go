@@ -19,13 +19,11 @@ const PipeName = `\\.\pipe\Hope\progress`
 
 // State 为服务端 → 客户端的广播结构。
 type State struct {
-	Version       int            `json:"version"`
-	Visible       bool           `json:"visible"`
-	State         string         `json:"state"` // idle / running / paused / expired
-	TimelineStart string         `json:"timelineStart,omitempty"`
-	TimelineEnd   string         `json:"timelineEnd,omitempty"`
-	Segments      []task.Segment `json:"segments"`
-	Expired       []ExpiredEvent `json:"expired,omitempty"`
+	Version  int            `json:"version"`
+	Visible  bool           `json:"visible"`
+	State    string         `json:"state"` // idle / running / paused / expired
+	Segments []task.Segment `json:"segments"`
+	Expired  []ExpiredEvent `json:"expired,omitempty"`
 }
 
 // ExpiredEvent 在任务到达截止时刻时随广播一次性下发，供 Desktop 执行 expiredBehavior。

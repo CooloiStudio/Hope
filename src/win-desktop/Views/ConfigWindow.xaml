@@ -2,7 +2,8 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
-        Title="Hope · 盼头" Height="560" Width="740"
+        Title="Hope · 盼头" Height="640" Width="760"
+        MinHeight="560" MinWidth="680"
         WindowStartupLocation="CenterScreen"
         ExtendsContentIntoTitleBar="True"
         WindowBackdropType="Mica"
@@ -23,7 +24,7 @@
         <Grid Grid.Row="1" Margin="16,8,16,16">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*" />
-                <ColumnDefinition Width="300" />
+                <ColumnDefinition Width="320" />
             </Grid.ColumnDefinitions>
 
             <!-- 任务列表 -->
@@ -33,80 +34,85 @@
                            HorizontalAlignment="Stretch" Height="32" Margin="0,8,0,0" Click="OnDelete" />
                 <DataGrid x:Name="TaskGrid" AutoGenerateColumns="False" IsReadOnly="True"
                           SelectionMode="Single" HeadersVisibility="Column"
-                          SelectionChanged="OnSelectTask" GridLinesVisibility="Horizontal"
-                          Background="Transparent">
+                          SelectionChanged="OnSelectTask" GridLinesVisibility="Horizontal">
                     <DataGrid.Columns>
-                        <DataGridTemplateColumn Header="色" Width="36">
+                        <DataGridTemplateColumn Header="颜色" Width="56" MinWidth="56">
                             <DataGridTemplateColumn.CellTemplate>
                                 <DataTemplate>
                                     <Border Width="16" Height="16" CornerRadius="3"
+                                            HorizontalAlignment="Center"
                                             Background="{Binding ColorBrush}" />
                                 </DataTemplate>
                             </DataGridTemplateColumn.CellTemplate>
                         </DataGridTemplateColumn>
                         <DataGridTextColumn Header="名称" Binding="{Binding Name}" Width="*" />
                         <DataGridTextColumn Header="类型" Binding="{Binding TypeLabel}" Width="60" />
-                        <DataGridTextColumn Header="截止" Binding="{Binding EndLabel}" Width="130" />
+                        <DataGridTextColumn Header="截止" Binding="{Binding EndLabel}" Width="120" />
                     </DataGrid.Columns>
                 </DataGrid>
             </DockPanel>
 
-            <!-- 编辑面板 -->
-            <StackPanel Grid.Column="1">
-                <TextBlock Text="编辑 / 新建" FontWeight="Bold" Margin="0,0,0,6" />
+            <!-- 编辑面板（可滚动，保证底部按钮始终可见） -->
+            <ScrollViewer Grid.Column="1" VerticalScrollBarVisibility="Auto"
+                          HorizontalScrollBarVisibility="Disabled" Padding="0,0,4,0">
+                <StackPanel>
+                    <TextBlock Text="编辑 / 新建" FontWeight="Bold" Margin="0,0,0,6" />
 
-                <TextBlock Text="名称" Margin="0,6,0,2" />
-                <ui:TextBox x:Name="NameBox" PlaceholderText="任务名称" />
+                    <TextBlock Text="名称" Margin="0,6,0,2" />
+                    <ui:TextBox x:Name="NameBox" PlaceholderText="任务名称" />
 
-                <TextBlock Text="颜色 (#RRGGBB)" Margin="0,8,0,2" />
-                <DockPanel>
-                    <Border x:Name="ColorPreview" DockPanel.Dock="Right" Width="28" Height="28"
-                            CornerRadius="4" Margin="6,0,0,0" Background="#FF6B35"
-                            Cursor="Hand" MouseLeftButtonUp="OnPickColor"
-                            ToolTip="点击打开系统取色盘选择颜色" />
-                    <ui:TextBox x:Name="ColorBox" Text="#FF6B35" TextChanged="OnColorChanged" />
-                </DockPanel>
+                    <TextBlock Text="颜色 (#RRGGBB)" Margin="0,8,0,2" />
+                    <DockPanel>
+                        <Border x:Name="ColorPreview" DockPanel.Dock="Right" Width="28" Height="28"
+                                CornerRadius="4" Margin="6,0,0,0" Background="#FF6B35"
+                                Cursor="Hand" MouseLeftButtonUp="OnPickColor"
+                                ToolTip="点击打开系统取色盘选择颜色" />
+                        <ui:TextBox x:Name="ColorBox" Text="#FF6B35" TextChanged="OnColorChanged" />
+                    </DockPanel>
 
-                <TextBlock Text="跟随图片 / 动图（可选）" Margin="0,8,0,2" />
-                <DockPanel>
-                    <ui:Button DockPanel.Dock="Right" Content="清除" Width="48" Margin="6,0,0,0" Click="OnClearGif" />
-                    <ui:Button DockPanel.Dock="Right" Content="选择…" Width="60" Margin="6,0,0,0" Click="OnBrowseGif" />
-                    <ui:TextBox x:Name="GifBox" IsReadOnly="True"
-                                ToolTip="支持任意图片格式；图片挂在进度条下方，跟随该任务进度前沿移动，动图循环播放（超过 15px 自动缩放）" />
-                </DockPanel>
+                    <TextBlock Text="跟随图片 / 动图（可选）" Margin="0,8,0,2" />
+                    <DockPanel>
+                        <ui:Button DockPanel.Dock="Right" Content="清除" Width="48" Margin="6,0,0,0" Click="OnClearGif" />
+                        <ui:Button DockPanel.Dock="Right" Content="选择…" Width="60" Margin="6,0,0,0" Click="OnBrowseGif" />
+                        <ui:TextBox x:Name="GifBox" IsReadOnly="True"
+                                    ToolTip="支持任意图片格式；图片挂在进度条下方，跟随该任务进度前沿移动，动图循环播放（超过 15px 自动缩放）" />
+                    </DockPanel>
 
-                <TextBlock Text="类型" Margin="0,8,0,2" />
-                <ComboBox x:Name="TypeBox" SelectionChanged="OnTypeChanged" HorizontalAlignment="Stretch">
-                    <ComboBoxItem Content="定时任务（含开始时间）" Tag="scheduled" IsSelected="True" />
-                    <ComboBoxItem Content="即时任务（仅截止时间）" Tag="instant" />
-                </ComboBox>
+                    <TextBlock Text="类型" Margin="0,8,0,2" />
+                    <ComboBox x:Name="TypeBox" SelectionChanged="OnTypeChanged" HorizontalAlignment="Stretch">
+                        <ComboBoxItem Content="定时任务（含开始时间）" Tag="scheduled" IsSelected="True" />
+                        <ComboBoxItem Content="即时任务（仅截止时间）" Tag="instant" />
+                    </ComboBox>
 
-                <StackPanel x:Name="StartPanel">
-                    <TextBlock Text="开始时间" Margin="0,8,0,2" />
-                    <StackPanel Orientation="Horizontal">
-                        <DatePicker x:Name="StartDatePicker" Width="138" />
-                        <ComboBox x:Name="StartHourBox" Width="56" Margin="6,0,0,0" />
-                        <TextBlock Text=":" VerticalAlignment="Center" Margin="3,0,3,0" />
-                        <ComboBox x:Name="StartMinuteBox" Width="56" />
+                    <StackPanel x:Name="StartPanel">
+                        <TextBlock Text="开始日期" Margin="0,8,0,2" />
+                        <DatePicker x:Name="StartDatePicker" HorizontalAlignment="Stretch" />
+                        <TextBlock Text="开始时间（时 : 分）" Margin="0,6,0,2" />
+                        <StackPanel Orientation="Horizontal">
+                            <ComboBox x:Name="StartHourBox" Width="78" />
+                            <TextBlock Text=":" VerticalAlignment="Center" Margin="6,0,6,0" FontWeight="Bold" />
+                            <ComboBox x:Name="StartMinuteBox" Width="78" />
+                        </StackPanel>
                     </StackPanel>
+
+                    <TextBlock Text="截止日期" Margin="0,8,0,2" />
+                    <DatePicker x:Name="EndDatePicker" HorizontalAlignment="Stretch" />
+                    <TextBlock Text="截止时间（时 : 分）" Margin="0,6,0,2" />
+                    <StackPanel Orientation="Horizontal">
+                        <ComboBox x:Name="EndHourBox" Width="78" />
+                        <TextBlock Text=":" VerticalAlignment="Center" Margin="6,0,6,0" FontWeight="Bold" />
+                        <ComboBox x:Name="EndMinuteBox" Width="78" />
+                    </StackPanel>
+
+                    <ui:Button x:Name="SaveButton" Content="保存任务" Appearance="Primary"
+                               HorizontalAlignment="Stretch" Height="34" Margin="0,14,0,0" Click="OnSave" />
+                    <ui:Button x:Name="NewButton" Content="清空（新建）"
+                               HorizontalAlignment="Stretch" Height="30" Margin="0,6,0,0" Click="OnNew" />
+
+                    <TextBlock x:Name="StatusText" Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                               Margin="0,10,0,4" TextWrapping="Wrap" />
                 </StackPanel>
-
-                <TextBlock Text="截止时间" Margin="0,8,0,2" />
-                <StackPanel Orientation="Horizontal">
-                    <DatePicker x:Name="EndDatePicker" Width="138" />
-                    <ComboBox x:Name="EndHourBox" Width="56" Margin="6,0,0,0" />
-                    <TextBlock Text=":" VerticalAlignment="Center" Margin="3,0,3,0" />
-                    <ComboBox x:Name="EndMinuteBox" Width="56" />
-                </StackPanel>
-
-                <ui:Button x:Name="SaveButton" Content="保存任务" Appearance="Primary"
-                           HorizontalAlignment="Stretch" Height="34" Margin="0,14,0,0" Click="OnSave" />
-                <ui:Button x:Name="NewButton" Content="清空（新建）"
-                           HorizontalAlignment="Stretch" Height="30" Margin="0,6,0,0" Click="OnNew" />
-
-                <TextBlock x:Name="StatusText" Foreground="{DynamicResource TextFillColorSecondaryBrush}"
-                           Margin="0,10,0,0" TextWrapping="Wrap" />
-            </StackPanel>
+            </ScrollViewer>
         </Grid>
     </Grid>
 </ui:FluentWindow>

@@ -8,8 +8,6 @@ public sealed class StateMessage
     [JsonPropertyName("version")] public int Version { get; set; }
     [JsonPropertyName("visible")] public bool Visible { get; set; }
     [JsonPropertyName("state")] public string State { get; set; } = "idle";
-    [JsonPropertyName("timelineStart")] public string? TimelineStart { get; set; }
-    [JsonPropertyName("timelineEnd")] public string? TimelineEnd { get; set; }
     [JsonPropertyName("segments")] public List<Segment> Segments { get; set; } = new();
     [JsonPropertyName("expired")] public List<ExpiredEvent>? Expired { get; set; }
 }

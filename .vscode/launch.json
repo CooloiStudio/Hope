@@ -5,9 +5,9 @@
       "name": "Hope Desktop (WPF)",
       "type": "coreclr",
       "request": "launch",
-      "preLaunchTask": "build-desktop-debug",
-      "projectPath": "${workspaceFolder}/src/win-desktop/Hope.Desktop.csproj",
-      "cwd": "${workspaceFolder}/src/win-desktop/bin/Debug/net9.0-windows",
+      "preLaunchTask": "build-all",
+      "program": "${workspaceFolder}/src/win-desktop/bin/Debug/net10.0-windows/hope-desktop.dll",
+      "cwd": "${workspaceFolder}/src/win-desktop/bin/Debug/net10.0-windows",
       "console": "internalConsole",
       "stopAtEntry": false
     },

@@ -75,27 +75,30 @@ type Segment struct {
 
 // Layout 为顶栏的整体布局结果。
 type Layout struct {
-	Segments      []Segment
-	TimelineStart time.Time
-	TimelineEnd   time.Time
-	HasActive     bool // 是否存在未过期任务
-	HadAny        bool // 是否存在任意任务（用于区分 idle / expired）
+	Segments  []Segment
+	HasActive bool // 是否存在未过期任务
+	HadAny    bool // 是否存在任意任务（用于区分 idle / expired）
 }
 
-// BuildLayout 依据未过期任务构建顶栏分段。
+// BuildLayout 依据未过期任务构建顶栏分段（模型 v2，文档 §7.2）。
 //
-// 规则（文档 §5.2）：
-//   - 仅纳入未过期任务；按有效开始时间排序后从左到右拼接。
-//   - 段宽按各任务时长占比分配；为保证顶栏连续无间隙，按时长归一化至 [0,100]。
-//   - 段内自 barStart 向右填充至 fillEnd = barStart + width*percent/100。
+// 规则：
+//   - 仅纳入未过期任务；按各任务 percent 升序排列。
+//   - 顶栏代表 0–100% 进度刻度：第 i 段占据 [p_{i-1}, p_i]（p_0=0），满涂任务 i 的颜色。
+//   - 最大 percent 之后的区间保持透明（不生成色段）。
+//   - percent 相同导致的零宽段直接跳过（不绘制）。
 func BuildLayout(tasks []*Task, now time.Time) Layout {
 	var out Layout
 	out.HadAny = len(tasks) > 0
 
-	active := make([]*Task, 0, len(tasks))
+	type taskPct struct {
+		t   *Task
+		pct float64
+	}
+	active := make([]taskPct, 0, len(tasks))
 	for _, t := range tasks {
 		if !t.IsExpired(now) {
-			active = append(active, t)
+			active = append(active, taskPct{t, t.Percent(now)})
 		}
 	}
 	if len(active) == 0 {
@@ -104,54 +107,26 @@ func BuildLayout(tasks []*Task, now time.Time) Layout {
 	out.HasActive = true
 
 	sort.SliceStable(active, func(i, j int) bool {
-		si, sj := active[i].EffectiveStart(), active[j].EffectiveStart()
-		if si.Equal(sj) {
-			return active[i].EndAt.Before(active[j].EndAt)
-		}
-		return si.Before(sj)
+		return active[i].pct < active[j].pct
 	})
 
-	out.TimelineStart = active[0].EffectiveStart()
-	out.TimelineEnd = active[0].EndAt
-	var totalDur float64
-	durs := make([]float64, len(active))
-	for i, t := range active {
-		s := t.EffectiveStart()
-		if s.Before(out.TimelineStart) {
-			out.TimelineStart = s
+	prev := 0.0
+	for _, e := range active {
+		p := e.pct
+		if p <= prev {
+			continue // 零宽（或重复 percent）色段不绘制
 		}
-		if t.EndAt.After(out.TimelineEnd) {
-			out.TimelineEnd = t.EndAt
-		}
-		d := t.EndAt.Sub(s).Seconds()
-		if d <= 0 {
-			d = 1
-		}
-		durs[i] = d
-		totalDur += d
-	}
-
-	cursor := 0.0
-	for i, t := range active {
-		width := durs[i] / totalDur * 100
-		barStart := cursor
-		barEnd := cursor + width
-		if i == len(active)-1 {
-			barEnd = 100 // 末段对齐右边界，消除浮点误差
-		}
-		pct := t.Percent(now)
-		fillEnd := barStart + (barEnd-barStart)*pct/100
 		out.Segments = append(out.Segments, Segment{
-			TaskID:   t.ID,
-			Name:     t.Name,
-			Color:    t.Color,
-			Gif:      t.Gif,
-			BarStart: round1(barStart),
-			BarEnd:   round1(barEnd),
-			Percent:  round1(pct),
-			FillEnd:  round1(fillEnd),
+			TaskID:   e.t.ID,
+			Name:     e.t.Name,
+			Color:    e.t.Color,
+			Gif:      e.t.Gif,
+			BarStart: round1(prev),
+			BarEnd:   round1(p),
+			Percent:  round1(p),
+			FillEnd:  round1(p), // 整段满涂；与 barEnd 一致，供 Overlay 绘制与 GIF 定位
 		})
-		cursor = barEnd
+		prev = p
 	}
 	return out
 }
