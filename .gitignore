@@ -1,0 +1,128 @@
+# =============================================================================
+# Hope — Go 核心 + .NET WPF 桌面端 + Inno Setup 安装包
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Go（src/headless）
+# -----------------------------------------------------------------------------
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+coverage.out
+coverage.html
+*.prof
+
+# 本地 build 任务输出（.vscode/tasks.json）
+/src/headless/hope-headless.exe
+
+# -----------------------------------------------------------------------------
+# .NET / WPF（src/win-desktop）
+# -----------------------------------------------------------------------------
+[Bb]in/
+[Oo]bj/
+[Ll]og/
+[Ll]ogs/
+[Rr]elease/
+[Dd]ebug/
+x64/
+x86/
+[Aa][Rr][Mm]/
+[Aa][Rr][Mm]64/
+bld/
+publish/
+
+*.user
+*.userosscache
+*.suo
+*.cache
+*.ilk
+*.meta
+*.obj
+*.pdb
+*.pgc
+*.pgd
+*.rsp
+*.sbr
+*.tlb
+*.tli
+*.tlh
+*.tmp
+*.tmp_proj
+*.log
+*.vspscc
+*.vssscc
+.builds
+*.pidb
+*.svclog
+*.scc
+
+# NuGet
+*.nupkg
+*.snupkg
+**/[Pp]ackages/*
+!**/[Pp]ackages/build/
+project.lock.json
+project.fragment.lock.json
+artifacts/
+
+# -----------------------------------------------------------------------------
+# 构建与打包产物
+# -----------------------------------------------------------------------------
+/stage/
+/dist/
+Output/
+
+# Inno Setup 编译缓存
+*.iss.bak
+
+# -----------------------------------------------------------------------------
+# IDE / 编辑器
+# -----------------------------------------------------------------------------
+.vs/
+.idea/
+*.sln.iml
+*.swp
+*~
+
+# VS Code：保留团队共享的 launch/tasks/extensions，忽略个人偏好
+.vscode/*
+!.vscode/extensions.json
+!.vscode/launch.json
+!.vscode/tasks.json
+
+# JetBrains Rider
+*.DotSettings.user
+
+# -----------------------------------------------------------------------------
+# 操作系统
+# -----------------------------------------------------------------------------
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+Desktop.ini
+$RECYCLE.BIN/
+*.cab
+*.msi
+*.msix
+*.msm
+*.msp
+
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# -----------------------------------------------------------------------------
+# 本地配置与敏感信息
+# -----------------------------------------------------------------------------
+.env
+.env.*
+!.env.example
+*.local
+secrets/
+credentials.json
