@@ -24,7 +24,8 @@
         "build",
         "${workspaceFolder}/src/win-desktop/Hope.Desktop.csproj",
         "-c",
-        "Debug"
+        "Debug",
+        "/property:PlatformTarget=x64"
       ],
       "group": "build",
       "presentation": {

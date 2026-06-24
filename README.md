@@ -48,6 +48,10 @@ Hope/
    - `Ctrl+Shift+P` → **Developer: Reload Window** 重载窗口
    - 查看 **输出** 面板 → 选择 **C#**，看扩展是否激活失败
    - 若仍失败：扩展页将 **.NET Install Tool** 升级到最新版（≥2.3.3）后重启 VS Code
+4. 若 `ConfigWindow.xaml.cs` 大量 **CS0103**（`InitializeComponent`、`TaskGrid` 等不存在）但 `dotnet build` 能通过：
+   - 确认打开的是**仓库根目录**（含 `Hope.sln`），不要只打开 `src/win-desktop` 子文件夹
+   - `Ctrl+Shift+P` → **Developer: Reload Window**
+   - 终端执行一次 `dotnet build src/win-desktop/Hope.Desktop.csproj -c Debug` 再重载窗口
 
 ```powershell
 # 1. 构建并启动 Headless 核心（调试模式带控制台日志）

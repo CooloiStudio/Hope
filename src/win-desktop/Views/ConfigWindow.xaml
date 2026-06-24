@@ -2,8 +2,8 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
-        Title="Hope · 盼头" Height="1300" Width="1300"
-        MinHeight="1300" MinWidth="1300"
+        Title="Hope · 盼头" Height="846" Width="1000"
+        MinHeight="846" MinWidth="1000"
         WindowStartupLocation="CenterScreen"
         ShowActivated="True"
         Background="{DynamicResource ApplicationBackgroundBrush}"
@@ -85,7 +85,9 @@
                     <ScrollViewer VerticalScrollBarVisibility="Auto"
                                   HorizontalScrollBarVisibility="Disabled" Padding="4,8,8,4">
                         <StackPanel>
-                            <TextBlock Text="编辑 / 新建" FontWeight="Bold" Margin="0,0,0,6" />
+                            <TextBlock x:Name="StatusText" Text="新建任务" FontWeight="Bold"
+                                       Foreground="{DynamicResource TextFillColorPrimaryBrush}"
+                                       Margin="0,0,0,6" TextWrapping="Wrap" />
 
                             <TextBlock Text="名称" Margin="0,6,0,2" />
                             <ui:TextBox x:Name="NameBox" PlaceholderText="任务名称" />
@@ -161,9 +163,6 @@
                                        HorizontalAlignment="Stretch" Height="34" Margin="0,14,0,0" Click="OnSave" />
                             <ui:Button x:Name="NewButton" Content="清空（新建）"
                                        HorizontalAlignment="Stretch" Height="30" Margin="0,6,0,0" Click="OnNew" />
-
-                            <TextBlock x:Name="StatusText" Foreground="{DynamicResource TextFillColorSecondaryBrush}"
-                                       Margin="0,10,0,4" TextWrapping="Wrap" />
                         </StackPanel>
                     </ScrollViewer>
                 </TabItem>

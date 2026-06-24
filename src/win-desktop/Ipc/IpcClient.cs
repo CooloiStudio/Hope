@@ -60,9 +60,10 @@ public sealed class IpcClient : IDisposable
                 DesktopLog.Info("IPC connected to hope-headless pipe");
 
                 using var reader = new StreamReader(pipe);
-                while (!_cts.IsCancellationRequested && !reader.EndOfStream)
+                while (!_cts.IsCancellationRequested)
                 {
                     var line = await reader.ReadLineAsync(_cts.Token).ConfigureAwait(false);
+                    if (line is null) break;
                     if (string.IsNullOrWhiteSpace(line)) continue;
                     Dispatch(line);
                 }

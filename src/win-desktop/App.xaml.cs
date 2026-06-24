@@ -19,7 +19,7 @@ public partial class App : Application
     private IpcClient _ipc = null!;
     private OverlayWindow _overlay = null!;
     private HeadlessSupervisor _supervisor = null!;
-    private NotifyIcon _tray = null!;
+    private NotifyIcon? _tray;
     private ConfigWindow? _config;
 
     private System.Threading.Mutex? _instanceMutex;
@@ -90,7 +90,7 @@ public partial class App : Application
         switch (ev.Behavior)
         {
             case "notify":
-                _tray.ShowBalloonTip(5000, "Hope · 任务到期", $"「{ev.Name}」已到达截止时间", ToolTipIcon.Info);
+                _tray?.ShowBalloonTip(5000, "Hope · 任务到期", $"「{ev.Name}」已到达截止时间", ToolTipIcon.Info);
                 break;
             case "blink":
                 _overlay.Blink();
@@ -244,9 +244,17 @@ public partial class App : Application
         ApplicationThemeManager.Changed -= OnAppThemeChanged;
         SystemEvents.UserPreferenceChanged -= OnUserPreferenceChanged;
 
-        _tray.Icon?.Dispose();
-        _tray.Visible = false;
-        _tray.Dispose();
+        // 须先隐藏托盘再释放 Icon；否则 set_Visible 会访问已 Dispose 的 Icon.Handle。
+        var tray = _tray;
+        _tray = null;
+        if (tray != null)
+        {
+            tray.Visible = false;
+            var trayIcon = tray.Icon;
+            tray.Icon = null;
+            trayIcon?.Dispose();
+            tray.Dispose();
+        }
         _overlay.ForceClose();
         _ipc.Dispose();
         _supervisor.Dispose();

@@ -1,7 +1,8 @@
 {
-  // C# / .NET（WPF 桌面端）：指向解决方案，C# Dev Kit 才能激活并提供 coreclr 调试
+  // 必须从仓库根目录打开（含 Hope.sln），否则 WPF 的 InitializeComponent / x:Name 会报 CS0103 误报
   "dotnet.defaultSolution": "Hope.sln",
   "dotnet.completion.showCompletionItemsFromUnimportedNamespaces": true,
+  "dotnet.automaticallyCreateSolutionInWorkspace": false,
 
   // Go（Headless 核心）
   "go.toolsManagement.autoUpdate": true,
