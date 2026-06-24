@@ -220,10 +220,20 @@ public partial class OverlayWindow : Window
             return;
         }
 
-        HoverText.Text = $"{hit.Name}　{hit.Percent:0.#}%";
+        HoverText.Text = $"{hit.Name}　{FormatCountdown(hit.EndAt)}";
         HoverPopup.HorizontalOffset = dip.X + 8;
         HoverPopup.VerticalOffset = Top + _barHeightPx + 2;
         HoverPopup.IsOpen = true;
+    }
+
+    // 倒计时文案：距 endAt 的剩余时间。≥1 天显示「N 天 HH:mm:ss」，否则「HH:mm:ss」；已过显示「已到期」。
+    private static string FormatCountdown(DateTimeOffset endAt)
+    {
+        var remaining = endAt - DateTimeOffset.Now;
+        if (remaining <= TimeSpan.Zero) return "已到期";
+        return remaining.TotalDays >= 1
+            ? $"{(int)remaining.TotalDays} 天 {remaining.Hours:00}:{remaining.Minutes:00}:{remaining.Seconds:00}"
+            : $"{remaining.Hours:00}:{remaining.Minutes:00}:{remaining.Seconds:00}";
     }
 
     private static Color ParseColor(string hex)

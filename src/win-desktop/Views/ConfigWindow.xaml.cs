@@ -1,9 +1,13 @@
 using System.Collections.ObjectModel;
 using System.ComponentModel;
+using System.IO;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Media.Imaging;
+using System.Windows.Threading;
+using Hope.Desktop;
 using Hope.Desktop.Ipc;
 using ComboBox = System.Windows.Controls.ComboBox;
 using Color = System.Windows.Media.Color;
@@ -15,28 +19,145 @@ using ColorConverter = System.Windows.Media.ColorConverter;
 namespace Hope.Desktop.Views;
 
 /// <summary>任务配置窗口：多任务 CRUD，通过 IPC 同步至 Headless（文档 §5.3）。</summary>
-public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
+public partial class ConfigWindow : Window
 {
     private readonly IpcClient _ipc;
     private readonly ObservableCollection<TaskRow> _rows = new();
     private string? _editingId;
+    private SettingsDto _settings = new();
+    private bool _loadingSettings;
+    private DateTimeOffset _taskCreatedAt = DateTimeOffset.Now;
+    private readonly DispatcherTimer _previewTimer;
+    private readonly System.Windows.Controls.Image _previewImage;
+    private bool _previewReady;
 
     public ConfigWindow(IpcClient ipc)
     {
+        DesktopLog.Info("ConfigWindow ctor: before InitializeComponent");
         InitializeComponent();
+        DesktopLog.Info("ConfigWindow ctor: after InitializeComponent");
 
-        // 跟随系统亮 / 暗主题并应用 Mica 背景（WPF-UI，文档 §5.3.2）。
-        Wpf.Ui.Appearance.SystemThemeWatcher.Watch(this);
+        AppIconHelper.ApplyWindowIcon(this);
+
+        // 跟随系统亮/暗主题；Backdrop=None 避免 FluentWindow Mica 在 Show 时卡死 UI。
+        Wpf.Ui.Appearance.SystemThemeWatcher.Watch(
+            this, Wpf.Ui.Controls.WindowBackdropType.None, updateAccents: true);
 
         _ipc = ipc;
         TaskGrid.ItemsSource = _rows;
         _ipc.TasksReceived += OnTasksReceived;
+        _ipc.SettingsReceived += OnSettingsReceived;
+
+        _previewImage = new System.Windows.Controls.Image { MaxHeight = 15, Stretch = Stretch.Uniform };
+        PreviewImageCanvas.Children.Add(_previewImage);
+        _previewReady = true;
 
         PopulateTimeBoxes(StartHourBox, StartMinuteBox);
         PopulateTimeBoxes(EndHourBox, EndMinuteBox);
+        for (int i = 1; i <= 10; i++)
+        {
+            RefreshBox.Items.Add(i.ToString());
+            BarHeightBox.Items.Add(i.ToString());
+        }
 
-        Loaded += (_, _) => _ipc.Send(new Command { Action = "listTasks" });
+        PreviewTrack.SizeChanged += (_, _) => UpdatePreview();
+        BarHeightBox.SelectionChanged += (_, _) => UpdatePreview();
+        StartDatePicker.SelectedDateChanged += (_, _) => UpdatePreview();
+        EndDatePicker.SelectedDateChanged += (_, _) => UpdatePreview();
+        StartHourBox.SelectionChanged += (_, _) => UpdatePreview();
+        StartMinuteBox.SelectionChanged += (_, _) => UpdatePreview();
+        EndHourBox.SelectionChanged += (_, _) => UpdatePreview();
+        EndMinuteBox.SelectionChanged += (_, _) => UpdatePreview();
+
+        _previewTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
+        _previewTimer.Tick += (_, _) => UpdatePreview();
+        _previewTimer.Start();
+
+        ContentRendered += (_, _) =>
+            DesktopLog.Info($"ConfigWindow ContentRendered IsVisible={IsVisible} ActualSize={ActualWidth}x{ActualHeight}");
         OnNew(this, new RoutedEventArgs());
+        DesktopLog.Info("ConfigWindow ctor: done");
+    }
+
+    /// <summary>从 Headless 拉取任务列表与全局设置（在窗口已显示后调用）。</summary>
+    public void RequestRefresh()
+    {
+        DesktopLog.Info("ConfigWindow RequestRefresh");
+        if (!_previewTimer.IsEnabled) _previewTimer.Start();
+        _ipc.Send(new Command { Action = "listTasks" });
+        _ipc.Send(new Command { Action = "getSettings" });
+        UpdatePreview();
+    }
+
+    private void OnSettingsReceived(SettingsDto s)
+    {
+        DesktopLog.Info($"ConfigWindow.OnSettingsReceived barHeightPx={s.BarHeightPx}");
+        Dispatcher.BeginInvoke(() =>
+        {
+            _settings = s;
+            _loadingSettings = true;
+            RefreshBox.SelectedItem = Math.Clamp(s.RefreshSec, 1, 10).ToString();
+            BarHeightBox.SelectedItem = Math.Clamp(s.BarHeightPx, 1, 10).ToString();
+            AutostartCheck.IsChecked = s.Autostart;
+            _loadingSettings = false;
+            DesktopLog.Info("ConfigWindow.OnSettingsReceived applied to UI");
+            UpdatePreview();
+        });
+    }
+
+    private void OnSaveSettings(object sender, RoutedEventArgs e)
+    {
+        if (_loadingSettings) return;
+        if (!_ipc.IsConnected)
+        {
+            SettingsStatus.Text = "未连接到核心进程（hope-headless），无法保存设置";
+            return;
+        }
+        _settings.RefreshSec = ParseIntItem(RefreshBox, _settings.RefreshSec);
+        _settings.BarHeightPx = ParseIntItem(BarHeightBox, _settings.BarHeightPx);
+        _settings.Autostart = AutostartCheck.IsChecked == true;
+
+        _ipc.Send(new Command { Action = "updateSettings", Settings = _settings });
+        _ipc.Send(new Command { Action = "getSettings" });
+        ApplyAutostart(_settings.Autostart);
+        SettingsStatus.Text = "已保存设置";
+    }
+
+    private static int ParseIntItem(ComboBox box, int fallback) =>
+        box.SelectedItem is string s && int.TryParse(s, out var v) ? v : fallback;
+
+    // 写入 / 删除 HKCU Run 项，实现开机自启（§5.3.3 新增 3）。
+    private static void ApplyAutostart(bool enable)
+    {
+        const string runKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
+        try
+        {
+            using var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(runKey, writable: true)
+                            ?? Microsoft.Win32.Registry.CurrentUser.CreateSubKey(runKey);
+            if (key == null) return;
+            if (enable)
+            {
+                var exe = Environment.ProcessPath;
+                if (!string.IsNullOrEmpty(exe)) key.SetValue("Hope", $"\"{exe}\"");
+            }
+            else
+            {
+                key.DeleteValue("Hope", throwOnMissingValue: false);
+            }
+        }
+        catch { /* 注册表不可写时静默；设置仍持久化在 config.json */ }
+    }
+
+    private void OnAddTask(object sender, RoutedEventArgs e)
+    {
+        OnNew(sender, e);
+        MainTabs.SelectedItem = TaskTab;
+        NameBox.Focus();
+    }
+
+    private void OnPresetName(object sender, RoutedEventArgs e)
+    {
+        if (sender is ContentControl b && b.Content is string name) NameBox.Text = name;
     }
 
     private static void PopulateTimeBoxes(ComboBox hour, ComboBox minute)
@@ -47,10 +168,12 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
 
     private void OnTasksReceived(List<TaskDto> tasks)
     {
-        Dispatcher.Invoke(() =>
+        DesktopLog.Info($"ConfigWindow.OnTasksReceived count={tasks.Count}");
+        Dispatcher.BeginInvoke(() =>
         {
             _rows.Clear();
             foreach (var t in tasks) _rows.Add(TaskRow.From(t));
+            DesktopLog.Info($"ConfigWindow.OnTasksReceived grid rows={_rows.Count}");
         });
     }
 
@@ -58,6 +181,7 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
     {
         if (TaskGrid.SelectedItem is not TaskRow row) return;
         _editingId = row.Id;
+        _taskCreatedAt = row.CreatedAt ?? DateTimeOffset.Now;
         NameBox.Text = row.Name;
         ColorBox.Text = row.Color;
         GifBox.Text = row.Gif ?? "";
@@ -66,11 +190,14 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
             row.StartAt?.LocalDateTime ?? DateTime.Now);
         SetDateTime(EndDatePicker, EndHourBox, EndMinuteBox, row.EndAt.LocalDateTime);
         StatusText.Text = $"正在编辑：{row.Name}";
+        UpdatePreview();
+        MainTabs.SelectedItem = TaskTab; // 选中任务自动切到任务编辑 Tab（§5.3.3 新增 4）
     }
 
     private void OnNew(object sender, RoutedEventArgs e)
     {
         _editingId = null;
+        _taskCreatedAt = DateTimeOffset.Now;
         NameBox.Text = "";
         ColorBox.Text = SuggestUnusedColor();
         GifBox.Text = "";
@@ -79,6 +206,7 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
         SetDateTime(EndDatePicker, EndHourBox, EndMinuteBox, DateTime.Now.AddHours(1));
         TaskGrid.SelectedItem = null;
         StatusText.Text = "新建任务";
+        UpdatePreview();
     }
 
     private void OnSave(object sender, RoutedEventArgs e)
@@ -142,17 +270,112 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
                      "|*.gif;*.png;*.jpg;*.jpeg;*.bmp;*.webp;*.tif;*.tiff|所有文件 (*.*)|*.*",
             CheckFileExists = true,
         };
-        if (dlg.ShowDialog() == true) GifBox.Text = dlg.FileName;
+        if (dlg.ShowDialog() == true) { GifBox.Text = dlg.FileName; UpdatePreview(); }
     }
 
-    private void OnClearGif(object sender, RoutedEventArgs e) => GifBox.Text = "";
+    private void OnClearGif(object sender, RoutedEventArgs e) { GifBox.Text = ""; UpdatePreview(); }
 
     private void OnTypeChanged(object sender, SelectionChangedEventArgs e) => UpdateStartVisibility();
 
     private void OnColorChanged(object sender, TextChangedEventArgs e)
     {
-        if (ColorPreview != null && TryParseColor(ColorBox.Text, out var hex))
+        if (TryParseColor(ColorBox.Text, out var hex) && ColorPreview != null)
             ColorPreview.Background = new SolidColorBrush(HexToColor(hex));
+        UpdatePreview();
+    }
+
+    // 实时预览：条高 = barHeightPx，[0,percent] 满涂任务色，图片对齐 percent（§5.3.3 新增 2）。
+    private void UpdatePreview()
+    {
+        // InitializeComponent 设置 ColorBox.Text 时会触发 TextChanged，此时预览控件尚未创建。
+        if (!_previewReady || PreviewTrack == null || PreviewFill == null || PreviewStatus == null)
+            return;
+        int barH = Math.Clamp(ParseIntItem(BarHeightBox, _settings.BarHeightPx), 1, 10);
+        PreviewTrack.Height = barH;
+        PreviewFill.Height = barH;
+
+        if (TryParseColor(ColorBox.Text, out var hex))
+            PreviewFill.Background = new SolidColorBrush(HexToColor(hex));
+
+        double percent = ComputePreviewPercent(out var endAt, out var timeValid);
+        double trackW = PreviewTrack.ActualWidth;
+        if (trackW > 0)
+            PreviewFill.Width = Math.Max(0, trackW * percent / 100.0);
+
+        var path = GifBox.Text.Trim();
+        if (!string.IsNullOrEmpty(path) && File.Exists(path))
+        {
+            try
+            {
+                var bmp = new BitmapImage();
+                bmp.BeginInit();
+                bmp.CacheOption = BitmapCacheOption.OnLoad;
+                bmp.UriSource = new Uri(path);
+                bmp.EndInit();
+                bmp.Freeze();
+                _previewImage.Source = bmp;
+            }
+            catch { _previewImage.Source = null; }
+        }
+        else
+        {
+            _previewImage.Source = null;
+        }
+
+        if (trackW > 0 && _previewImage.Source != null)
+        {
+            _previewImage.Measure(new System.Windows.Size(double.PositiveInfinity, 15));
+            double imgW = _previewImage.DesiredSize.Width;
+            double frontX = trackW * percent / 100.0;
+            double left = Math.Clamp(frontX - imgW / 2, 0, Math.Max(0, trackW - imgW));
+            Canvas.SetLeft(_previewImage, left);
+            Canvas.SetTop(_previewImage, 0);
+        }
+
+        if (!timeValid)
+            PreviewStatus.Text = "请填写有效的截止（及开始）时间以预览完成度";
+        else
+            PreviewStatus.Text = $"{percent:0.#}%　{FormatCountdown(endAt)}";
+    }
+
+    /// <summary>与 Headless task.Percent 一致：墙钟实时，定时用开始/截止，即时用 createdAt/截止。</summary>
+    private double ComputePreviewPercent(out DateTimeOffset endAt, out bool valid)
+    {
+        valid = false;
+        endAt = default;
+        if (!TryComposeDateTime(EndDatePicker, EndHourBox, EndMinuteBox, out endAt))
+            return 0;
+        valid = true;
+
+        var now = DateTimeOffset.Now;
+        if (now >= endAt) return 100;
+
+        DateTimeOffset start;
+        if (SelectedType() == "scheduled")
+        {
+            if (!TryComposeDateTime(StartDatePicker, StartHourBox, StartMinuteBox, out start))
+            {
+                valid = false;
+                return 0;
+            }
+        }
+        else
+        {
+            start = _taskCreatedAt;
+        }
+
+        var total = (endAt - start).TotalSeconds;
+        if (total <= 0) return 100;
+        return Math.Clamp((now - start).TotalSeconds / total * 100.0, 0, 100);
+    }
+
+    private static string FormatCountdown(DateTimeOffset endAt)
+    {
+        var remaining = endAt - DateTimeOffset.Now;
+        if (remaining <= TimeSpan.Zero) return "已到期";
+        return remaining.TotalDays >= 1
+            ? $"{(int)remaining.TotalDays} 天 {remaining.Hours:00}:{remaining.Minutes:00}:{remaining.Seconds:00}"
+            : $"{remaining.Hours:00}:{remaining.Minutes:00}:{remaining.Seconds:00}";
     }
 
     private void OnPickColor(object sender, MouseButtonEventArgs e)
@@ -248,6 +471,8 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
 
     protected override void OnClosing(CancelEventArgs e)
     {
+        DesktopLog.Info("ConfigWindow OnClosing: hide to tray");
+        _previewTimer.Stop();
         // 关闭窗口仅隐藏到托盘，不退出进程（文档 §5.3）。
         e.Cancel = true;
         Hide();
@@ -264,6 +489,7 @@ public sealed class TaskRow
     public string? Gif { get; init; }
     public DateTimeOffset? StartAt { get; init; }
     public DateTimeOffset EndAt { get; init; }
+    public DateTimeOffset? CreatedAt { get; init; }
 
     public string TypeLabel => Type == "instant" ? "即时" : "定时";
     public string EndLabel => EndAt.LocalDateTime.ToString("MM-dd HH:mm");
@@ -285,5 +511,6 @@ public sealed class TaskRow
         Gif = t.Gif,
         StartAt = t.StartAt,
         EndAt = t.EndAt,
+        CreatedAt = t.CreatedAt,
     };
 }

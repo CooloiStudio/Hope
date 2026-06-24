@@ -100,6 +100,9 @@ func (e *Engine) HandleCommand(cmd ipc.Command) any {
 	case "listTasks":
 		_, tasks := e.store.Snapshot()
 		return map[string]any{"type": "tasks", "tasks": tasks}
+	case "getSettings":
+		settings, _ := e.store.Snapshot()
+		return map[string]any{"type": "settings", "settings": settings}
 	case "updateSettings":
 		if len(cmd.Settings) > 0 {
 			var ns config.Settings

@@ -63,14 +63,15 @@ func clamp(v, lo, hi float64) float64 {
 
 // Segment 为顶栏上的一个色段，对应 IPC 广播结构（文档 §5.2）。
 type Segment struct {
-	TaskID   string  `json:"taskId"`
-	Name     string  `json:"name"`
-	Color    string  `json:"color"`
-	Gif      string  `json:"gif,omitempty"`
-	BarStart float64 `json:"barStart"`
-	BarEnd   float64 `json:"barEnd"`
-	Percent  float64 `json:"percent"`
-	FillEnd  float64 `json:"fillEnd"`
+	TaskID   string    `json:"taskId"`
+	Name     string    `json:"name"`
+	Color    string    `json:"color"`
+	Gif      string    `json:"gif,omitempty"`
+	BarStart float64   `json:"barStart"`
+	BarEnd   float64   `json:"barEnd"`
+	Percent  float64   `json:"percent"`
+	FillEnd  float64   `json:"fillEnd"`
+	EndAt    time.Time `json:"endAt"` // 供 Overlay 悬停计算倒计时（§5.4 修改 1）
 }
 
 // Layout 为顶栏的整体布局结果。
@@ -125,6 +126,7 @@ func BuildLayout(tasks []*Task, now time.Time) Layout {
 			BarEnd:   round1(p),
 			Percent:  round1(p),
 			FillEnd:  round1(p), // 整段满涂；与 barEnd 一致，供 Overlay 绘制与 GIF 定位
+			EndAt:    e.t.EndAt,
 		})
 		prev = p
 	}

@@ -1,6 +1,7 @@
 using System.IO;
 using System.IO.Pipes;
 using System.Text.Json;
+using Hope.Desktop;
 
 namespace Hope.Desktop.Ipc;
 
@@ -34,6 +35,9 @@ public sealed class IpcClient : IDisposable
     /// <summary>收到 listTasks 响应时触发。</summary>
     public event Action<List<TaskDto>>? TasksReceived;
 
+    /// <summary>收到 getSettings 响应时触发。</summary>
+    public event Action<SettingsDto>? SettingsReceived;
+
     /// <summary>连接状态变化。</summary>
     public event Action<bool>? ConnectionChanged;
 
@@ -53,6 +57,7 @@ public sealed class IpcClient : IDisposable
                     _writer = new StreamWriter(pipe) { AutoFlush = true };
                 }
                 ConnectionChanged?.Invoke(true);
+                DesktopLog.Info("IPC connected to hope-headless pipe");
 
                 using var reader = new StreamReader(pipe);
                 while (!_cts.IsCancellationRequested && !reader.EndOfStream)
@@ -63,10 +68,11 @@ public sealed class IpcClient : IDisposable
                 }
             }
             catch (OperationCanceledException) { break; }
-            catch { /* 连接失败，稍后重试 */ }
+            catch (Exception ex) { DesktopLog.Warn($"IPC connect/read error: {ex.Message}"); }
             finally
             {
                 ConnectionChanged?.Invoke(false);
+                DesktopLog.Info("IPC disconnected");
                 lock (_writeLock) { _writer = null; }
                 _pipe?.Dispose();
                 _pipe = null;
@@ -83,30 +89,68 @@ public sealed class IpcClient : IDisposable
         try
         {
             using var doc = JsonDocument.Parse(line);
-            if (doc.RootElement.TryGetProperty("type", out var t) && t.GetString() == "tasks")
+            if (doc.RootElement.TryGetProperty("type", out var t))
             {
-                var tasks = doc.RootElement.GetProperty("tasks").Deserialize<List<TaskDto>>(JsonOpts);
-                if (tasks != null) TasksReceived?.Invoke(tasks);
-                return;
+                var type = t.GetString();
+                if (type == "tasks")
+                {
+                    var tasks = doc.RootElement.GetProperty("tasks").Deserialize<List<TaskDto>>(JsonOpts);
+                    if (tasks != null)
+                    {
+                        DesktopLog.Info($"IPC dispatch type=tasks count={tasks.Count}");
+                        TasksReceived?.Invoke(tasks);
+                    }
+                    return;
+                }
+                if (type == "settings")
+                {
+                    var settings = doc.RootElement.GetProperty("settings").Deserialize<SettingsDto>(JsonOpts);
+                    if (settings != null)
+                    {
+                        DesktopLog.Info($"IPC dispatch type=settings barHeightPx={settings.BarHeightPx}");
+                        SettingsReceived?.Invoke(settings);
+                    }
+                    return;
+                }
             }
             var msg = JsonSerializer.Deserialize<StateMessage>(line, JsonOpts);
             if (msg != null) StateReceived?.Invoke(msg);
         }
-        catch { /* 忽略损坏行 */ }
+        catch (Exception ex) { DesktopLog.Warn($"IPC dispatch parse error: {ex.Message}"); }
     }
 
-    /// <summary>发送命令；未连接时静默丢弃。</summary>
+    /// <summary>发送命令；在后台线程写入管道，避免阻塞 UI 线程。</summary>
     public void Send(Command cmd)
+    {
+        // 先在调用线程序列化，避免跨线程访问可变命令对象。
+        string json;
+        try { json = JsonSerializer.Serialize(cmd, JsonOpts); }
+        catch (Exception ex)
+        {
+            DesktopLog.Warn($"IPC send serialize failed action={cmd.Action}: {ex.Message}");
+            return;
+        }
+
+        var action = cmd.Action;
+        _ = Task.Run(() => SendCore(json, action));
+    }
+
+    private void SendCore(string json, string action)
     {
         lock (_writeLock)
         {
-            if (_writer == null) return;
+            if (_writer == null)
+            {
+                DesktopLog.Warn($"IPC send dropped (not connected) action={action}");
+                return;
+            }
             try
             {
-                var json = JsonSerializer.Serialize(cmd, JsonOpts);
+                DesktopLog.Info($"IPC send begin action={action}");
                 _writer.WriteLine(json);
+                DesktopLog.Info($"IPC send done action={action}");
             }
-            catch { /* 下个广播帧会反映最新状态 */ }
+            catch (Exception ex) { DesktopLog.Warn($"IPC send failed action={action}: {ex.Message}"); }
         }
     }
 

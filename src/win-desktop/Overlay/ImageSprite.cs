@@ -1,10 +1,10 @@
 using System.Drawing;
+using System.Drawing.Imaging;
 using System.IO;
-using System.Windows;
-using System.Windows.Interop;
+using System.Windows.Media;
 using System.Windows.Media.Imaging;
-using Hope.Desktop.Interop;
 using DrawingImage = System.Drawing.Image;
+using PixelFormat = System.Drawing.Imaging.PixelFormat;
 using WpfImage = System.Windows.Controls.Image;
 
 namespace Hope.Desktop.Overlay;
@@ -63,19 +63,24 @@ public sealed class ImageSprite : IDisposable
         Render();
     }
 
+    // 用 LockBits → Bgra32 转换，保留 PNG/GIF 的 alpha 透明通道。
+    // （GetHbitmap 会丢失 alpha，把透明区域填成不透明底色，导致顶栏出现“背景色”。）
     private void Render()
     {
-        IntPtr h = _bitmap.GetHbitmap();
+        var rect = new Rectangle(0, 0, _bitmap.Width, _bitmap.Height);
+        BitmapData data = _bitmap.LockBits(rect, ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
         try
         {
-            var src = Imaging.CreateBitmapSourceFromHBitmap(
-                h, IntPtr.Zero, Int32Rect.Empty, BitmapSizeOptions.FromEmptyOptions());
+            var src = BitmapSource.Create(
+                _bitmap.Width, _bitmap.Height, 96, 96,
+                PixelFormats.Bgra32, null,
+                data.Scan0, data.Stride * _bitmap.Height, data.Stride);
             src.Freeze();
             Element.Source = src;
         }
         finally
         {
-            NativeMethods.DeleteObject(h); // 避免 GDI 句柄泄漏
+            _bitmap.UnlockBits(data);
         }
     }
 

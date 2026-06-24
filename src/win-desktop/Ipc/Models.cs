@@ -23,6 +23,7 @@ public sealed class Segment
     [JsonPropertyName("barEnd")] public double BarEnd { get; set; }
     [JsonPropertyName("percent")] public double Percent { get; set; }
     [JsonPropertyName("fillEnd")] public double FillEnd { get; set; }
+    [JsonPropertyName("endAt")] public DateTimeOffset EndAt { get; set; }
 }
 
 /// <summary>任务到期一次性事件。</summary>

@@ -303,6 +303,7 @@ go build -ldflags="-s -w -H=windowsgui" -o hope-headless.exe .
 | `segments[].barEnd` | float | 该色段右边界 = 本任务 percent，0–100 |
 | `segments[].percent` | float | 该任务自身进度 0–100（= `barEnd`） |
 | `segments[].fillEnd` | float | = `barEnd`（整段满涂）；保留字段供 Overlay 绘制与 GIF 定位 |
+| `segments[].endAt` | string (RFC3339) | 该任务截止时刻；供 Overlay 悬停计算倒计时（§5.4 修改 1） |
 
 **分段布局规则（v2，已确定，详见 §7.2）：**
 
@@ -395,6 +396,70 @@ go build -ldflags="-s -w -H=windowsgui" -o hope-headless.exe .
 - [ ] 即时任务仅截止时间；定时任务额外显示开始时间选择器（沿用现有显隐逻辑）。
 - [ ] 保存时校验：开始须早于截止；任一时间未选齐则提示。
 
+#### 5.3.3 配置窗体重构 + 全局设置 + 实时预览（v0.4，🔲 待施工）
+
+> 来源：用户 2026-06-24 反馈。包含一个 bug 修复、两处修改与六项新增。
+
+**Bug：顶栏挂载图片后出现背景色** 🔲
+
+- 现象：进度条本应背景透明；挂载图片后顶栏出现背景色，清除图片后背景色仍残留。
+- 根因：`ImageSprite` 用 `Bitmap.GetHbitmap()` 转 `BitmapSource`，**丢失 PNG/GIF 的 alpha 透明通道**，透明区域被填成不透明底色（黑/白块），看起来像“背景色”。
+- 修复：改用保留 alpha 的转换（`LockBits` → `BitmapSource.Create(... Bgra32 ...)`）；**无论是否挂载图片，Overlay 背景恒透明**。
+
+**修改 1：悬停提示内容** 🔲
+
+- 鼠标悬停顶栏已填充段时，仅显示 **任务名称 + 倒计时**（距 `endAt` 的剩余时间），不再显示百分比。
+- 需在 IPC `segments[]` 增加 `endAt` 字段（见 §5.2 补充），供 Overlay 计算倒计时。
+- 倒计时格式：≥1 天显示「N 天 HH:mm:ss」，否则「HH:mm:ss」；已到期显示「已到期」。
+
+**修改 2：窗口默认尺寸与按钮文案** 🔲
+
+- 增大配置窗口默认宽 / 高，使默认尺寸 **无需滚动即可看到全部主要界面**。
+- 修正按钮文案截断：「选择…」「清除」需完整显示（加宽按钮或改文案）。
+
+**新增 1：选择图片后展示预览（≤15px 高）** 🔲
+
+- 任务编辑区选择图片后，立即展示该图片预览，**高度最高 15px**（等比缩放），用 WPF `BitmapImage` 加载（保留 alpha，避免上面 bug）。
+
+**新增 2：任务编辑实时预览（进度条 + 图片）** 🔲 → ✅（2026-06-24 修订）
+
+- 在任务编辑区渲染一条 **模拟真实顶栏** 的进度条 + 可选挂载图片（图片高度最高 15px）。
+- 颜色、时间、图片 **实时取自编辑表单**；保存后才影响桌面真实顶栏。
+- **进度条高度**：与全局设置 `settings.barHeightPx`（1–10px）**一致**；在「全局设置」Tab 调整条高下拉后，预览**即时**反映（无需先点保存）。
+- **完成度展示（v2 单任务语义）**：
+  - 按墙钟实时计算当前任务的 `percent`（规则与 Headless `task.Percent` 一致：定时任务用开始/截止，即时任务用 `createdAt`/截止）。
+  - 预览条上仅绘制 `[0, percent]` 区段，**满涂**当前任务色；`[percent, 100]` **完全透明**（不画底色），与桌面 Overlay 一致。
+  - 跟随图片挂在进度条**下方**，水平中心对齐 `percent` 位置（= 填充右边界 / `fillEnd`）。
+- 预览区附带 **percent 数值 + 距截止倒计时** 文案（格式与顶栏悬停一致：≥1 天为「N 天 HH:mm:ss」，否则「HH:mm:ss」，已到期为「已到期」）。
+- 表单字段变更时立即刷新；另以 **1 秒** 周期 tick 更新进度与倒计时（与真实顶栏同步感）。
+
+**修订说明（相对初版「静态满涂示意」）：** 初版写「单段满涂 + 图片挂右侧」仅为占位；现改为按真实 `percent` 填充，避免条高固定 8px、与全局设置脱节。
+
+**新增 3：全局设置项** 🔲
+
+- **刷新间隔**：进度条更新频率，1–10 秒（对应 `settings.refreshSec`；默认 1 秒 = 每秒 1 次）。
+- **进度条高度**：1–10px（对应 `settings.barHeightPx`，Desktop 实时应用到 Overlay）。
+- **开机自启**：写入 / 删除 `HKCU\…\Run` 的 `Hope` 值（Desktop 侧 C# 执行），并持久化 `settings.autostart`。
+
+**新增 4：双 Tab 布局** 🔲
+
+- 配置窗体右侧改为两个 Tab：**全局设置** / **任务编辑**，可互相切换。
+- 默认选中 **全局设置** Tab；在任务列表中选中某任务后，自动切到 **任务编辑** Tab。
+
+**新增 5：「添加任务」按钮** 🔲
+
+- 任务列表上方「任务列表」文案后放一个显眼的 **「添加任务」** 按钮；点击 = 新建并切到 **任务编辑** Tab。
+
+**新增 6：任务名称预设快填** 🔲
+
+- 任务名称旁提供预设：**下班、干饭、放假**；用户点选后快速填入名称框。
+
+**设置读取链路（实现要点）：**
+
+- IPC 新增 `getSettings` 命令，返回 `{"type":"settings","settings":{...}}`（与 `listTasks` 同机制）。
+- Desktop 启动时拉取一次设置，应用 `barHeightPx` 到 Overlay；全局设置 Tab 保存后发 `updateSettings` 再 `getSettings` 刷新，使条高即时生效。
+- `refreshSec` 由 Headless 广播循环每帧读取，改后下一帧生效。
+
 #### 5.3.2 界面主题：贴近 Windows 11 Fluent（WPF-UI）
 
 > 目标：让配置窗体观感贴近 Windows 11 系统界面（Fluent / Mica），同时兼顾 Win10 与「低资源常驻」定位。
@@ -432,9 +497,23 @@ go build -ldflags="-s -w -H=windowsgui" -o hope-headless.exe .
 | 关于 | 版本号、独占全屏说明、插件入口 | ✅ |
 | 退出 | `quit`，结束所有进程 | ✅ |
 
-**托盘图标：**
+**托盘图标：** ✅（2026-06-24）
 
-- [ ] 常态 / 暂停 / 即将到期 是否区分图标：__________（当前为系统默认图标）
+| 资源 | 路径 | 用途 |
+|------|------|------|
+| `hope.png` | `src/resources/hope.png` | 应用图标：嵌入 `hope-desktop.exe`（`.ico`）、配置窗体 `Window.Icon` |
+| `hope-h.png` | `src/resources/hope-h.png` | 托盘小图（单色 H 形模板）；按系统主题着色 |
+
+**托盘着色规则（已确定）：**
+
+- 读取 Windows **应用**亮/暗设置（`AppsUseLightTheme` + WPF-UI `ApplicationThemeManager`）。
+- **深色主题** → 托盘图标 **白色**（`#FFFFFF`）。
+- **浅色主题** → 托盘图标 **黑色**（`#000000`）。
+- 系统主题切换时 **自动刷新** 托盘图标；Overlay 顶栏不受影响。
+
+**后续可选（未做）：**
+
+- [ ] 常态 / 暂停 / 即将到期 是否区分图标：__________
 - [ ] 气球通知规则：__________（`expiredBehavior=notify` 时已有一次性气球 ✅）
 
 ### 5.4 DWM 覆盖层（分段顶栏）✅
@@ -451,7 +530,7 @@ go build -ldflags="-s -w -H=windowsgui" -o hope-headless.exe .
 
 **唯一交互：悬停展示任务名** ✅
 
-- [x] 点击仍穿透；光标在顶栏 **已填充段** 内时展示 Tooltip（任务名 + percent）
+- [x] 点击仍穿透；光标在顶栏 **已填充段** 内时展示 Tooltip（任务名 + **倒计时**，§5.3.3 修改 1；原为 percent）
 - [x] 实现：`WM_NCHITTEST` 穿透 + **全局鼠标位置轮询**（`GetCursorPos`，150ms）；未使用低级钩子
 - [x] 未完成部分、图片区：不响应悬停
 
@@ -495,6 +574,10 @@ Hope/
 │   │   ├── task/task.go, task_test.go
 │   │   ├── config/config.go
 │   │   └── singleinstance_windows.go
+│   ├── resources/                  # ✅ 品牌资源
+│   │   ├── hope.png                # 应用图标（大图）
+│   │   ├── hope.ico                # 由 hope.png 生成，嵌入 exe
+│   │   └── hope-h.png              # 托盘小图（按主题着黑/白）
 │   ├── win-desktop/                # ✅ WPF
 │   │   ├── Hope.Desktop.csproj
 │   │   ├── App.xaml(.cs)
@@ -670,13 +753,13 @@ Hope/
 
 | 设置 | 默认 | 是否首版 | 实现状态 |
 |------|------|----------|----------|
-| 进度条高度 (1–10px) | 4px | 是 | ⚠️ `config.json` + IPC ✅；Overlay 暂硬编码 4px |
+| 进度条高度 (1–10px) | 4px | 是 | 🔲 v0.4 全局设置 Tab 接线，Desktop 实时应用（§5.3.3） |
 | 每任务颜色 | 用户必填 | 是 | ✅；🔲 v0.4 增系统取色盘 + 去重校验（§5.3.1） |
 | 跟随图片/动图 | 可选 | 是 | ✅ |
 | 显示显示器 | 主屏 | 是 | ✅ 仅主屏 |
 | 截止后行为 `expiredBehavior` | `keep` | 是 | ⚠️ 逻辑 ✅；配置 UI ❌ |
-| 刷新间隔 `refreshSec` | 1s | 是 | ✅ Headless；UI 不可调 |
-| 开机自启 | 关 | [ ] | ⚠️ `setup.iss` 安装任务 ✅；应用内设置 ❌ |
+| 刷新间隔 `refreshSec` | 1s | 是 | 🔲 v0.4 全局设置 Tab 可调（1–10s，§5.3.3） |
+| 开机自启 | 关 | 是 | 🔲 v0.4 全局设置 Tab：写 HKCU Run + 持久化（§5.3.3） |
 | 语言 | 简体中文 | [ ] | ❌ 字段预留，未做 i18n |
 
 ### 7.5 首次使用引导（Onboarding）
@@ -723,7 +806,7 @@ Hope/
 | v0.2 | WPF 配置 + 托盘 | ✅ |
 | v0.3 | DWM 分段顶栏 + 多任务闭环 + 跟随图片 | ✅ **当前代码基线** |
 | v0.4 | 设置 UI、双向互拉、条高读回、`expiredBehavior` 配置、配置窗体交互增强（取色盘 + 颜色去重 + 日期时间选择器，§5.3.1）、Win11 Fluent 主题（WPF-UI，§5.3.2） | 🔲 下一步 |
-| v1.0 | 安装包验收、帮助文档、图标与 Onboarding | 🔲 |
+| v1.0 | 安装包验收、帮助文档、Onboarding | 🔲（应用/托盘图标 ✅） |
 | v1.x-plugin | 全屏游戏拓展包（独立发版） | ❌ |
 
 ---

@@ -22,6 +22,7 @@ Hope/
 ├── Hope.sln                        # VS Code / C# Dev Kit 解决方案（调试必需）
 ├── src/
 │   ├── headless/      # Go 核心（config / task / ipc / engine）
+│   ├── resources/     # 品牌资源：hope.png（应用图标）、hope-h.png（托盘小图）
 │   ├── win-desktop/   # WPF 桌面端（Overlay / Tray / Config / Ipc）
 │   └── plugins/
 │       └── fullscreen/  # Phase 2 全屏游戏插件（占位）
