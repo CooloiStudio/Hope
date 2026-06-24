@@ -1,0 +1,61 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "build-headless",
+      "type": "shell",
+      "command": "go",
+      "args": ["build", "-o", "hope-headless.exe", "."],
+      "options": {
+        "cwd": "${workspaceFolder}/src/headless"
+      },
+      "group": "build",
+      "presentation": {
+        "reveal": "silent",
+        "panel": "shared"
+      },
+      "problemMatcher": ["$go"]
+    },
+    {
+      "label": "build-desktop",
+      "type": "process",
+      "command": "dotnet",
+      "args": [
+        "build",
+        "${workspaceFolder}/src/win-desktop/Hope.Desktop.csproj",
+        "-c",
+        "Debug",
+        "--no-restore"
+      ],
+      "group": "build",
+      "presentation": {
+        "reveal": "silent",
+        "panel": "shared"
+      },
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "restore-desktop",
+      "type": "process",
+      "command": "dotnet",
+      "args": [
+        "restore",
+        "${workspaceFolder}/src/win-desktop/Hope.Desktop.csproj"
+      ],
+      "presentation": {
+        "reveal": "silent"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "build-all",
+      "dependsOn": ["build-headless", "restore-desktop", "build-desktop"],
+      "dependsOrder": "sequence",
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "problemMatcher": []
+    }
+  ]
+}

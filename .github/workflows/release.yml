@@ -1,0 +1,59 @@
+name: release
+
+# Phase 1 简化流水线：编译 Go 核心 + WPF 桌面端，用 Inno Setup 打成单个安装包。
+# 不含 UWP / MSIX 签名（见方案文档 §8）。
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "9.0.x"
+
+      - name: Build headless (Go)
+        working-directory: src/headless
+        run: go build -ldflags="-s -w -H=windowsgui" -o "${{ github.workspace }}\stage\hope-headless.exe" .
+
+      - name: Test headless
+        working-directory: src/headless
+        run: go test ./...
+
+      - name: Publish desktop (WPF)
+        working-directory: src/win-desktop
+        run: dotnet publish Hope.Desktop.csproj -c Release -r win-x64 --self-contained false -o "${{ github.workspace }}\stage"
+
+      - name: Install Inno Setup
+        run: choco install innosetup --no-progress -y
+
+      - name: Build installer
+        run: iscc /DStageDir="${{ github.workspace }}\stage" /DOutputDir="${{ github.workspace }}\dist" setup.iss
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Hope_Setup
+          path: dist/*.exe
+
+      - name: Create release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.exe

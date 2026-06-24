@@ -1,0 +1,189 @@
+// Package config 负责 Hope 的本地配置与任务列表持久化。
+// 数据落盘于 %APPDATA%\Hope。
+package config
+
+import (
+	"bytes"
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"sync"
+
+	"hope/headless/task"
+)
+
+// utf8BOM 为 UTF-8 字节顺序标记；记事本等工具可能写入，需在解析前剥离。
+var utf8BOM = []byte{0xEF, 0xBB, 0xBF}
+
+func stripBOM(b []byte) []byte { return bytes.TrimPrefix(b, utf8BOM) }
+
+// ExpiredBehavior 定义任务到期后的顶栏表现（单选，互斥）。
+type ExpiredBehavior string
+
+const (
+	ExpiredKeep   ExpiredBehavior = "keep"   // 保持
+	ExpiredBlink  ExpiredBehavior = "blink"  // 闪烁
+	ExpiredNotify ExpiredBehavior = "notify" // 系统通知
+	ExpiredHide   ExpiredBehavior = "hide"   // 自动隐藏
+)
+
+// Settings 为用户可配置项，对应文档 §7.4。
+type Settings struct {
+	BarHeightPx     int             `json:"barHeightPx"`
+	ExpiredBehavior ExpiredBehavior `json:"expiredBehavior"`
+	RefreshSec      int             `json:"refreshSec"`
+	Monitor         string          `json:"monitor"` // 首版仅 "primary"
+	Autostart       bool            `json:"autostart"`
+	Language        string          `json:"language"`
+}
+
+// DefaultSettings 返回文档约定的默认设置。
+func DefaultSettings() Settings {
+	return Settings{
+		BarHeightPx:     4,
+		ExpiredBehavior: ExpiredKeep,
+		RefreshSec:      1,
+		Monitor:         "primary",
+		Autostart:       false,
+		Language:        "zh-CN",
+	}
+}
+
+// Store 聚合配置与任务，并提供线程安全的持久化。
+type Store struct {
+	mu       sync.RWMutex
+	dir      string
+	Settings Settings     `json:"-"`
+	Tasks    []*task.Task `json:"-"`
+}
+
+type settingsFile struct {
+	Settings Settings `json:"settings"`
+}
+
+type tasksFile struct {
+	Tasks []*task.Task `json:"tasks"`
+}
+
+// Dir 返回 Hope 的数据目录（%APPDATA%\Hope）。
+func Dir() string {
+	base := os.Getenv("APPDATA")
+	if base == "" {
+		base, _ = os.UserConfigDir()
+	}
+	return filepath.Join(base, "Hope")
+}
+
+// Load 从磁盘读取配置与任务；文件缺失时返回默认值。
+func Load() (*Store, error) {
+	dir := Dir()
+	if err := os.MkdirAll(filepath.Join(dir, "logs"), 0o755); err != nil {
+		return nil, err
+	}
+	s := &Store{dir: dir, Settings: DefaultSettings()}
+
+	if b, err := os.ReadFile(filepath.Join(dir, "config.json")); err == nil {
+		var sf settingsFile
+		if json.Unmarshal(stripBOM(b), &sf) == nil {
+			s.Settings = mergeSettings(DefaultSettings(), sf.Settings)
+		}
+	}
+	if b, err := os.ReadFile(filepath.Join(dir, "tasks.json")); err == nil {
+		var tf tasksFile
+		if json.Unmarshal(stripBOM(b), &tf) == nil {
+			s.Tasks = tf.Tasks
+		}
+	}
+	return s, nil
+}
+
+// mergeSettings 用已加载值覆盖默认值中的非零字段，保证向后兼容。
+func mergeSettings(def, loaded Settings) Settings {
+	out := def
+	if loaded.BarHeightPx > 0 {
+		out.BarHeightPx = loaded.BarHeightPx
+	}
+	if loaded.ExpiredBehavior != "" {
+		out.ExpiredBehavior = loaded.ExpiredBehavior
+	}
+	if loaded.RefreshSec > 0 {
+		out.RefreshSec = loaded.RefreshSec
+	}
+	if loaded.Monitor != "" {
+		out.Monitor = loaded.Monitor
+	}
+	if loaded.Language != "" {
+		out.Language = loaded.Language
+	}
+	out.Autostart = loaded.Autostart
+	return out
+}
+
+// SaveSettings 持久化设置。
+func (s *Store) SaveSettings() error {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	b, err := json.MarshalIndent(settingsFile{Settings: s.Settings}, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(s.dir, "config.json"), b, 0o644)
+}
+
+// SaveTasks 持久化任务列表。
+func (s *Store) SaveTasks() error {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	b, err := json.MarshalIndent(tasksFile{Tasks: s.Tasks}, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(s.dir, "tasks.json"), b, 0o644)
+}
+
+// Snapshot 返回当前任务的浅拷贝切片，供计算使用。
+func (s *Store) Snapshot() (Settings, []*task.Task) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	cp := make([]*task.Task, len(s.Tasks))
+	copy(cp, s.Tasks)
+	return s.Settings, cp
+}
+
+// UpsertTask 新增或按 ID 更新任务。
+func (s *Store) UpsertTask(t *task.Task) {
+	s.mu.Lock()
+	for i, ex := range s.Tasks {
+		if ex.ID == t.ID {
+			s.Tasks[i] = t
+			s.mu.Unlock()
+			_ = s.SaveTasks()
+			return
+		}
+	}
+	s.Tasks = append(s.Tasks, t)
+	s.mu.Unlock()
+	_ = s.SaveTasks()
+}
+
+// DeleteTask 按 ID 删除任务。
+func (s *Store) DeleteTask(id string) {
+	s.mu.Lock()
+	out := s.Tasks[:0]
+	for _, t := range s.Tasks {
+		if t.ID != id {
+			out = append(out, t)
+		}
+	}
+	s.Tasks = out
+	s.mu.Unlock()
+	_ = s.SaveTasks()
+}
+
+// UpdateSettings 覆盖设置并持久化。
+func (s *Store) UpdateSettings(ns Settings) {
+	s.mu.Lock()
+	s.Settings = mergeSettings(s.Settings, ns)
+	s.mu.Unlock()
+	_ = s.SaveSettings()
+}

@@ -1,0 +1,77 @@
+<Window x:Class="Hope.Desktop.Views.ConfigWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Hope · 盼头" Height="520" Width="720"
+        WindowStartupLocation="CenterScreen"
+        FontFamily="Microsoft YaHei UI" FontSize="13">
+    <Grid Margin="12">
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*" />
+            <ColumnDefinition Width="300" />
+        </Grid.ColumnDefinitions>
+
+        <!-- 任务列表 -->
+        <DockPanel Grid.Column="0" Margin="0,0,12,0">
+            <TextBlock DockPanel.Dock="Top" Text="任务列表" FontWeight="Bold" Margin="0,0,0,6" />
+            <Button DockPanel.Dock="Bottom" x:Name="DeleteButton" Content="删除选中任务"
+                    Height="32" Margin="0,8,0,0" Click="OnDelete" />
+            <DataGrid x:Name="TaskGrid" AutoGenerateColumns="False" IsReadOnly="True"
+                      SelectionMode="Single" HeadersVisibility="Column"
+                      SelectionChanged="OnSelectTask" GridLinesVisibility="Horizontal">
+                <DataGrid.Columns>
+                    <DataGridTemplateColumn Header="色" Width="36">
+                        <DataGridTemplateColumn.CellTemplate>
+                            <DataTemplate>
+                                <Border Width="16" Height="16" CornerRadius="3"
+                                        Background="{Binding ColorBrush}" />
+                            </DataTemplate>
+                        </DataGridTemplateColumn.CellTemplate>
+                    </DataGridTemplateColumn>
+                    <DataGridTextColumn Header="名称" Binding="{Binding Name}" Width="*" />
+                    <DataGridTextColumn Header="类型" Binding="{Binding TypeLabel}" Width="60" />
+                    <DataGridTextColumn Header="截止" Binding="{Binding EndLabel}" Width="130" />
+                </DataGrid.Columns>
+            </DataGrid>
+        </DockPanel>
+
+        <!-- 编辑面板 -->
+        <StackPanel Grid.Column="1">
+            <TextBlock Text="编辑 / 新建" FontWeight="Bold" Margin="0,0,0,6" />
+
+            <TextBlock Text="名称" Margin="0,6,0,2" />
+            <TextBox x:Name="NameBox" />
+
+            <TextBlock Text="颜色 (#RRGGBB)" Margin="0,8,0,2" />
+            <DockPanel>
+                <Border x:Name="ColorPreview" DockPanel.Dock="Right" Width="24" Height="24"
+                        CornerRadius="3" Margin="6,0,0,0" Background="#FF6B35" />
+                <TextBox x:Name="ColorBox" Text="#FF6B35" TextChanged="OnColorChanged" />
+            </DockPanel>
+
+            <TextBlock Text="跟随图片 / 动图（可选）" Margin="0,8,0,2" />
+            <DockPanel>
+                <Button DockPanel.Dock="Right" Content="清除" Width="44" Margin="6,0,0,0" Click="OnClearGif" />
+                <Button DockPanel.Dock="Right" Content="选择…" Width="56" Margin="6,0,0,0" Click="OnBrowseGif" />
+                <TextBox x:Name="GifBox" IsReadOnly="True"
+                         ToolTip="支持任意图片格式；图片挂在进度条下方，跟随该任务进度前沿移动，动图循环播放（超过 15px 自动缩放）" />
+            </DockPanel>
+
+            <TextBlock Text="类型" Margin="0,8,0,2" />
+            <ComboBox x:Name="TypeBox" SelectionChanged="OnTypeChanged">
+                <ComboBoxItem Content="定时任务（含开始时间）" Tag="scheduled" IsSelected="True" />
+                <ComboBoxItem Content="即时任务（仅截止时间）" Tag="instant" />
+            </ComboBox>
+
+            <TextBlock x:Name="StartLabel" Text="开始时间 (yyyy-MM-dd HH:mm)" Margin="0,8,0,2" />
+            <TextBox x:Name="StartBox" />
+
+            <TextBlock Text="截止时间 (yyyy-MM-dd HH:mm)" Margin="0,8,0,2" />
+            <TextBox x:Name="EndBox" />
+
+            <Button x:Name="SaveButton" Content="保存任务" Height="34" Margin="0,14,0,0" Click="OnSave" />
+            <Button x:Name="NewButton" Content="清空（新建）" Height="30" Margin="0,6,0,0" Click="OnNew" />
+
+            <TextBlock x:Name="StatusText" Foreground="Gray" Margin="0,10,0,0" TextWrapping="Wrap" />
+        </StackPanel>
+    </Grid>
+</Window>

@@ -1,0 +1,33 @@
+<Window x:Class="Hope.Desktop.Overlay.OverlayWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Hope Overlay"
+        WindowStyle="None"
+        AllowsTransparency="True"
+        Background="Transparent"
+        Topmost="True"
+        ShowActivated="False"
+        ShowInTaskbar="False"
+        ResizeMode="NoResize"
+        IsHitTestVisible="False"
+        Left="0" Top="0">
+    <Grid>
+        <!-- 跟随进度移动的 GIF 精灵（位于进度条下方） -->
+        <Canvas x:Name="GifCanvas" />
+
+        <!-- 分段填充由代码动态绘制 -->
+        <Canvas x:Name="BarCanvas" />
+
+        <!-- 悬停提示：通过全局光标轮询控制开关 -->
+        <Popup x:Name="HoverPopup"
+               AllowsTransparency="True"
+               Placement="Absolute"
+               StaysOpen="True">
+            <Border Background="#EE222222" CornerRadius="4" Padding="8,5">
+                <TextBlock x:Name="HoverText"
+                           Foreground="White"
+                           FontSize="12" />
+            </Border>
+        </Popup>
+    </Grid>
+</Window>

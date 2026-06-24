@@ -1,0 +1,31 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Hope Desktop (WPF)",
+      "type": "coreclr",
+      "request": "launch",
+      "preLaunchTask": "build-all",
+      "program": "${workspaceFolder}/src/win-desktop/bin/Debug/net9.0-windows/hope-desktop.dll",
+      "cwd": "${workspaceFolder}/src/win-desktop/bin/Debug/net9.0-windows",
+      "console": "internalConsole",
+      "stopAtEntry": false
+    },
+    {
+      "name": "Hope Headless (Go)",
+      "type": "go",
+      "request": "launch",
+      "mode": "debug",
+      "program": "${workspaceFolder}/src/headless",
+      "cwd": "${workspaceFolder}/src/headless",
+      "args": ["--debug"]
+    }
+  ],
+  "compounds": [
+    {
+      "name": "Hope 全栈",
+      "configurations": ["Hope Headless (Go)", "Hope Desktop (WPF)"],
+      "stopAll": true
+    }
+  ]
+}
