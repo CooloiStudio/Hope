@@ -21,6 +21,9 @@ namespace Hope.Desktop.Views;
 /// <summary>任务配置窗口：多任务 CRUD，通过 IPC 同步至 Headless（文档 §5.3）。</summary>
 public partial class ConfigWindow : Window
 {
+    private const double MinFitWindowHeight = 400;
+    private const double EditPanelMeasureWidth = 348;
+
     private readonly IpcClient _ipc;
     private readonly ObservableCollection<TaskRow> _rows = new();
     private string? _editingId;
@@ -30,6 +33,7 @@ public partial class ConfigWindow : Window
     private readonly DispatcherTimer _previewTimer;
     private readonly System.Windows.Controls.Image _previewImage;
     private bool _previewReady;
+    private bool _layoutReady;
 
     public ConfigWindow(IpcClient ipc)
     {
@@ -73,6 +77,13 @@ public partial class ConfigWindow : Window
         _previewTimer.Tick += (_, _) => UpdatePreview();
         _previewTimer.Start();
 
+        StatusText.SizeChanged += (_, _) => ScheduleFitHeightToTaskEditor();
+        Loaded += (_, _) =>
+        {
+            _layoutReady = true;
+            ScheduleFitHeightToTaskEditor();
+        };
+
         ContentRendered += (_, _) =>
             DesktopLog.Info($"ConfigWindow ContentRendered IsVisible={IsVisible} ActualSize={ActualWidth}x{ActualHeight}");
         OnNew(this, new RoutedEventArgs());
@@ -99,6 +110,7 @@ public partial class ConfigWindow : Window
             RefreshBox.SelectedItem = Math.Clamp(s.RefreshSec, 1, 10).ToString();
             BarHeightBox.SelectedItem = Math.Clamp(s.BarHeightPx, 1, 10).ToString();
             AutostartCheck.IsChecked = s.Autostart;
+            ShowConfigAtRuntimeCheck.IsChecked = s.ShowConfigAtRuntime;
             _loadingSettings = false;
             DesktopLog.Info("ConfigWindow.OnSettingsReceived applied to UI");
             UpdatePreview();
@@ -116,11 +128,46 @@ public partial class ConfigWindow : Window
         _settings.RefreshSec = ParseIntItem(RefreshBox, _settings.RefreshSec);
         _settings.BarHeightPx = ParseIntItem(BarHeightBox, _settings.BarHeightPx);
         _settings.Autostart = AutostartCheck.IsChecked == true;
+        _settings.ShowConfigAtRuntime = ShowConfigAtRuntimeCheck.IsChecked == true;
 
         _ipc.Send(new Command { Action = "updateSettings", Settings = _settings });
         _ipc.Send(new Command { Action = "getSettings" });
         ApplyAutostart(_settings.Autostart);
         SettingsStatus.Text = "已保存设置";
+    }
+
+    private void OnResetWindowHeight(object sender, RoutedEventArgs e)
+    {
+        FitHeightToTaskEditor();
+        SettingsStatus.Text = "已按任务编辑区重置窗口高度";
+    }
+
+    /// <summary>按任务编辑区实测高度调整窗体高度（§5.3.3 新增 7）。</summary>
+    public void FitHeightToTaskEditor()
+    {
+        if (!_layoutReady || TaskEditPanel == null) return;
+
+        TaskEditPanel.UpdateLayout();
+        double panelWidth = TaskEditPanel.ActualWidth > 0 ? TaskEditPanel.ActualWidth : EditPanelMeasureWidth;
+        TaskEditPanel.Measure(new System.Windows.Size(panelWidth, double.PositiveInfinity));
+        double editContentH = TaskEditPanel.DesiredSize.Height;
+
+        const double tabHeaderH = 28;
+        double panelMarginV = TaskEditPanel.Margin.Top + TaskEditPanel.Margin.Bottom;
+        double gridMarginV = RootGrid.Margin.Top + RootGrid.Margin.Bottom;
+        double leftMinH = 32 + 8 + 32 + 80; // 列表头 + 删除按钮 + 最小表格区
+
+        double clientH = Math.Max(editContentH + tabHeaderH + panelMarginV, leftMinH) + gridMarginV;
+        // 标题栏 + 可调整边框（避免依赖已废弃的 SystemParameters 边框属性）
+        double nonClientH = SystemParameters.WindowCaptionHeight + 12;
+
+        Height = Math.Max(MinFitWindowHeight, clientH + nonClientH);
+    }
+
+    private void ScheduleFitHeightToTaskEditor()
+    {
+        if (!_layoutReady) return;
+        Dispatcher.BeginInvoke(FitHeightToTaskEditor, DispatcherPriority.Loaded);
     }
 
     private static int ParseIntItem(ComboBox box, int fallback) =>
@@ -423,6 +470,7 @@ public partial class ConfigWindow : Window
     {
         bool scheduled = SelectedType() == "scheduled";
         if (StartPanel != null) StartPanel.Visibility = scheduled ? Visibility.Visible : Visibility.Collapsed;
+        ScheduleFitHeightToTaskEditor();
     }
 
     private static void SetDateTime(DatePicker date, ComboBox hour, ComboBox minute, DateTime value)

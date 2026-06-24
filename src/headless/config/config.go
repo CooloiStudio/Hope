@@ -33,8 +33,9 @@ type Settings struct {
 	ExpiredBehavior ExpiredBehavior `json:"expiredBehavior"`
 	RefreshSec      int             `json:"refreshSec"`
 	Monitor         string          `json:"monitor"` // 首版仅 "primary"
-	Autostart       bool            `json:"autostart"`
-	Language        string          `json:"language"`
+	Autostart           bool            `json:"autostart"`
+	ShowConfigAtRuntime bool            `json:"showConfigAtRuntime"`
+	Language            string          `json:"language"`
 }
 
 // DefaultSettings 返回文档约定的默认设置。
@@ -44,8 +45,9 @@ func DefaultSettings() Settings {
 		ExpiredBehavior: ExpiredKeep,
 		RefreshSec:      1,
 		Monitor:         "primary",
-		Autostart:       false,
-		Language:        "zh-CN",
+		Autostart:           false,
+		ShowConfigAtRuntime: false,
+		Language:            "zh-CN",
 	}
 }
 
@@ -116,6 +118,7 @@ func mergeSettings(def, loaded Settings) Settings {
 		out.Language = loaded.Language
 	}
 	out.Autostart = loaded.Autostart
+	out.ShowConfigAtRuntime = loaded.ShowConfigAtRuntime
 	return out
 }
 

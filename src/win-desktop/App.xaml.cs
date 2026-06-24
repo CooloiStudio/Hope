@@ -69,10 +69,20 @@ public partial class App : Application
         if (connected) _ipc.Send(new Command { Action = "getSettings" });
     }
 
+    private bool _startupConfigHandled;
+
     private void OnSettingsReceived(SettingsDto s)
     {
-        DesktopLog.Info($"App.OnSettingsReceived barHeightPx={s.BarHeightPx}");
-        Dispatcher.BeginInvoke(() => _barHeightPx = Math.Clamp(s.BarHeightPx, 1, 10));
+        DesktopLog.Info($"App.OnSettingsReceived barHeightPx={s.BarHeightPx} showConfigAtRuntime={s.ShowConfigAtRuntime}");
+        Dispatcher.BeginInvoke(() =>
+        {
+            _barHeightPx = Math.Clamp(s.BarHeightPx, 1, 10);
+            if (!_startupConfigHandled)
+            {
+                _startupConfigHandled = true;
+                if (s.ShowConfigAtRuntime) ShowConfig();
+            }
+        });
     }
 
     private void OnStateReceived(StateMessage msg)
@@ -213,6 +223,7 @@ public partial class App : Application
             _config.WindowState = WindowState.Normal;
             _config.Activate();
             _config.RequestRefresh();
+            _config.FitHeightToTaskEditor();
             DesktopLog.Info($"ShowConfigCore: done IsVisible={_config.IsVisible} IsActive={_config.IsActive}");
         }
         catch (Exception ex)

@@ -412,10 +412,27 @@ go build -ldflags="-s -w -H=windowsgui" -o hope-headless.exe .
 - 需在 IPC `segments[]` 增加 `endAt` 字段（见 §5.2 补充），供 Overlay 计算倒计时。
 - 倒计时格式：≥1 天显示「N 天 HH:mm:ss」，否则「HH:mm:ss」；已到期显示「已到期」。
 
-**修改 2：窗口默认尺寸与按钮文案** 🔲
+**修改 2：窗口默认尺寸与按钮文案** ✅ → 修订（2026-06-24）
 
-- 增大配置窗口默认宽 / 高，使默认尺寸 **无需滚动即可看到全部主要界面**。
+- 配置窗 **宽度** 默认 1000px、`MinWidth=1000`；用户可自由拖拽调整宽高。
+- **高度自适应编辑区**（见 **新增 7**）：按任务编辑 Tab 内容动态计算窗体高度，使编辑区 **不出现纵向滚动条**；用户手动拉高/矮后不被强制回弹。
 - 修正按钮文案截断：「选择…」「清除」需完整显示（加宽按钮或改文案）。
+
+**新增 7：窗体高度自适应 + 全局设置扩展** 🔲 → ✅（2026-06-24）
+
+| 项 | 说明 |
+|----|------|
+| 编辑区无滚动条 | 任务编辑 Tab **去掉 `ScrollViewer`**，以 `TaskEditPanel` 实测高度驱动窗体高度 |
+| 不限制用户调尺寸 | `ResizeMode=CanResize`；`MinHeight` 仅保留合理下限（≈400px），**不**将自适应高度写死为 `MinHeight` |
+| 自适应时机 | 首次显示、任务类型切换（定时/即时显隐开始时间）、「重置窗口高度」按钮 |
+| **运行时显示此窗口** | 全局设置勾选框 `settings.showConfigAtRuntime`，**默认关**；开启后 Desktop **下次启动**（IPC 连上并 `getSettings` 后）自动弹出配置窗 |
+| **重置窗口高度** | 全局设置按钮：按当前编辑区内容重新计算并应用窗体高度 |
+
+**实现要点：**
+
+- `Settings` / `SettingsDto` 增加 `showConfigAtRuntime`（bool，默认 `false`）。
+- `ConfigWindow.FitHeightToTaskEditor()`：`TaskEditPanel.Measure(…, ∞)` + Tab 头 / 外边距 / 标题栏常量 → `Window.Height`。
+- `App` 在首次 `SettingsReceived` 且 `showConfigAtRuntime` 时调用 `ShowConfig()`（仅一次）。
 
 **新增 1：选择图片后展示预览（≤15px 高）** 🔲
 
@@ -435,11 +452,13 @@ go build -ldflags="-s -w -H=windowsgui" -o hope-headless.exe .
 
 **修订说明（相对初版「静态满涂示意」）：** 初版写「单段满涂 + 图片挂右侧」仅为占位；现改为按真实 `percent` 填充，避免条高固定 8px、与全局设置脱节。
 
-**新增 3：全局设置项** 🔲
+**新增 3：全局设置项** ✅（部分）→ 扩展（2026-06-24）
 
 - **刷新间隔**：进度条更新频率，1–10 秒（对应 `settings.refreshSec`；默认 1 秒 = 每秒 1 次）。
 - **进度条高度**：1–10px（对应 `settings.barHeightPx`，Desktop 实时应用到 Overlay）。
 - **开机自启**：写入 / 删除 `HKCU\…\Run` 的 `Hope` 值（Desktop 侧 C# 执行），并持久化 `settings.autostart`。
+- **运行时显示此窗口**：`settings.showConfigAtRuntime`，默认 **关**（§5.3.3 新增 7）。
+- **重置窗口高度**：全局设置按钮，触发编辑区高度自适应（§5.3.3 新增 7）。
 
 **新增 4：双 Tab 布局** 🔲
 

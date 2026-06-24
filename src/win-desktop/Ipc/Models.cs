@@ -64,5 +64,6 @@ public sealed class SettingsDto
     [JsonPropertyName("refreshSec")] public int RefreshSec { get; set; } = 1;
     [JsonPropertyName("monitor")] public string Monitor { get; set; } = "primary";
     [JsonPropertyName("autostart")] public bool Autostart { get; set; }
+    [JsonPropertyName("showConfigAtRuntime")] public bool ShowConfigAtRuntime { get; set; }
     [JsonPropertyName("language")] public string Language { get; set; } = "zh-CN";
 }
