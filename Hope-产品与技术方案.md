@@ -7,7 +7,7 @@
 
 ---
 
-## 0. 实现状态（截至 2026-06-24）
+## 0. 实现状态（截至 2026-06-24，v0.4 施工中）
 
 > 对照 `src/headless`、`src/win-desktop`、`.github/workflows/release.yml`、`setup.iss`。
 
@@ -18,26 +18,28 @@
 | Headless 核心（Go） | ✅ | `src/headless/`：`engine`、`task`、`config`、`ipc` |
 | 墙钟实时进度 & 多任务分段 | ✅ | `task.BuildLayout`、`task.Percent`；单测见 `task_test.go` |
 | 配置持久化（JSON） | ✅ | `%APPDATA%\Hope\config.json` + `tasks.json`；含 UTF-8 BOM 剥离 |
-| IPC 命名管道广播 & 命令 | ✅ | `\\.\pipe\Hope\progress`；`hide`/`show` 已实现（文档原仅列 pause/resume） |
+| IPC 命名管道广播 & 命令 | ✅ | `\\.\pipe\Hope\progress`；`hide`/`show`/`getSettings`/`updateSettings` 已实现 |
 | Headless 单实例 | ✅ | `Global\HopeHeadless` Mutex |
 | Headless 日志 | ✅ | `logs/hope-headless.log`；`--debug` 额外输出控制台 |
-| WPF 配置窗体 & 任务 CRUD | ✅ | `Views/ConfigWindow`：名称、颜色、类型、起止时间、跟随图片 |
-| 系统托盘 | ✅ | `App.xaml.cs`：打开设置、暂停/继续、隐藏/显示、关于、退出 |
-| DWM 分段顶栏 Overlay | ✅ | `Overlay/OverlayWindow`：多色填充、透明未完成区、固定条高 |
+| WPF 配置窗体 & 任务 CRUD | ✅ | `Views/ConfigWindow`：双 Tab、取色盘、日期时间选择器、快填、实时预览 |
+| 全局设置 UI | ✅ | 刷新间隔 / 条高 / 开机自启 / 运行时显示配置窗 / 重置窗高；**修改即生效** |
+| 系统托盘 | ✅ | `App.xaml.cs`：主题自适应图标、打开设置、暂停/继续、隐藏/显示、关于、退出 |
+| 应用 / 托盘品牌图标 | ✅ | `src/resources/` + `AppIconHelper`；托盘随系统亮暗着色 |
+| DWM 分段顶栏 Overlay | ✅ | `Overlay/OverlayWindow`：多色填充、透明未完成区、条高读回 |
 | 点击穿透 & 不出 Alt+Tab | ✅ | `NativeMethods` + `WM_NCHITTEST` → `HTTRANSPARENT` |
-| 悬停展示任务名 | ✅ | 全局光标轮询；仅进度条高度带内 **已填充段** 响应 |
-| 跟随图片/动图 | ✅ | `Overlay/ImageSprite`：任意格式加载、>15px 等比缩放、GIF 逐帧播放 |
-| 截止后行为 `expiredBehavior` | ⚠️ | Headless 广播 `expired[]`；Desktop 已实现 `notify`（托盘气球）、`blink`（顶栏闪烁）；**配置窗体尚无设置项**，默认 `keep` |
-| 用户设置 UI（条高、刷新间隔等） | ⚠️ | `updateSettings` IPC 与 `config.Settings` 已有；**Desktop 未读回设置、配置窗无设置页**，条高暂硬编码 4px |
+| 悬停展示任务名 + 倒计时 | ✅ | `OverlayWindow`：`endAt` 倒计时 Tooltip |
+| 跟随图片/动图 | ✅ | `Overlay/ImageSprite`：Bgra32 保留 alpha；>15px 等比缩放、GIF 播放 |
+| 截止后行为 `expiredBehavior` | ⚠️ | Headless + Desktop 逻辑 ✅（`notify`/`blink`/`hide`）；**配置窗体尚无设置项**，默认 `keep` |
 | Desktop → Headless 互拉 | ✅ | `HeadlessSupervisor`：检测进程缺失则拉起 |
-| Headless → Desktop 互拉 | ⚠️ | `main.go --desktop` 已实现；**Desktop 拉起 Headless 时未传 `--desktop`**，该方向互拉需安装包或手动带参启动 |
+| Headless → Desktop 互拉 | ⚠️ | `main.go --desktop` 已实现；**Desktop 拉起 Headless 时未传 `--desktop`** |
 | Desktop 单实例 | ✅ | `Global\HopeDesktop` Mutex |
+| WPF-UI Fluent 主题（配置窗） | ⚠️ | `App.xaml` 合并主题字典；`Window` + `SystemThemeWatcher`（**未用 FluentWindow/Mica**，Win10 稳定性） |
 | CI 编译 & 单测 | ✅ | `.github/workflows/release.yml`：`go test` + `dotnet publish` |
 | Inno Setup 安装包 | ✅ | `setup.iss`（含可选开机自启任务）；需打 tag `v*` 触发 Release 上传 |
-| VS Code 调试配置 | ✅ | `.vscode/launch.json` + `tasks.json`（WPF 用官方 VS Code + `ms-dotnettools.csharp`） |
+| VS Code 调试配置 | ✅ | `Hope.sln` + `.vscode/launch.json`（net10.0-windows） |
 | Phase 2 全屏插件 | ❌ | `src/plugins/fullscreen/` 仅占位 README |
 
-**当前可交付边界：** 本地开发与日常使用闭环已通；距 v1.0 尚差设置 UI、双向互拉联调、帮助文档与验收清单人工回归。
+**当前可交付边界：** v0.4 配置窗与设置链路主体已通；距 v1.0 尚差 `expiredBehavior` 设置 UI、FluentWindow/Mica（可选）、双向互拉联调、帮助文档与验收清单人工回归。
 
 ### 0.2 验收标准对照（§9）
 
@@ -46,7 +48,7 @@
 | 1 | 多任务多色拼接 | ✅ |
 | 2 | 点击穿透 | ✅ |
 | 3 | 不出 Alt+Tab / Win+Tab | ✅ |
-| 4 | 悬停展示任务名 | ✅（仅已填充段） |
+| 4 | 悬停展示任务名 + 倒计时 | ✅ |
 | 5 | 墙钟 90% 示例 | ✅（单测覆盖） |
 | 6 | 无边框全屏可见 | ⚠️ 未自动化测；设计支持，需人工验证 |
 | 7 | 托盘隐藏顶栏 | ✅ |
@@ -92,7 +94,7 @@
 | 模块 | 说明 | 状态 |
 |------|------|------|
 | Headless 核心 | Go 后台：任务计时、百分比计算、配置持久化、IPC 广播 | ✅ |
-| 配置窗口 | WPF：创建/编辑任务、截止时间、基础设置 | ⚠️ 任务 CRUD ✅；全局设置 UI ❌ |
+| 配置窗口 | WPF：创建/编辑任务、全局设置、实时预览 | ✅（`expiredBehavior` 设置项除外） |
 | 系统托盘 | 托盘图标入口：打开设置、暂停/恢复、退出 | ✅ |
 | DWM 覆盖层 | 透明置顶、鼠标穿透的顶栏进度条窗口 | ✅ |
 | 跟随图片/动图 | 进度条下方、随 `fillEnd` 移动 | ✅ |
@@ -368,7 +370,7 @@ go build -ldflags="-s -w -H=windowsgui" -o hope-headless.exe .
 
 > 广播额外字段 `expired[]`（任务刚到期时一次性下发，供 Desktop 执行 `expiredBehavior`）。✅ 已实现
 
-### 5.3 WPF 配置窗体 + 系统托盘 ⚠️
+### 5.3 WPF 配置窗体 + 系统托盘 ✅（`expiredBehavior` 设置项除外）
 
 **配置窗体：**
 
@@ -376,41 +378,56 @@ go build -ldflags="-s -w -H=windowsgui" -o hope-headless.exe .
 - [x] 支持多任务列表：新建 / 编辑 / 删除
 - [x] 保存后通过 IPC 同步至 Headless
 - [x] 关闭窗口时 **最小化到托盘**，不退出进程
-- [ ] 全局设置页：进度条高度、`expiredBehavior`、刷新间隔、开机自启（后端已支持，UI 未做）
+- [x] 全局设置 Tab：进度条高度、刷新间隔、开机自启、运行时显示配置窗、重置窗高；**修改即 `updateSettings`**（无保存按钮）
+- [ ] `expiredBehavior` 设置项（后端已支持，UI 未做）
 
 #### 5.3.1 配置窗体交互增强（v0.4 新增需求）
 
 > 来源：用户反馈现有编辑面板偏简陋，提升录入体验与数据正确性。
 
-**需求 1：颜色用系统取色盘选取，且任务颜色不可重复** 🔲
+**需求 1：颜色用系统取色盘选取，且任务颜色不可重复** ✅（2026-06-24）
 
-- [ ] 点击颜色 **预览色块** 直接调起 **Windows 系统取色盘**（WinForms `ColorDialog`，桌面端已启用 `UseWindowsForms`），免去手填 `#RRGGBB`。
-- [ ] 取色盘初始色取当前任务颜色；确认后回填为大写 `#RRGGBB` 并实时刷新预览。
-- [ ] 手填文本框保留，二者保持同步（输入合法 hex 仍更新预览）。
-- [ ] **颜色唯一性约束：** 同一任务列表中各任务颜色不得重复。保存时校验（编辑态排除自身），重复则提示并阻止保存；取色后若与现有任务撞色，立即给出提示。
-- 理由：顶栏靠颜色区分任务段（§7.2），撞色会让用户无法分辨。
+- [x] 点击颜色 **预览色块** 调起 **Windows 系统取色盘**（`ColorDialog`）。
+- [x] 取色盘初始色取当前任务颜色；确认后回填大写 `#RRGGBB` 并实时刷新预览。
+- [x] 手填文本框保留，与预览同步。
+- [x] **颜色唯一性**：保存时校验（编辑态排除自身）；取色后撞色即时提示。
 
-**需求 2：日期、时间改用选择器录入** 🔲
+**需求 2：日期、时间改用选择器录入** ✅ → 扩展（2026-06-24）
 
-- [ ] 开始时间 / 截止时间由原 `yyyy-MM-dd HH:mm` **手填文本框** 改为 **日期选择器（`DatePicker`）+ 时（00–23）+ 分（00–59）下拉**，杜绝格式错误。
-- [ ] 即时任务仅截止时间；定时任务额外显示开始时间选择器（沿用现有显隐逻辑）。
-- [ ] 保存时校验：开始须早于截止；任一时间未选齐则提示。
+- [x] 开始时间 / 截止时间由原 `yyyy-MM-dd HH:mm` **手填文本框** 改为 **日期选择器（`DatePicker`）+ 时（00–23）+ 分（00–59）下拉**，杜绝格式错误。
+- [x] 即时任务仅截止时间；定时任务额外显示开始时间选择器（沿用现有显隐逻辑）。
+- [x] 保存时校验：开始须早于截止；任一时间未选齐则提示。
 
-#### 5.3.3 配置窗体重构 + 全局设置 + 实时预览（v0.4，🔲 待施工）
+**需求 3：日期选择器不透明 + 日期/时间快填** 🔲 → ✅（2026-06-24）
+
+| 项 | 说明 |
+|----|------|
+| DatePicker 不透明 | 保留 **系统默认** `DatePicker` 外观；仅对 `DatePickerTextBox` / 弹出 `Calendar` 设置不透明底色与 `TextFillColorPrimaryBrush` 前景 |
+| 全局设置即时生效 | 去掉「保存设置」按钮；刷新间隔、条高、自启、运行时显示等 **修改即 `updateSettings`** |
+| 日期快填 | 在 **开始日期**、**截止日期** 选择器下方各一行「快填」：**今天、明天、后天、一周后、一月后**（相对**当天**日历日） |
+| 时间快填 | **现在、+0.5H、+1H、+2H、+8H、+12H**（相对当前墙钟；跨日同步日期） |
+| 交互 | 与名称快填一致；点击后刷新预览并触发自适应窗高 |
+
+**需求 4：任务编辑区分组与主题细节** ✅（2026-06-24）
+
+| 项 | 说明 |
+|----|------|
+| 区块分割线 | 三段：**名称~类型**（含颜色/预览）｜**开始日期+时间**｜**截止+时间**；`Separator` + `ControlStrokeColorDefaultBrush`（2px，随 Fluent 主题） |
+| 编辑标题 | 原「编辑/新建」改为动态 `StatusText` 置顶（新建/正在编辑/校验提示） |
+| 下拉框主题 | 使用 WPF-UI `ControlsDictionary` 默认 `ComboBox` 样式（勿在窗口级覆盖不完整隐式样式） |
+| DatePicker | 系统默认外观 + 不透明输入框/日历 + 主题前景色 |
+
+#### 5.3.3 配置窗体重构 + 全局设置 + 实时预览（v0.4）⚠️ 主体 ✅
 
 > 来源：用户 2026-06-24 反馈。包含一个 bug 修复、两处修改与六项新增。
 
-**Bug：顶栏挂载图片后出现背景色** 🔲
+**Bug：顶栏挂载图片后出现背景色** ✅（2026-06-24）
 
-- 现象：进度条本应背景透明；挂载图片后顶栏出现背景色，清除图片后背景色仍残留。
-- 根因：`ImageSprite` 用 `Bitmap.GetHbitmap()` 转 `BitmapSource`，**丢失 PNG/GIF 的 alpha 透明通道**，透明区域被填成不透明底色（黑/白块），看起来像“背景色”。
-- 修复：改用保留 alpha 的转换（`LockBits` → `BitmapSource.Create(... Bgra32 ...)`）；**无论是否挂载图片，Overlay 背景恒透明**。
+- 已修复：`ImageSprite` 改用 `LockBits` → `Bgra32`，保留 alpha；Overlay 背景恒透明。
 
-**修改 1：悬停提示内容** 🔲
+**修改 1：悬停提示内容** ✅（2026-06-24）
 
-- 鼠标悬停顶栏已填充段时，仅显示 **任务名称 + 倒计时**（距 `endAt` 的剩余时间），不再显示百分比。
-- 需在 IPC `segments[]` 增加 `endAt` 字段（见 §5.2 补充），供 Overlay 计算倒计时。
-- 倒计时格式：≥1 天显示「N 天 HH:mm:ss」，否则「HH:mm:ss」；已到期显示「已到期」。
+- 悬停已填充段：任务名 + **倒计时**（`segments[].endAt`）；格式见 §5.3.3 新增 2。
 
 **修改 2：窗口默认尺寸与按钮文案** ✅ → 修订（2026-06-24）
 
@@ -434,11 +451,9 @@ go build -ldflags="-s -w -H=windowsgui" -o hope-headless.exe .
 - `ConfigWindow.FitHeightToTaskEditor()`：`TaskEditPanel.Measure(…, ∞)` + Tab 头 / 外边距 / 标题栏常量 → `Window.Height`。
 - `App` 在首次 `SettingsReceived` 且 `showConfigAtRuntime` 时调用 `ShowConfig()`（仅一次）。
 
-**新增 1：选择图片后展示预览（≤15px 高）** 🔲
+**新增 1：选择图片后展示预览（≤15px 高）** ✅（并入新增 2 实时预览）
 
-- 任务编辑区选择图片后，立即展示该图片预览，**高度最高 15px**（等比缩放），用 WPF `BitmapImage` 加载（保留 alpha，避免上面 bug）。
-
-**新增 2：任务编辑实时预览（进度条 + 图片）** 🔲 → ✅（2026-06-24 修订）
+**新增 2：任务编辑实时预览（进度条 + 图片）** ✅（2026-06-24）
 
 - 在任务编辑区渲染一条 **模拟真实顶栏** 的进度条 + 可选挂载图片（图片高度最高 15px）。
 - 颜色、时间、图片 **实时取自编辑表单**；保存后才影响桌面真实顶栏。
@@ -452,32 +467,27 @@ go build -ldflags="-s -w -H=windowsgui" -o hope-headless.exe .
 
 **修订说明（相对初版「静态满涂示意」）：** 初版写「单段满涂 + 图片挂右侧」仅为占位；现改为按真实 `percent` 填充，避免条高固定 8px、与全局设置脱节。
 
-**新增 3：全局设置项** ✅（部分）→ 扩展（2026-06-24）
+**新增 3：全局设置项** ✅（2026-06-24）
 
-- **刷新间隔**：进度条更新频率，1–10 秒（对应 `settings.refreshSec`；默认 1 秒 = 每秒 1 次）。
-- **进度条高度**：1–10px（对应 `settings.barHeightPx`，Desktop 实时应用到 Overlay）。
-- **开机自启**：写入 / 删除 `HKCU\…\Run` 的 `Hope` 值（Desktop 侧 C# 执行），并持久化 `settings.autostart`。
-- **运行时显示此窗口**：`settings.showConfigAtRuntime`，默认 **关**（§5.3.3 新增 7）。
-- **重置窗口高度**：全局设置按钮，触发编辑区高度自适应（§5.3.3 新增 7）。
+- **刷新间隔**：1–10 秒（`settings.refreshSec`）；**修改即生效**。
+- **进度条高度**：1–10px（`settings.barHeightPx`）；Overlay + 编辑预览即时应用。
+- **开机自启**：HKCU Run + `settings.autostart`。
+- **运行时显示此窗口**：`settings.showConfigAtRuntime`，默认关；下次启动自动打开配置窗。
+- **重置窗口高度**：按任务编辑区内容重新 `FitHeightToTaskEditor()`。
+- [ ] **未做**：`expiredBehavior` 下拉配置。
 
-**新增 4：双 Tab 布局** 🔲
+**新增 4：双 Tab 布局** ✅
 
-- 配置窗体右侧改为两个 Tab：**全局设置** / **任务编辑**，可互相切换。
-- 默认选中 **全局设置** Tab；在任务列表中选中某任务后，自动切到 **任务编辑** Tab。
+**新增 5：「添加任务」按钮** ✅
 
-**新增 5：「添加任务」按钮** 🔲
-
-- 任务列表上方「任务列表」文案后放一个显眼的 **「添加任务」** 按钮；点击 = 新建并切到 **任务编辑** Tab。
-
-**新增 6：任务名称预设快填** 🔲
-
-- 任务名称旁提供预设：**下班、干饭、放假**；用户点选后快速填入名称框。
+**新增 6：任务名称预设快填** ✅（下班 / 干饭 / 放假）
 
 **设置读取链路（实现要点）：**
 
-- IPC 新增 `getSettings` 命令，返回 `{"type":"settings","settings":{...}}`（与 `listTasks` 同机制）。
-- Desktop 启动时拉取一次设置，应用 `barHeightPx` 到 Overlay；全局设置 Tab 保存后发 `updateSettings` 再 `getSettings` 刷新，使条高即时生效。
-- `refreshSec` 由 Headless 广播循环每帧读取，改后下一帧生效。
+- IPC：`getSettings` / `updateSettings`（与 `listTasks` 同机制）。
+- Desktop 启动与 IPC 连上后拉取设置，应用 `barHeightPx` 到 Overlay。
+- 全局设置控件变更时 **立即** `updateSettings` + `getSettings`（无「保存设置」按钮）。
+- `refreshSec` 由 Headless 广播循环读取，下一帧生效。
 
 #### 5.3.2 界面主题：贴近 Windows 11 Fluent（WPF-UI）
 
@@ -493,12 +503,13 @@ go build -ldflags="-s -w -H=windowsgui" -o hope-headless.exe .
 
 **采用方案 B 的设计决策**
 
-- [ ] 依赖：`WPF-UI` 4.2.0（NuGet，MIT 许可，兼容 net10.0-windows）。
-- [ ] `App.xaml` 合并 `ui:ThemesDictionary` + `ui:ControlsDictionary`，基础控件（Button/TextBox/ComboBox/DatePicker/DataGrid 等）自动获得 Fluent 样式。
-- [ ] 配置窗体改用 `ui:FluentWindow` + `ui:TitleBar`，启用 **Mica 背景** 与圆角；主操作按钮用强调色（`Appearance="Primary"`）。
-- [ ] **亮 / 暗自动跟随系统**：启动时 `ApplicationThemeManager.ApplySystemTheme()`；窗口 `SystemThemeWatcher.Watch(this)` 实时跟随系统主题切换。
-- [ ] **平台降级（已知）**：Mica 仅 Win11（Build 22000+）生效；Win10 自动回退为纯色背景，功能与布局不受影响。
-- [ ] **作用范围**：仅美化配置窗体。DWM 顶栏 Overlay（透明、点击穿透）与系统托盘 **保持不变**，不引入主题库副作用。
+- [x] 依赖：`WPF-UI` 4.2.0（NuGet，MIT，`net10.0-windows`）。
+- [x] `App.xaml` 合并 `ui:ThemesDictionary` + `ui:ControlsDictionary`。
+- [x] 配置窗体使用普通 `Window`（**非** `FluentWindow`：Win10 上 Mica/`Show()` 曾卡死 UI）；`ui:Button`/`ui:TextBox`/`ui:DataGrid` + 系统 `ComboBox`/`DatePicker`。
+- [x] **亮 / 暗跟随系统**：`ApplicationThemeManager.ApplySystemTheme()` + `SystemThemeWatcher.Watch`（`Backdrop=None`）。
+- [x] 主操作按钮 `Appearance="Primary"`。
+- [ ] **Mica / 自定义 TitleBar**：暂缓（稳定性优先，见 `ConfigWindow` / `App.xaml.cs` 注释）。
+- [x] **作用范围**：仅配置窗体；Overlay 与托盘不变。
 
 **进程互保：**
 
@@ -539,7 +550,7 @@ go build -ldflags="-s -w -H=windowsgui" -o hope-headless.exe .
 
 **窗口特性：**
 
-- [x] 无边框、无标题栏；宽度 = 主屏宽度；进度条高度 `1~10px`（可配置，默认 `4px`；**Desktop 暂未从设置读回，硬编码 4**）
+- [x] 无边框、无标题栏；宽度 = 主屏宽度；进度条高度 `1~10px`（`settings.barHeightPx`，Desktop 读回并应用）
 - [x] 置顶：`HWND_TOPMOST` + WPF `Topmost=True`
 - [x] **不参与任务切换：** `WS_EX_TOOLWINDOW`，不出现在 Alt+Tab / Win+Tab 列表
 - [x] **不可聚焦：** `WS_EX_NOACTIVATE`；`ShowActivated=false`；不抢夺前台焦点
@@ -772,13 +783,14 @@ Hope/
 
 | 设置 | 默认 | 是否首版 | 实现状态 |
 |------|------|----------|----------|
-| 进度条高度 (1–10px) | 4px | 是 | 🔲 v0.4 全局设置 Tab 接线，Desktop 实时应用（§5.3.3） |
-| 每任务颜色 | 用户必填 | 是 | ✅；🔲 v0.4 增系统取色盘 + 去重校验（§5.3.1） |
+| 进度条高度 (1–10px) | 4px | 是 | ✅ 全局设置即时生效 |
+| 每任务颜色 | 用户必填 | 是 | ✅ 取色盘 + 去重校验 |
 | 跟随图片/动图 | 可选 | 是 | ✅ |
 | 显示显示器 | 主屏 | 是 | ✅ 仅主屏 |
 | 截止后行为 `expiredBehavior` | `keep` | 是 | ⚠️ 逻辑 ✅；配置 UI ❌ |
-| 刷新间隔 `refreshSec` | 1s | 是 | 🔲 v0.4 全局设置 Tab 可调（1–10s，§5.3.3） |
-| 开机自启 | 关 | 是 | 🔲 v0.4 全局设置 Tab：写 HKCU Run + 持久化（§5.3.3） |
+| 刷新间隔 `refreshSec` | 1s | 是 | ✅ 1–10s，即时生效 |
+| 开机自启 | 关 | 是 | ✅ HKCU Run + 持久化 |
+| 运行时显示配置窗 | 关 | 是 | ✅ `showConfigAtRuntime` |
 | 语言 | 简体中文 | [ ] | ❌ 字段预留，未做 i18n |
 
 ### 7.5 首次使用引导（Onboarding）
@@ -823,9 +835,9 @@ Hope/
 |------|------|------|
 | v0.1 | Headless + IPC + 命令行验证 | ✅ |
 | v0.2 | WPF 配置 + 托盘 | ✅ |
-| v0.3 | DWM 分段顶栏 + 多任务闭环 + 跟随图片 | ✅ **当前代码基线** |
-| v0.4 | 设置 UI、双向互拉、条高读回、`expiredBehavior` 配置、配置窗体交互增强（取色盘 + 颜色去重 + 日期时间选择器，§5.3.1）、Win11 Fluent 主题（WPF-UI，§5.3.2） | 🔲 下一步 |
-| v1.0 | 安装包验收、帮助文档、Onboarding | 🔲（应用/托盘图标 ✅） |
+| v0.3 | DWM 分段顶栏 + 多任务闭环 + 跟随图片 | ✅ |
+| v0.4 | 设置 UI、配置窗交互增强、WPF-UI 主题、品牌图标、实时预览、窗高自适应 | ⚠️ **主体已完成**；剩 `expiredBehavior` UI、FluentWindow/Mica、双向互拉 |
+| v1.0 | 安装包验收、帮助文档、Onboarding | 🔲 |
 | v1.x-plugin | 全屏游戏拓展包（独立发版） | ❌ |
 
 ---

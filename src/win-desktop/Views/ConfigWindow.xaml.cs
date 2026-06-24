@@ -64,8 +64,14 @@ public partial class ConfigWindow : Window
             BarHeightBox.Items.Add(i.ToString());
         }
 
+        RefreshBox.SelectionChanged += OnSettingsSelectionChanged;
+        BarHeightBox.SelectionChanged += OnBarHeightBoxChanged;
+        AutostartCheck.Checked += OnSettingsControlChanged;
+        AutostartCheck.Unchecked += OnSettingsControlChanged;
+        ShowConfigAtRuntimeCheck.Checked += OnSettingsControlChanged;
+        ShowConfigAtRuntimeCheck.Unchecked += OnSettingsControlChanged;
+
         PreviewTrack.SizeChanged += (_, _) => UpdatePreview();
-        BarHeightBox.SelectionChanged += (_, _) => UpdatePreview();
         StartDatePicker.SelectedDateChanged += (_, _) => UpdatePreview();
         EndDatePicker.SelectedDateChanged += (_, _) => UpdatePreview();
         StartHourBox.SelectionChanged += (_, _) => UpdatePreview();
@@ -117,7 +123,20 @@ public partial class ConfigWindow : Window
         });
     }
 
-    private void OnSaveSettings(object sender, RoutedEventArgs e)
+    private void OnBarHeightBoxChanged(object sender, SelectionChangedEventArgs e)
+    {
+        UpdatePreview();
+        if (e.AddedItems.Count > 0) CommitSettings();
+    }
+
+    private void OnSettingsSelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (e.AddedItems.Count > 0) CommitSettings();
+    }
+
+    private void OnSettingsControlChanged(object sender, RoutedEventArgs e) => CommitSettings();
+
+    private void CommitSettings()
     {
         if (_loadingSettings) return;
         if (!_ipc.IsConnected)
@@ -125,6 +144,7 @@ public partial class ConfigWindow : Window
             SettingsStatus.Text = "未连接到核心进程（hope-headless），无法保存设置";
             return;
         }
+
         _settings.RefreshSec = ParseIntItem(RefreshBox, _settings.RefreshSec);
         _settings.BarHeightPx = ParseIntItem(BarHeightBox, _settings.BarHeightPx);
         _settings.Autostart = AutostartCheck.IsChecked == true;
@@ -133,7 +153,7 @@ public partial class ConfigWindow : Window
         _ipc.Send(new Command { Action = "updateSettings", Settings = _settings });
         _ipc.Send(new Command { Action = "getSettings" });
         ApplyAutostart(_settings.Autostart);
-        SettingsStatus.Text = "已保存设置";
+        SettingsStatus.Text = "";
     }
 
     private void OnResetWindowHeight(object sender, RoutedEventArgs e)
@@ -205,6 +225,66 @@ public partial class ConfigWindow : Window
     private void OnPresetName(object sender, RoutedEventArgs e)
     {
         if (sender is ContentControl b && b.Content is string name) NameBox.Text = name;
+    }
+
+    private void OnDateQuickFill(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement el || el.Tag is not string tag) return;
+        var sep = tag.IndexOf(':');
+        if (sep < 0) return;
+        var picker = tag[..sep] == "StartDate" ? StartDatePicker : EndDatePicker;
+        var today = DateTime.Today;
+        var date = tag[(sep + 1)..] switch
+        {
+            "Today" => today,
+            "Tomorrow" => today.AddDays(1),
+            "DayAfter" => today.AddDays(2),
+            "Week" => today.AddDays(7),
+            "Month" => today.AddMonths(1),
+            _ => today,
+        };
+        picker.SelectedDate = date;
+        UpdatePreview();
+        ScheduleFitHeightToTaskEditor();
+    }
+
+    private void OnTimeQuickFill(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement el || el.Tag is not string tag) return;
+        var sep = tag.IndexOf(':');
+        if (sep < 0) return;
+        var target = tag[..sep];
+        var preset = tag[(sep + 1)..];
+
+        DatePicker datePicker;
+        ComboBox hourBox, minuteBox;
+        if (target == "StartTime")
+        {
+            datePicker = StartDatePicker;
+            hourBox = StartHourBox;
+            minuteBox = StartMinuteBox;
+        }
+        else
+        {
+            datePicker = EndDatePicker;
+            hourBox = EndHourBox;
+            minuteBox = EndMinuteBox;
+        }
+
+        var when = preset switch
+        {
+            "Now" => DateTime.Now,
+            "H0.5" => DateTime.Now.AddMinutes(30),
+            "H1" => DateTime.Now.AddHours(1),
+            "H2" => DateTime.Now.AddHours(2),
+            "H8" => DateTime.Now.AddHours(8),
+            "H12" => DateTime.Now.AddHours(12),
+            _ => DateTime.Now,
+        };
+
+        SetDateTime(datePicker, hourBox, minuteBox, when);
+        UpdatePreview();
+        ScheduleFitHeightToTaskEditor();
     }
 
     private static void PopulateTimeBoxes(ComboBox hour, ComboBox minute)
