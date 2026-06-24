@@ -1,8 +1,8 @@
 using System.Collections.ObjectModel;
 using System.ComponentModel;
-using System.Globalization;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 using System.Windows.Media;
 using Hope.Desktop.Ipc;
 using Color = System.Windows.Media.Color;
@@ -14,9 +14,8 @@ using ColorConverter = System.Windows.Media.ColorConverter;
 namespace Hope.Desktop.Views;
 
 /// <summary>任务配置窗口：多任务 CRUD，通过 IPC 同步至 Headless（文档 §5.3）。</summary>
-public partial class ConfigWindow : Window
+public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
 {
-    private const string TimeFormat = "yyyy-MM-dd HH:mm";
     private readonly IpcClient _ipc;
     private readonly ObservableCollection<TaskRow> _rows = new();
     private string? _editingId;
@@ -24,12 +23,25 @@ public partial class ConfigWindow : Window
     public ConfigWindow(IpcClient ipc)
     {
         InitializeComponent();
+
+        // 跟随系统亮 / 暗主题并应用 Mica 背景（WPF-UI，文档 §5.3.2）。
+        Wpf.Ui.Appearance.SystemThemeWatcher.Watch(this);
+
         _ipc = ipc;
         TaskGrid.ItemsSource = _rows;
         _ipc.TasksReceived += OnTasksReceived;
 
+        PopulateTimeBoxes(StartHourBox, StartMinuteBox);
+        PopulateTimeBoxes(EndHourBox, EndMinuteBox);
+
         Loaded += (_, _) => _ipc.Send(new Command { Action = "listTasks" });
-        UpdateStartVisibility();
+        OnNew(this, new RoutedEventArgs());
+    }
+
+    private static void PopulateTimeBoxes(ComboBox hour, ComboBox minute)
+    {
+        for (int h = 0; h < 24; h++) hour.Items.Add(h.ToString("D2"));
+        for (int m = 0; m < 60; m++) minute.Items.Add(m.ToString("D2"));
     }
 
     private void OnTasksReceived(List<TaskDto> tasks)
@@ -49,8 +61,9 @@ public partial class ConfigWindow : Window
         ColorBox.Text = row.Color;
         GifBox.Text = row.Gif ?? "";
         SelectType(row.Type);
-        StartBox.Text = row.StartAt?.ToString(TimeFormat) ?? "";
-        EndBox.Text = row.EndAt.ToString(TimeFormat);
+        SetDateTime(StartDatePicker, StartHourBox, StartMinuteBox,
+            row.StartAt?.LocalDateTime ?? DateTime.Now);
+        SetDateTime(EndDatePicker, EndHourBox, EndMinuteBox, row.EndAt.LocalDateTime);
         StatusText.Text = $"正在编辑：{row.Name}";
     }
 
@@ -58,11 +71,11 @@ public partial class ConfigWindow : Window
     {
         _editingId = null;
         NameBox.Text = "";
-        ColorBox.Text = "#FF6B35";
+        ColorBox.Text = SuggestUnusedColor();
         GifBox.Text = "";
         SelectType("scheduled");
-        StartBox.Text = DateTime.Now.ToString(TimeFormat);
-        EndBox.Text = DateTime.Now.AddHours(1).ToString(TimeFormat);
+        SetDateTime(StartDatePicker, StartHourBox, StartMinuteBox, DateTime.Now);
+        SetDateTime(EndDatePicker, EndHourBox, EndMinuteBox, DateTime.Now.AddHours(1));
         TaskGrid.SelectedItem = null;
         StatusText.Text = "新建任务";
     }
@@ -72,13 +85,16 @@ public partial class ConfigWindow : Window
         var name = NameBox.Text.Trim();
         if (string.IsNullOrEmpty(name)) { StatusText.Text = "请填写任务名称"; return; }
         if (!TryParseColor(ColorBox.Text, out var color)) { StatusText.Text = "颜色格式应为 #RRGGBB"; return; }
-        if (!TryParseTime(EndBox.Text, out var end)) { StatusText.Text = "截止时间格式应为 yyyy-MM-dd HH:mm"; return; }
+        if (IsColorTaken(color)) { StatusText.Text = "该颜色已被其他任务使用，请选择不同颜色"; return; }
+        if (!TryComposeDateTime(EndDatePicker, EndHourBox, EndMinuteBox, out var end))
+        { StatusText.Text = "请选择截止日期与时间"; return; }
 
         var type = SelectedType();
         DateTimeOffset? start = null;
         if (type == "scheduled")
         {
-            if (!TryParseTime(StartBox.Text, out var s)) { StatusText.Text = "开始时间格式应为 yyyy-MM-dd HH:mm"; return; }
+            if (!TryComposeDateTime(StartDatePicker, StartHourBox, StartMinuteBox, out var s))
+            { StatusText.Text = "请选择开始日期与时间"; return; }
             if (s >= end) { StatusText.Text = "开始时间须早于截止时间"; return; }
             start = s;
         }
@@ -132,11 +148,69 @@ public partial class ConfigWindow : Window
             ColorPreview.Background = new SolidColorBrush(HexToColor(hex));
     }
 
+    private void OnPickColor(object sender, MouseButtonEventArgs e)
+    {
+        using var dlg = new System.Windows.Forms.ColorDialog { AllowFullOpen = true, FullOpen = true };
+        if (TryParseColor(ColorBox.Text, out var current))
+        {
+            var c = HexToColor(current);
+            dlg.Color = System.Drawing.Color.FromArgb(c.R, c.G, c.B);
+        }
+        if (dlg.ShowDialog() != System.Windows.Forms.DialogResult.OK) return;
+
+        var picked = $"#{dlg.Color.R:X2}{dlg.Color.G:X2}{dlg.Color.B:X2}";
+        ColorBox.Text = picked; // 触发 OnColorChanged 刷新预览
+        StatusText.Text = IsColorTaken(picked)
+            ? "该颜色已被其他任务使用，保存前请更换"
+            : StatusText.Text;
+    }
+
+    /// <summary>颜色是否已被列表中的其他任务占用（编辑态排除自身）。</summary>
+    private bool IsColorTaken(string hex)
+    {
+        foreach (var r in _rows)
+        {
+            if (r.Id == _editingId) continue;
+            if (string.Equals(r.Color, hex, StringComparison.OrdinalIgnoreCase)) return true;
+        }
+        return false;
+    }
+
+    /// <summary>新建任务时给出一个未被占用的预设色，减少撞色概率。</summary>
+    private string SuggestUnusedColor()
+    {
+        string[] palette =
+        {
+            "#FF6B35", "#E53935", "#43A047", "#1E88E5", "#FDD835",
+            "#8E24AA", "#00ACC1", "#F4511E", "#6D4C41", "#3949AB",
+        };
+        foreach (var c in palette)
+            if (!IsColorTaken(c)) return c;
+        return "#FF6B35";
+    }
+
     private void UpdateStartVisibility()
     {
         bool scheduled = SelectedType() == "scheduled";
-        if (StartLabel != null) StartLabel.Visibility = scheduled ? Visibility.Visible : Visibility.Collapsed;
-        if (StartBox != null) StartBox.Visibility = scheduled ? Visibility.Visible : Visibility.Collapsed;
+        if (StartPanel != null) StartPanel.Visibility = scheduled ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private static void SetDateTime(DatePicker date, ComboBox hour, ComboBox minute, DateTime value)
+    {
+        date.SelectedDate = value.Date;
+        hour.SelectedItem = value.Hour.ToString("D2");
+        minute.SelectedItem = value.Minute.ToString("D2");
+    }
+
+    private static bool TryComposeDateTime(DatePicker date, ComboBox hour, ComboBox minute, out DateTimeOffset value)
+    {
+        value = default;
+        if (date.SelectedDate is not DateTime d) return false;
+        if (hour.SelectedItem is not string hs || !int.TryParse(hs, out var h)) return false;
+        if (minute.SelectedItem is not string ms || !int.TryParse(ms, out var m)) return false;
+        var dt = new DateTime(d.Year, d.Month, d.Day, h, m, 0);
+        value = new DateTimeOffset(dt, TimeZoneInfo.Local.GetUtcOffset(dt));
+        return true;
     }
 
     private string SelectedType() =>
@@ -149,18 +223,6 @@ public partial class ConfigWindow : Window
             if (item.Tag?.ToString() == type) { item.IsSelected = true; break; }
         }
         UpdateStartVisibility();
-    }
-
-    private static bool TryParseTime(string s, out DateTimeOffset value)
-    {
-        if (DateTime.TryParseExact(s.Trim(), TimeFormat, CultureInfo.InvariantCulture,
-                DateTimeStyles.None, out var dt))
-        {
-            value = new DateTimeOffset(dt, TimeZoneInfo.Local.GetUtcOffset(dt));
-            return true;
-        }
-        value = default;
-        return false;
     }
 
     private static bool TryParseColor(string s, out string hex)

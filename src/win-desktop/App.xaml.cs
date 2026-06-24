@@ -37,6 +37,9 @@ public partial class App : Application
             return;
         }
 
+        // 应用 Windows 11 Fluent 主题，跟随系统亮 / 暗（WPF-UI，文档 §5.3.2）。
+        Wpf.Ui.Appearance.ApplicationThemeManager.ApplySystemTheme();
+
         _supervisor = new HeadlessSupervisor();
         _supervisor.Start();
 
