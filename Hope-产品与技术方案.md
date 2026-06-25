@@ -33,13 +33,13 @@
 | Desktop → Headless 互拉 | ✅ | `HeadlessSupervisor`：检测进程缺失则拉起 |
 | Headless → Desktop 互拉 | ⚠️ | `main.go --desktop` 已实现；**Desktop 拉起 Headless 时未传 `--desktop`** |
 | Desktop 单实例 | ✅ | `Global\HopeDesktop` Mutex |
-| WPF-UI Fluent 主题（配置窗） | ⚠️ | `App.xaml` 合并主题字典；`Window` + `SystemThemeWatcher`（**未用 FluentWindow/Mica**，Win10 稳定性） |
+| WPF-UI Fluent 主题（配置窗） | ✅ | `App.xaml` 合并主题字典；`FluentWindow` + `TitleBar`；首帧后延迟应用 Mica（Win11）/ Acrylic（Win10），托盘延迟打开 + 隐藏时 `UnWatch`，规避 `Show()` 卡死 |
 | CI 编译 & 单测 | ✅ | `.github/workflows/release.yml`：`go test` + `dotnet publish` |
 | Inno Setup 安装包 | ✅ | `setup.iss`（含可选开机自启任务）；需打 tag `v*` 触发 Release 上传 |
 | VS Code 调试配置 | ✅ | `Hope.sln` + `.vscode/launch.json`（net10.0-windows） |
 | Phase 2 全屏插件 | ❌ | `src/plugins/fullscreen/` 仅占位 README |
 
-**当前可交付边界：** v0.4 配置窗与设置链路主体已通；距 v1.0 尚差 `expiredBehavior` 设置 UI、FluentWindow/Mica（可选）、双向互拉联调、帮助文档与验收清单人工回归。
+**当前可交付边界：** v0.4 配置窗与设置链路主体已通，FluentWindow/Mica 已落地；距 v1.0 尚差 `expiredBehavior` 设置 UI、双向互拉联调、帮助文档与验收清单人工回归。
 
 ### 0.2 验收标准对照（§9）
 
@@ -176,7 +176,7 @@
 |------|------|------|------|
 | 后台核心 | **Go** | 单文件分发、低内存、适合无 UI 常驻 | ✅ |
 | 配置与托盘 | **C# WPF** | Win32 生态成熟、开发效率高 | ✅ |
-| 界面主题 | **WPF-UI（Fluent）** | 贴近 Win11、Mica/亮暗跟随；复用 WPF 运行时、增量小（§5.3.2） | 🔲 v0.4 施工中 |
+| 界面主题 | **WPF-UI（Fluent）** | 贴近 Win11、Mica/亮暗跟随；复用 WPF 运行时、增量小（§5.3.2） | ✅ FluentWindow + 延迟 Mica |
 | Phase 1 覆盖层 | **DWM 透明置顶窗（WPF）** | 不注入；单条顶栏多色分段；见 §5.4 | ✅ |
 | 鼠标穿透与窗口行为 | Win32 扩展样式 + `WM_NCHITTEST` | 点击穿透、不可聚焦、不出现在 Alt+Tab / Win+Tab | ✅ |
 | 日志 | Go `slog` + 滚动文件 | 路径见 §4.4；支持用户导出 | ⚠️ 写文件 ✅；UI 导出 ❌ |
@@ -505,10 +505,10 @@ go build -ldflags="-s -w -H=windowsgui" -o hope-headless.exe .
 
 - [x] 依赖：`WPF-UI` 4.2.0（NuGet，MIT，`net10.0-windows`）。
 - [x] `App.xaml` 合并 `ui:ThemesDictionary` + `ui:ControlsDictionary`。
-- [x] 配置窗体使用普通 `Window`（**非** `FluentWindow`：Win10 上 Mica/`Show()` 曾卡死 UI）；`ui:Button`/`ui:TextBox`/`ui:DataGrid` + 系统 `ComboBox`/`DatePicker`。
-- [x] **亮 / 暗跟随系统**：`ApplicationThemeManager.ApplySystemTheme()` + `SystemThemeWatcher.Watch`（`Backdrop=None`）。
+- [x] 配置窗体使用 `FluentWindow` + `ui:TitleBar`；`ui:Button`/`ui:TextBox`/`ui:DataGrid` + 系统 `ComboBox`/`DatePicker`。
+- [x] **亮 / 暗跟随系统**：`ApplicationThemeManager.ApplySystemTheme()` + `SystemThemeWatcher.Watch`（按平台选 Mica/Acrylic）。
 - [x] 主操作按钮 `Appearance="Primary"`。
-- [ ] **Mica / 自定义 TitleBar**：暂缓（稳定性优先，见 `ConfigWindow` / `App.xaml.cs` 注释）。
+- [x] **Mica / 自定义 TitleBar**：已落地。规避 Win10/Win11 `Show()` 卡死的三层措施：① 托盘菜单延迟打开（Timer + `ApplicationIdle`）；② XAML 初始 `WindowBackdropType="None"`，首帧渲染后经 `EnsureFluentBackdrop()` 延迟应用 Mica（Win11）/ Acrylic（Win10）；③ 隐藏到托盘时 `SystemThemeWatcher.UnWatch`，再次打开时重新挂载。见 `ConfigWindow.xaml.cs` / `App.xaml.cs`。
 - [x] **作用范围**：仅配置窗体；Overlay 与托盘不变。
 
 **进程互保：**
@@ -836,7 +836,7 @@ Hope/
 | v0.1 | Headless + IPC + 命令行验证 | ✅ |
 | v0.2 | WPF 配置 + 托盘 | ✅ |
 | v0.3 | DWM 分段顶栏 + 多任务闭环 + 跟随图片 | ✅ |
-| v0.4 | 设置 UI、配置窗交互增强、WPF-UI 主题、品牌图标、实时预览、窗高自适应 | ⚠️ **主体已完成**；剩 `expiredBehavior` UI、FluentWindow/Mica、双向互拉 |
+| v0.4 | 设置 UI、配置窗交互增强、WPF-UI 主题（FluentWindow/Mica）、品牌图标、实时预览、窗高自适应 | ⚠️ **主体已完成**；剩 `expiredBehavior` UI、双向互拉 |
 | v1.0 | 安装包验收、帮助文档、Onboarding | 🔲 |
 | v1.x-plugin | 全屏游戏拓展包（独立发版） | ❌ |
 
