@@ -25,7 +25,7 @@ namespace Hope.Desktop.Views;
 public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
 {
     private const double MinFitWindowHeight = 400;
-    private const double EditPanelMeasureWidth = 348;
+    private const double EditPanelMeasureWidth = 358;
     private const double FluentTitleBarFallbackHeight = 48;
 
     private readonly IpcClient _ipc;
