@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.IO;
+using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -32,8 +33,6 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
     private string? _editingId;
     private SettingsDto _settings = new();
     private bool _loadingSettings;
-    private bool _loadingTaskBehaviors;
-    private bool _applyingExclusion;
     private DateTimeOffset _taskCreatedAt = DateTimeOffset.Now;
     private readonly DispatcherTimer _previewTimer;
     private readonly System.Windows.Controls.Image _previewImage;
@@ -64,9 +63,20 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
             RefreshBox.Items.Add(i.ToString());
             BarHeightBox.Items.Add(i.ToString());
         }
+        for (int i = 1; i <= 30; i++) RecurIntervalBox.Items.Add(i.ToString());
+        RecurIntervalBox.SelectedItem = "2";
+        RecurIntervalBox.SelectionChanged += (_, _) => UpdatePreview();
+        foreach (var chk in WeekdayChecks())
+        {
+            chk.Checked += (_, _) => UpdatePreview();
+            chk.Unchecked += (_, _) => UpdatePreview();
+        }
 
         RefreshBox.SelectionChanged += OnSettingsSelectionChanged;
         BarHeightBox.SelectionChanged += OnBarHeightBoxChanged;
+        GlobalModeBox.SelectionChanged += OnSettingsSelectionChanged;
+        GlobalNotifyCheck.Checked += OnSettingsControlChanged;
+        GlobalNotifyCheck.Unchecked += OnSettingsControlChanged;
         AutostartCheck.Checked += OnSettingsControlChanged;
         AutostartCheck.Unchecked += OnSettingsControlChanged;
         ShowConfigAtRuntimeCheck.Checked += OnSettingsControlChanged;
@@ -137,7 +147,7 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
             _loadingSettings = true;
             RefreshBox.SelectedItem = Math.Clamp(s.RefreshSec, 1, 10).ToString();
             BarHeightBox.SelectedItem = Math.Clamp(s.BarHeightPx, 1, 10).ToString();
-            LoadBehaviors(s.ExpiredBehaviors, GlobalKeepCheck, GlobalHideCheck, GlobalBlinkCheck, GlobalNotifyCheck);
+            LoadBehaviors(s.ExpiredBehaviors, GlobalModeBox, GlobalNotifyCheck);
             AutostartCheck.IsChecked = s.Autostart;
             ShowConfigAtRuntimeCheck.IsChecked = s.ShowConfigAtRuntime;
             _loadingSettings = false;
@@ -170,7 +180,7 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
 
         _settings.RefreshSec = ParseIntItem(RefreshBox, _settings.RefreshSec);
         _settings.BarHeightPx = ParseIntItem(BarHeightBox, _settings.BarHeightPx);
-        _settings.ExpiredBehaviors = CollectBehaviors(GlobalKeepCheck, GlobalHideCheck, GlobalBlinkCheck, GlobalNotifyCheck);
+        _settings.ExpiredBehaviors = CollectBehaviors(GlobalModeBox, GlobalNotifyCheck);
         _settings.Autostart = AutostartCheck.IsChecked == true;
         _settings.ShowConfigAtRuntime = ShowConfigAtRuntimeCheck.IsChecked == true;
 
@@ -217,80 +227,138 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
     private static int ParseIntItem(ComboBox box, int fallback) =>
         box.SelectedItem is string s && int.TryParse(s, out var v) ? v : fallback;
 
-    // ===== 到期提醒（多选 + 自动互斥）=====
+    // ===== 到期提醒（显示模式单选下拉 + 通知勾选框）=====
 
-    // 全局默认勾选变化：应用互斥后提交设置。
-    private void OnGlobalBehaviorChanged(object sender, RoutedEventArgs e)
-    {
-        if (_loadingSettings) return;
-        ApplyBehaviorExclusion(sender as CheckBox, GlobalKeepCheck, GlobalHideCheck, GlobalBlinkCheck);
-        CommitSettings();
-    }
+    private static string ModeOf(ComboBox box) =>
+        (box.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? "keep";
 
-    // 任务级勾选变化：仅应用互斥（任务在「保存任务」时落盘）。
-    private void OnTaskBehaviorChanged(object sender, RoutedEventArgs e)
+    private static void SelectMode(ComboBox box, string mode)
     {
-        if (_loadingTaskBehaviors) return;
-        ApplyBehaviorExclusion(sender as CheckBox, TaskKeepCheck, TaskHideCheck, TaskBlinkCheck);
-    }
-
-    // 切换「使用全局默认」：启用/禁用任务级勾选区。
-    private void OnTaskUseGlobalChanged(object sender, RoutedEventArgs e)
-    {
-        if (TaskBehaviorPanel != null)
-            TaskBehaviorPanel.IsEnabled = TaskUseGlobalCheck.IsChecked != true;
-    }
-
-    // 自动互斥：keep / blink / hide 三者同为「显示模式」，仅能选其一；勾选其一即取消另两个。
-    // notify 为独立叠加项，不参与互斥。
-    private void ApplyBehaviorExclusion(CheckBox? changed, CheckBox keep, CheckBox hide, CheckBox blink)
-    {
-        if (_applyingExclusion || changed == null) return;
-        if (changed != keep && changed != hide && changed != blink) return; // notify 等不互斥
-        if (changed.IsChecked != true) return; // 取消勾选不触发互斥
-        _applyingExclusion = true;
-        try
+        foreach (ComboBoxItem item in box.Items)
         {
-            if (changed != keep) keep.IsChecked = false;
-            if (changed != hide) hide.IsChecked = false;
-            if (changed != blink) blink.IsChecked = false;
+            if (string.Equals(item.Tag?.ToString(), mode, StringComparison.OrdinalIgnoreCase))
+            {
+                box.SelectedItem = item;
+                return;
+            }
         }
-        finally { _applyingExclusion = false; }
+        box.SelectedIndex = 0; // 回退到 keep
     }
 
-    private static List<string> CollectBehaviors(CheckBox keep, CheckBox hide, CheckBox blink, CheckBox notify)
+    // 集合 = [显示模式]（+ 勾选时追加 notify）。
+    private static List<string> CollectBehaviors(ComboBox mode, CheckBox notify)
     {
-        var list = new List<string>();
-        if (keep.IsChecked == true) list.Add("keep");
-        if (hide.IsChecked == true) list.Add("hide");
-        if (blink.IsChecked == true) list.Add("blink");
+        var list = new List<string> { ModeOf(mode) };
         if (notify.IsChecked == true) list.Add("notify");
         return list;
     }
 
-    private void LoadBehaviors(List<string>? behaviors, CheckBox keep, CheckBox hide, CheckBox blink, CheckBox notify)
+    private static void LoadBehaviors(List<string>? behaviors, ComboBox mode, CheckBox notify)
     {
         var set = behaviors ?? new List<string>();
-        keep.IsChecked = set.Contains("keep");
-        hide.IsChecked = set.Contains("hide");
-        blink.IsChecked = set.Contains("blink");
+        string m = set.Contains("hide") ? "hide" : set.Contains("blink") ? "blink" : "keep";
+        SelectMode(mode, m);
         notify.IsChecked = set.Contains("notify");
     }
 
-    // 载入任务级到期提醒：为空表示沿用全局默认（勾上「使用全局默认」并禁用细项）。
+    private const string GlobalModeTag = "global";
+
+    // 任务到期提醒下拉变化：选「使用全局默认」时禁用并清空本任务的系统通知。
+    private void OnTaskModeChanged(object sender, SelectionChangedEventArgs e) => UpdateTaskNotifyEnabled();
+
+    private void UpdateTaskNotifyEnabled()
+    {
+        if (TaskNotifyCheck == null) return;
+        bool useGlobal = ModeOf(TaskModeBox) == GlobalModeTag;
+        if (useGlobal) TaskNotifyCheck.IsChecked = false;
+        TaskNotifyCheck.IsEnabled = !useGlobal;
+    }
+
+    // 任务级到期提醒集合：选「使用全局默认」返回 null（继承全局）；否则 [显示模式]（+ 勾选追加 notify）。
+    private List<string>? CollectTaskBehaviors()
+    {
+        if (ModeOf(TaskModeBox) == GlobalModeTag) return null;
+        var list = new List<string> { ModeOf(TaskModeBox) };
+        if (TaskNotifyCheck.IsChecked == true) list.Add("notify");
+        return list;
+    }
+
+    // 载入任务级到期提醒：为空（新建或旧数据）时选「使用全局默认」。
     private void LoadTaskBehaviors(List<string>? behaviors)
     {
-        _loadingTaskBehaviors = true;
-        try
+        if (behaviors == null || behaviors.Count == 0)
         {
-            bool useGlobal = behaviors == null || behaviors.Count == 0;
-            TaskUseGlobalCheck.IsChecked = useGlobal;
-            // 未覆盖时，细项展示全局默认值作为参考。
-            LoadBehaviors(useGlobal ? _settings.ExpiredBehaviors : behaviors,
-                TaskKeepCheck, TaskHideCheck, TaskBlinkCheck, TaskNotifyCheck);
-            if (TaskBehaviorPanel != null) TaskBehaviorPanel.IsEnabled = !useGlobal;
+            SelectMode(TaskModeBox, GlobalModeTag);
+            TaskNotifyCheck.IsChecked = false;
         }
-        finally { _loadingTaskBehaviors = false; }
+        else
+        {
+            string m = behaviors.Contains("hide") ? "hide" : behaviors.Contains("blink") ? "blink" : "keep";
+            SelectMode(TaskModeBox, m);
+            TaskNotifyCheck.IsChecked = behaviors.Contains("notify");
+        }
+        UpdateTaskNotifyEnabled();
+    }
+
+    // ===== 循环（仅定时任务）=====
+
+    private (CheckBox chk, int weekday)[] WeekdayMap() => new[]
+    {
+        (ChkMon, 1), (ChkTue, 2), (ChkWed, 3), (ChkThu, 4),
+        (ChkFri, 5), (ChkSat, 6), (ChkSun, 0),
+    };
+
+    private IEnumerable<CheckBox> WeekdayChecks() => new[] { ChkMon, ChkTue, ChkWed, ChkThu, ChkFri, ChkSat, ChkSun };
+
+    private string RecurMode() => (RecurModeBox.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? "";
+
+    private void OnRecurModeChanged(object sender, SelectionChangedEventArgs e)
+    {
+        UpdateRecurVisibility();
+        UpdatePreview();
+        ScheduleFitHeightToTaskEditor();
+    }
+
+    private void UpdateRecurVisibility()
+    {
+        var mode = RecurMode();
+        if (RecurIntervalRow != null)
+            RecurIntervalRow.Visibility = mode == "everyN" ? Visibility.Visible : Visibility.Collapsed;
+        if (RecurWeekRow != null)
+            RecurWeekRow.Visibility = mode == "weekly" ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    // 组装循环规则：不循环或非定时任务返回 null。
+    private RecurrenceDto? CollectRecurrence()
+    {
+        if (SelectedType() != "scheduled") return null;
+        var mode = RecurMode();
+        switch (mode)
+        {
+            case "daily":
+                return new RecurrenceDto { Mode = "daily" };
+            case "everyN":
+                return new RecurrenceDto { Mode = "everyN", Interval = ParseIntItem(RecurIntervalBox, 2) };
+            case "weekly":
+                var days = WeekdayMap().Where(p => p.chk.IsChecked == true).Select(p => p.weekday).ToList();
+                return new RecurrenceDto { Mode = "weekly", Weekdays = days };
+            default:
+                return null;
+        }
+    }
+
+    private void LoadRecurrence(RecurrenceDto? rec)
+    {
+        string mode = rec?.Mode ?? "";
+        foreach (ComboBoxItem item in RecurModeBox.Items)
+        {
+            if (string.Equals(item.Tag?.ToString(), mode, StringComparison.OrdinalIgnoreCase))
+            { RecurModeBox.SelectedItem = item; break; }
+        }
+        RecurIntervalBox.SelectedItem = Math.Clamp(rec?.Interval > 0 ? rec.Interval : 2, 1, 30).ToString();
+        var set = rec?.Weekdays ?? new List<int>();
+        foreach (var (chk, wd) in WeekdayMap()) chk.IsChecked = set.Contains(wd);
+        UpdateRecurVisibility();
     }
 
     // 写入 / 删除 HKCU Run 项，实现开机自启（§5.3.3 新增 3）。
@@ -417,6 +485,7 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
             row.StartAt?.LocalDateTime ?? DateTime.Now);
         SetDateTime(EndDatePicker, EndHourBox, EndMinuteBox, row.EndAt.LocalDateTime);
         LoadTaskBehaviors(row.ExpiredBehaviors);
+        LoadRecurrence(row.Recurrence);
         StatusText.Text = $"正在编辑：{row.Name}";
         UpdatePreview();
         MainTabs.SelectedItem = TaskTab; // 选中任务自动切到任务编辑 Tab（§5.3.3 新增 4）
@@ -433,6 +502,7 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
         SetDateTime(StartDatePicker, StartHourBox, StartMinuteBox, DateTime.Now);
         SetDateTime(EndDatePicker, EndHourBox, EndMinuteBox, DateTime.Now.AddHours(1));
         LoadTaskBehaviors(null); // 新任务默认沿用全局
+        LoadRecurrence(null);    // 新任务默认不循环
         TaskGrid.SelectedItem = null;
         StatusText.Text = "新建任务";
         UpdatePreview();
@@ -449,11 +519,24 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
 
         var type = SelectedType();
         DateTimeOffset? start = null;
+        RecurrenceDto? recurrence = null;
         if (type == "scheduled")
         {
             if (!TryComposeDateTime(StartDatePicker, StartHourBox, StartMinuteBox, out var s))
             { StatusText.Text = "请选择开始日期与时间"; return; }
-            if (s >= end) { StatusText.Text = "开始时间须早于截止时间"; return; }
+            recurrence = CollectRecurrence();
+            if (recurrence == null)
+            {
+                // 单次任务：开始须早于截止。
+                if (s >= end) { StatusText.Text = "开始时间须早于截止时间"; return; }
+            }
+            else if (recurrence.Mode == "weekly" &&
+                     (recurrence.Weekdays == null || recurrence.Weekdays.Count == 0))
+            {
+                StatusText.Text = "循环「按星期」：请至少选择一天";
+                return;
+            }
+            // 循环任务仅取时分窗口（支持跨午夜），不校验整体先后。
             start = s;
         }
 
@@ -473,9 +556,8 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
             Gif = string.IsNullOrEmpty(gif) ? null : gif,
             StartAt = start,
             EndAt = end,
-            ExpiredBehaviors = TaskUseGlobalCheck.IsChecked == true
-                ? null
-                : CollectBehaviors(TaskKeepCheck, TaskHideCheck, TaskBlinkCheck, TaskNotifyCheck),
+            ExpiredBehaviors = CollectTaskBehaviors(),
+            Recurrence = recurrence,
         };
 
         _ipc.Send(new Command { Action = _editingId == null ? "createTask" : "updateTask", Task = dto });
@@ -506,6 +588,25 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
     }
 
     private void OnClearGif(object sender, RoutedEventArgs e) { GifBox.Text = ""; UpdatePreview(); }
+
+    private void OnGifDragOver(object sender, System.Windows.DragEventArgs e)
+    {
+        e.Effects = e.Data.GetDataPresent(System.Windows.DataFormats.FileDrop)
+            ? System.Windows.DragDropEffects.Copy
+            : System.Windows.DragDropEffects.None;
+        e.Handled = true;
+    }
+
+    private void OnGifDrop(object sender, System.Windows.DragEventArgs e)
+    {
+        if (e.Data.GetDataPresent(System.Windows.DataFormats.FileDrop) &&
+            e.Data.GetData(System.Windows.DataFormats.FileDrop) is string[] files && files.Length > 0)
+        {
+            GifBox.Text = files[0];
+            UpdatePreview();
+        }
+        e.Handled = true;
+    }
 
     private void OnTypeChanged(object sender, SelectionChangedEventArgs e) => UpdateStartVisibility();
 
@@ -570,35 +671,87 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
             PreviewStatus.Text = $"{percent:0.#}%　{FormatCountdown(endAt)}";
     }
 
-    /// <summary>与 Headless task.Percent 一致：墙钟实时，定时用开始/截止，即时用 createdAt/截止。</summary>
+    /// <summary>与 Headless task.Percent 一致：墙钟实时；循环任务取当前发生窗口。</summary>
     private double ComputePreviewPercent(out DateTimeOffset endAt, out bool valid)
     {
         valid = false;
         endAt = default;
-        if (!TryComposeDateTime(EndDatePicker, EndHourBox, EndMinuteBox, out endAt))
+        if (!TryComposeDateTime(EndDatePicker, EndHourBox, EndMinuteBox, out var endFull))
             return 0;
-        valid = true;
 
         var now = DateTimeOffset.Now;
-        if (now >= endAt) return 100;
 
-        DateTimeOffset start;
         if (SelectedType() == "scheduled")
         {
-            if (!TryComposeDateTime(StartDatePicker, StartHourBox, StartMinuteBox, out start))
+            if (!TryComposeDateTime(StartDatePicker, StartHourBox, StartMinuteBox, out var startFull))
+                return 0;
+
+            var rec = CollectRecurrence();
+            if (rec != null)
             {
-                valid = false;
+                valid = true;
+                if (TryRecurrenceWindow(startFull.LocalDateTime, endFull.LocalDateTime, rec, now.LocalDateTime,
+                        out var ws, out var we))
+                {
+                    endAt = new DateTimeOffset(we, now.Offset);
+                    if (now.LocalDateTime >= we) return 100;
+                    var span = (we - ws).TotalSeconds;
+                    return span <= 0 ? 100 : Math.Clamp((now.LocalDateTime - ws).TotalSeconds / span * 100.0, 0, 100);
+                }
+                endAt = endFull; // 尚未到首个发生窗口
                 return 0;
             }
-        }
-        else
-        {
-            start = _taskCreatedAt;
+
+            valid = true;
+            endAt = endFull;
+            if (now >= endFull) return 100;
+            var total = (endFull - startFull).TotalSeconds;
+            return total <= 0 ? 100 : Math.Clamp((now - startFull).TotalSeconds / total * 100.0, 0, 100);
         }
 
-        var total = (endAt - start).TotalSeconds;
-        if (total <= 0) return 100;
-        return Math.Clamp((now - start).TotalSeconds / total * 100.0, 0, 100);
+        valid = true;
+        endAt = endFull;
+        if (now >= endFull) return 100;
+        var t = (endFull - _taskCreatedAt).TotalSeconds;
+        return t <= 0 ? 100 : Math.Clamp((now - _taskCreatedAt).TotalSeconds / t * 100.0, 0, 100);
+    }
+
+    // C# 端镜像 Go task.windowAt：返回与 now 相关的当前发生窗口（仅用于预览）。
+    private static bool TryRecurrenceWindow(DateTime start, DateTime end, RecurrenceDto rec, DateTime now,
+        out DateTime ws, out DateTime we)
+    {
+        ws = default; we = default;
+        var startTOD = start.TimeOfDay;
+        var endTOD = end.TimeOfDay;
+        var anchor = start.Date;
+        int maxBack = rec.Mode == "everyN" ? Math.Min(Math.Max(8, rec.Interval + 1), 400) : 8;
+        var d0 = now.Date;
+        for (int i = 0; i <= maxBack; i++)
+        {
+            var d = d0.AddDays(-i);
+            if (d < anchor) break;
+            if (!IsOccurrenceDay(rec, anchor, d)) continue;
+            var s = d + startTOD;
+            var e = endTOD > startTOD ? d + endTOD : d.AddDays(1) + endTOD;
+            if (s <= now) { ws = s; we = e; return true; }
+        }
+        return false;
+    }
+
+    private static bool IsOccurrenceDay(RecurrenceDto rec, DateTime anchor, DateTime d)
+    {
+        if (d < anchor) return false;
+        switch (rec.Mode)
+        {
+            case "daily": return true;
+            case "everyN":
+                int n = rec.Interval < 1 ? 1 : rec.Interval;
+                int days = (int)Math.Round((d - anchor).TotalDays);
+                return days % n == 0;
+            case "weekly":
+                return rec.Weekdays != null && rec.Weekdays.Contains((int)d.DayOfWeek);
+            default: return false;
+        }
     }
 
     private static string FormatCountdown(DateTimeOffset endAt)
@@ -725,6 +878,7 @@ public sealed class TaskRow
     public DateTimeOffset EndAt { get; init; }
     public DateTimeOffset? CreatedAt { get; init; }
     public List<string>? ExpiredBehaviors { get; init; }
+    public RecurrenceDto? Recurrence { get; init; }
 
     public string TypeLabel => Type == "instant" ? "即时" : "定时";
     public string EndLabel => EndAt.LocalDateTime.ToString("MM-dd HH:mm");
@@ -748,5 +902,6 @@ public sealed class TaskRow
         EndAt = t.EndAt,
         CreatedAt = t.CreatedAt,
         ExpiredBehaviors = t.ExpiredBehaviors,
+        Recurrence = t.Recurrence,
     };
 }

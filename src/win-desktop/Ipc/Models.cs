@@ -58,6 +58,16 @@ public sealed class TaskDto
     [JsonPropertyName("createdAt")] public DateTimeOffset? CreatedAt { get; set; }
     // 任务级到期提醒覆盖；null/空 表示沿用全局默认。
     [JsonPropertyName("expiredBehaviors")] public List<string>? ExpiredBehaviors { get; set; }
+    // 循环规则；null 表示单次任务（仅定时任务可用）。
+    [JsonPropertyName("recurrence")] public RecurrenceDto? Recurrence { get; set; }
+}
+
+/// <summary>循环规则，字段与 Go 端 task.Recurrence 对齐。</summary>
+public sealed class RecurrenceDto
+{
+    [JsonPropertyName("mode")] public string Mode { get; set; } = ""; // ""/daily/everyN/weekly
+    [JsonPropertyName("interval")] public int Interval { get; set; }   // everyN：≥1
+    [JsonPropertyName("weekdays")] public List<int>? Weekdays { get; set; } // 0=周日 … 6=周六
 }
 
 /// <summary>用户设置，字段与 Go 端 config.Settings 对齐。</summary>

@@ -78,7 +78,12 @@ func effectiveBehaviors(t *task.Task, s config.Settings) []string {
 func (e *Engine) collectExpiredLocked(tasks []*task.Task, now time.Time, behaviorsOf func(*task.Task) []string) []ipc.ExpiredEvent {
 	var out []ipc.ExpiredEvent
 	for _, t := range tasks {
-		if t.IsExpired(now) && !e.signaled[t.ID] {
+		if !t.IsExpired(now) {
+			// 未到期（含循环任务回到进行中）：清除标记，使下次到期可再次提醒。
+			delete(e.signaled, t.ID)
+			continue
+		}
+		if !e.signaled[t.ID] {
 			e.signaled[t.ID] = true
 			out = append(out, ipc.ExpiredEvent{
 				TaskID:    t.ID,

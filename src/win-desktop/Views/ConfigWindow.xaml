@@ -26,6 +26,27 @@
             <Setter Property="Foreground" Value="{DynamicResource TextFillColorPrimaryBrush}" />
             <Setter Property="Opacity" Value="1" />
         </Style>
+        <!-- DatePicker 外框与其它输入框统一：去掉系统默认白底白边，改用主题填充/描边色 -->
+        <Style TargetType="{x:Type DatePicker}">
+            <Setter Property="Background" Value="{DynamicResource ControlFillColorDefaultBrush}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource ControlStrokeColorDefaultBrush}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Foreground" Value="{DynamicResource TextFillColorPrimaryBrush}" />
+            <Setter Property="VerticalContentAlignment" Value="Center" />
+            <Setter Property="Padding" Value="2,1" />
+        </Style>
+        <!-- 表单字段标签：定宽左列，使所有行的控件竖直对齐（紧凑单行布局） -->
+        <Style x:Key="FieldLabel" TargetType="{x:Type TextBlock}">
+            <Setter Property="Width" Value="68" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="Margin" Value="0,0,8,0" />
+            <Setter Property="TextWrapping" Value="NoWrap" />
+            <Setter Property="Foreground" Value="{DynamicResource TextFillColorPrimaryBrush}" />
+        </Style>
+        <!-- 快填行的次级标签：与字段标签同宽，按钮列对齐 -->
+        <Style x:Key="QuickFillLabel" TargetType="{x:Type TextBlock}" BasedOn="{StaticResource FieldLabel}">
+            <Setter Property="Foreground" Value="{DynamicResource TextFillColorSecondaryBrush}" />
+        </Style>
         <!-- 任务编辑区分割线：随 Fluent 主题切换，2px 控制描边色（显眼且与背景对比） -->
         <Style x:Key="TaskEditSeparator" TargetType="{x:Type Separator}">
             <Setter Property="Margin" Value="0,14,0,14" />
@@ -112,22 +133,19 @@
                             <TextBlock Text="进度条高度（px）" Margin="0,12,0,2" />
                             <ComboBox x:Name="BarHeightBox" HorizontalAlignment="Stretch" />
 
-                            <TextBlock Text="任务到期后（默认；可多选，每个任务可单独覆盖）" Margin="0,12,0,2"
+                            <TextBlock Text="任务到期后（默认值；新建任务自动同步）" Margin="0,12,0,2"
                                        TextWrapping="Wrap" />
-                            <StackPanel>
-                                <CheckBox x:Name="GlobalKeepCheck" Content="保持显示"
-                                          Checked="OnGlobalBehaviorChanged" Unchecked="OnGlobalBehaviorChanged"
-                                          ToolTip="到期后该任务以满色保留在顶栏" />
-                                <CheckBox x:Name="GlobalHideCheck" Content="自动隐藏"
-                                          Checked="OnGlobalBehaviorChanged" Unchecked="OnGlobalBehaviorChanged"
-                                          ToolTip="到期后从顶栏移除该任务（与「保持显示」互斥）" />
-                                <CheckBox x:Name="GlobalBlinkCheck" Content="闪烁提醒"
-                                          Checked="OnGlobalBehaviorChanged" Unchecked="OnGlobalBehaviorChanged"
-                                          ToolTip="到期后柔和淡入淡出闪烁，直到打开设置查看（自动转为保持显示）" />
-                                <CheckBox x:Name="GlobalNotifyCheck" Content="系统通知"
-                                          Checked="OnGlobalBehaviorChanged" Unchecked="OnGlobalBehaviorChanged"
-                                          ToolTip="到期时弹出一次系统气球通知" />
-                            </StackPanel>
+                            <DockPanel>
+                                <CheckBox x:Name="GlobalNotifyCheck" DockPanel.Dock="Right" Content="系统通知"
+                                          VerticalAlignment="Center" Margin="8,0,0,0"
+                                          ToolTip="到期时弹出一次系统气球通知（可与显示模式叠加）" />
+                                <ComboBox x:Name="GlobalModeBox" HorizontalAlignment="Stretch"
+                                          ToolTip="到期后顶栏的显示方式（三选一）">
+                                    <ComboBoxItem Content="保持显示" Tag="keep" />
+                                    <ComboBoxItem Content="自动隐藏" Tag="hide" />
+                                    <ComboBoxItem Content="闪烁提醒" Tag="blink" />
+                                </ComboBox>
+                            </DockPanel>
 
                             <CheckBox x:Name="AutostartCheck" Content="开机自启动" Margin="0,16,0,0" />
 
@@ -152,18 +170,20 @@
                                        Foreground="{DynamicResource TextFillColorPrimaryBrush}"
                                        Margin="0,0,0,6" TextWrapping="Wrap" />
 
-                            <TextBlock Text="名称" Margin="0,6,0,2" />
-                            <ui:TextBox x:Name="NameBox" PlaceholderText="任务名称" />
-                            <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
-                                <TextBlock Text="快填：" VerticalAlignment="Center"
-                                           Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
-                                <ui:Button Content="下班" Padding="10,2" Margin="2,0" Click="OnPresetName" />
-                                <ui:Button Content="干饭" Padding="10,2" Margin="2,0" Click="OnPresetName" />
-                                <ui:Button Content="放假" Padding="10,2" Margin="2,0" Click="OnPresetName" />
-                            </StackPanel>
+                            <!-- 名称 -->
+                            <DockPanel Margin="0,3,0,0">
+                                <TextBlock Style="{StaticResource FieldLabel}" Text="名称" />
+                                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Margin="6,0,0,0">
+                                    <ui:Button Content="下班" Padding="8,2" Margin="2,0" Click="OnPresetName" />
+                                    <ui:Button Content="干饭" Padding="8,2" Margin="2,0" Click="OnPresetName" />
+                                    <ui:Button Content="放假" Padding="8,2" Margin="2,0" Click="OnPresetName" />
+                                </StackPanel>
+                                <ui:TextBox x:Name="NameBox" PlaceholderText="任务名称" />
+                            </DockPanel>
 
-                            <TextBlock Text="颜色 (#RRGGBB)" Margin="0,8,0,2" />
-                            <DockPanel>
+                            <!-- 颜色 -->
+                            <DockPanel Margin="0,6,0,0">
+                                <TextBlock Style="{StaticResource FieldLabel}" Text="颜色" />
                                 <Border x:Name="ColorPreview" DockPanel.Dock="Right" Width="28" Height="28"
                                         CornerRadius="4" Margin="6,0,0,0" Background="#FF6B35"
                                         Cursor="Hand" MouseLeftButtonUp="OnPickColor"
@@ -171,115 +191,173 @@
                                 <ui:TextBox x:Name="ColorBox" Text="#FF6B35" TextChanged="OnColorChanged" />
                             </DockPanel>
 
-                            <TextBlock Text="跟随图片 / 动图（可选）" Margin="0,8,0,2" />
-                            <DockPanel>
-                                <ui:Button DockPanel.Dock="Right" Content="清除" Width="56" Margin="6,0,0,0" Click="OnClearGif" />
-                                <ui:Button DockPanel.Dock="Right" Content="选择图片" Width="78" Margin="6,0,0,0" Click="OnBrowseGif" />
+                            <!-- 图片 / 动图 -->
+                            <DockPanel Margin="0,6,0,0">
+                                <TextBlock Style="{StaticResource FieldLabel}" Text="图片" />
+                                <ui:Button DockPanel.Dock="Right" Content="清除" Width="52" Margin="6,0,0,0" Click="OnClearGif" />
+                                <ui:Button DockPanel.Dock="Right" Content="选择" Width="52" Margin="6,0,0,0" Click="OnBrowseGif" />
                                 <ui:TextBox x:Name="GifBox" IsReadOnly="True"
-                                            ToolTip="支持任意图片格式；图片挂在进度条下方，跟随该任务进度前沿移动，动图循环播放（超过 15px 自动缩放）" />
+                                            PlaceholderText="（可拖放图片到此）"
+                                            AllowDrop="True" PreviewDragOver="OnGifDragOver" Drop="OnGifDrop"
+                                            ToolTip="支持任意图片格式；可直接拖放图片文件到此。图片挂在进度条下方，跟随该任务进度前沿移动，动图循环播放（超过 15px 自动缩放）" />
                             </DockPanel>
 
-                            <!-- 实时预览：按墙钟 percent 填充 + 挂载图片（§5.3.3 新增 2） -->
-                            <TextBlock Text="预览（实时；保存后影响桌面顶栏）" Margin="0,12,0,2"
-                                       Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
-                            <Border BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" BorderThickness="1"
-                                    CornerRadius="6" Padding="10" Background="{DynamicResource CardBackgroundFillColorDefaultBrush}">
-                                <StackPanel>
-                                    <Grid x:Name="PreviewTrack" ClipToBounds="True" HorizontalAlignment="Stretch">
-                                        <Border x:Name="PreviewFill" HorizontalAlignment="Left" VerticalAlignment="Stretch"
-                                                CornerRadius="1" Background="#FF6B35" Width="0" />
-                                    </Grid>
-                                    <Canvas x:Name="PreviewImageCanvas" Height="15" Margin="0,4,0,0"
-                                            HorizontalAlignment="Stretch" />
-                                    <TextBlock x:Name="PreviewStatus" Margin="0,6,0,0" FontSize="12"
-                                               Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
-                                </StackPanel>
-                            </Border>
+                            <!-- 类型 -->
+                            <DockPanel Margin="0,6,0,0">
+                                <TextBlock Style="{StaticResource FieldLabel}" Text="类型" />
+                                <ComboBox x:Name="TypeBox" SelectionChanged="OnTypeChanged" HorizontalAlignment="Stretch">
+                                    <ComboBoxItem Content="定时任务（含开始时间）" Tag="scheduled" IsSelected="True" />
+                                    <ComboBoxItem Content="即时任务（仅截止时间）" Tag="instant" />
+                                </ComboBox>
+                            </DockPanel>
 
-                            <TextBlock Text="类型" Margin="0,12,0,2" />
-                            <ComboBox x:Name="TypeBox" SelectionChanged="OnTypeChanged" HorizontalAlignment="Stretch">
-                                <ComboBoxItem Content="定时任务（含开始时间）" Tag="scheduled" IsSelected="True" />
-                                <ComboBoxItem Content="即时任务（仅截止时间）" Tag="instant" />
-                            </ComboBox>
+                            <!-- 实时预览（标签在左，预览块在右；§5.3.3 新增 2） -->
+                            <DockPanel Margin="0,8,0,0">
+                                <TextBlock Style="{StaticResource QuickFillLabel}" Text="预览" VerticalAlignment="Top" />
+                                <Border BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" BorderThickness="1"
+                                        CornerRadius="6" Padding="10" Background="{DynamicResource CardBackgroundFillColorDefaultBrush}">
+                                    <StackPanel>
+                                        <Grid x:Name="PreviewTrack" ClipToBounds="True" HorizontalAlignment="Stretch">
+                                            <Border x:Name="PreviewFill" HorizontalAlignment="Left" VerticalAlignment="Stretch"
+                                                    CornerRadius="1" Background="#FF6B35" Width="0" />
+                                        </Grid>
+                                        <Canvas x:Name="PreviewImageCanvas" Height="15" Margin="0,4,0,0"
+                                                HorizontalAlignment="Stretch" />
+                                    </StackPanel>
+                                </Border>
+                            </DockPanel>
+                            <!-- 百分比 + 倒计时：移至预览下方一行 -->
+                            <DockPanel Margin="0,4,0,0">
+                                <TextBlock Style="{StaticResource QuickFillLabel}" Text="" />
+                                <TextBlock x:Name="PreviewStatus" FontSize="12" VerticalAlignment="Center"
+                                           Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                            </DockPanel>
 
                             <Separator Style="{StaticResource TaskEditSeparator}" />
 
                             <StackPanel x:Name="StartPanel">
-                                <TextBlock Text="开始时间" Margin="0,8,0,2" />
-                                <DatePicker x:Name="StartDatePicker" HorizontalAlignment="Stretch" />
-                                <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
-                                    <TextBlock Text="快填：" VerticalAlignment="Center"
-                                               Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
-                                    <ui:Button Content="今天" Tag="StartDate:Today" Padding="8,2" Margin="2,0" Click="OnDateQuickFill" />
-                                    <ui:Button Content="明天" Tag="StartDate:Tomorrow" Padding="8,2" Margin="2,0" Click="OnDateQuickFill" />
-                                    <ui:Button Content="后天" Tag="StartDate:DayAfter" Padding="8,2" Margin="2,0" Click="OnDateQuickFill" />
-                                    <ui:Button Content="一周后" Tag="StartDate:Week" Padding="8,2" Margin="2,0" Click="OnDateQuickFill" />
-                                    <ui:Button Content="一月后" Tag="StartDate:Month" Padding="8,2" Margin="2,0" Click="OnDateQuickFill" />
-                                </StackPanel>
-                                <TextBlock Text="开始时间（时 : 分）" Margin="0,6,0,2" />
+                                <!-- 开始日期 -->
+                                <DockPanel>
+                                    <TextBlock Style="{StaticResource FieldLabel}" Text="开始日期" />
+                                    <DatePicker x:Name="StartDatePicker" HorizontalAlignment="Stretch" />
+                                </DockPanel>
+                                <DockPanel Margin="0,4,0,0">
+                                    <TextBlock Style="{StaticResource QuickFillLabel}" Text="快填" />
+                                    <WrapPanel>
+                                        <ui:Button Content="今天" Tag="StartDate:Today" Padding="6,2" Margin="2,0,2,2" Click="OnDateQuickFill" />
+                                        <ui:Button Content="明天" Tag="StartDate:Tomorrow" Padding="6,2" Margin="2,0,2,2" Click="OnDateQuickFill" />
+                                        <ui:Button Content="后天" Tag="StartDate:DayAfter" Padding="6,2" Margin="2,0,2,2" Click="OnDateQuickFill" />
+                                        <ui:Button Content="一周后" Tag="StartDate:Week" Padding="6,2" Margin="2,0,2,2" Click="OnDateQuickFill" />
+                                        <ui:Button Content="一月后" Tag="StartDate:Month" Padding="6,2" Margin="2,0,2,2" Click="OnDateQuickFill" />
+                                    </WrapPanel>
+                                </DockPanel>
+                                <!-- 开始时间（时 : 分） -->
+                                <DockPanel Margin="0,6,0,0">
+                                    <TextBlock Style="{StaticResource FieldLabel}" Text="开始时间" />
+                                    <StackPanel Orientation="Horizontal">
+                                        <ComboBox x:Name="StartHourBox" Width="78" />
+                                        <TextBlock Text=":" VerticalAlignment="Center" Margin="6,0,6,0" FontWeight="Bold" />
+                                        <ComboBox x:Name="StartMinuteBox" Width="78" />
+                                    </StackPanel>
+                                </DockPanel>
+                                <DockPanel Margin="0,4,0,0">
+                                    <TextBlock Style="{StaticResource QuickFillLabel}" Text="快填" />
+                                    <WrapPanel>
+                                        <ui:Button Content="现在" Tag="StartTime:Now" Padding="6,2" Margin="2,0,2,2" Click="OnTimeQuickFill" />
+                                        <ui:Button Content="+0.5H" Tag="StartTime:H0.5" Padding="6,2" Margin="2,0,2,2" Click="OnTimeQuickFill" />
+                                        <ui:Button Content="+1H" Tag="StartTime:H1" Padding="6,2" Margin="2,0,2,2" Click="OnTimeQuickFill" />
+                                        <ui:Button Content="+2H" Tag="StartTime:H2" Padding="6,2" Margin="2,0,2,2" Click="OnTimeQuickFill" />
+                                        <ui:Button Content="+8H" Tag="StartTime:H8" Padding="6,2" Margin="2,0,2,2" Click="OnTimeQuickFill" />
+                                        <ui:Button Content="+12H" Tag="StartTime:H12" Padding="6,2" Margin="2,0,2,2" Click="OnTimeQuickFill" />
+                                    </WrapPanel>
+                                </DockPanel>
+
+                                <!-- 循环（仅定时任务；开始/截止的时分定义每个发生日的时间窗，开始日期为锚点） -->
+                                <DockPanel Margin="0,6,0,0">
+                                    <TextBlock Style="{StaticResource FieldLabel}" Text="循环" />
+                                    <ComboBox x:Name="RecurModeBox" HorizontalAlignment="Stretch"
+                                              SelectionChanged="OnRecurModeChanged"
+                                              ToolTip="循环任务：每个发生日重复「开始时间~截止时间」窗口（支持跨午夜）">
+                                        <ComboBoxItem Content="不循环（单次）" Tag="" IsSelected="True" />
+                                        <ComboBoxItem Content="每天" Tag="daily" />
+                                        <ComboBoxItem Content="每 N 天" Tag="everyN" />
+                                        <ComboBoxItem Content="按星期" Tag="weekly" />
+                                    </ComboBox>
+                                </DockPanel>
+                                <DockPanel x:Name="RecurIntervalRow" Margin="0,4,0,0" Visibility="Collapsed">
+                                    <TextBlock Style="{StaticResource QuickFillLabel}" Text="每隔" />
+                                    <TextBlock Text="天" VerticalAlignment="Center" Margin="6,0,0,0" />
+                                    <ComboBox x:Name="RecurIntervalBox" HorizontalAlignment="Left" Width="78" />
+                                </DockPanel>
+                                <DockPanel x:Name="RecurWeekRow" Margin="0,4,0,0" Visibility="Collapsed">
+                                    <TextBlock Style="{StaticResource QuickFillLabel}" Text="星期" />
+                                    <WrapPanel>
+                                        <CheckBox x:Name="ChkMon" Content="一" Tag="1" Margin="0,0,8,2" />
+                                        <CheckBox x:Name="ChkTue" Content="二" Tag="2" Margin="0,0,8,2" />
+                                        <CheckBox x:Name="ChkWed" Content="三" Tag="3" Margin="0,0,8,2" />
+                                        <CheckBox x:Name="ChkThu" Content="四" Tag="4" Margin="0,0,8,2" />
+                                        <CheckBox x:Name="ChkFri" Content="五" Tag="5" Margin="0,0,8,2" />
+                                        <CheckBox x:Name="ChkSat" Content="六" Tag="6" Margin="0,0,8,2" />
+                                        <CheckBox x:Name="ChkSun" Content="日" Tag="0" Margin="0,0,8,2" />
+                                    </WrapPanel>
+                                </DockPanel>
+                            </StackPanel>
+
+                            <Separator Style="{StaticResource TaskEditSeparator}" />
+
+                            <!-- 截止日期 -->
+                            <DockPanel>
+                                <TextBlock Style="{StaticResource FieldLabel}" Text="截止日期" />
+                                <DatePicker x:Name="EndDatePicker" HorizontalAlignment="Stretch" />
+                            </DockPanel>
+                            <DockPanel Margin="0,4,0,0">
+                                <TextBlock Style="{StaticResource QuickFillLabel}" Text="快填" />
+                                <WrapPanel>
+                                    <ui:Button Content="今天" Tag="EndDate:Today" Padding="6,2" Margin="2,0,2,2" Click="OnDateQuickFill" />
+                                    <ui:Button Content="明天" Tag="EndDate:Tomorrow" Padding="6,2" Margin="2,0,2,2" Click="OnDateQuickFill" />
+                                    <ui:Button Content="后天" Tag="EndDate:DayAfter" Padding="6,2" Margin="2,0,2,2" Click="OnDateQuickFill" />
+                                    <ui:Button Content="一周后" Tag="EndDate:Week" Padding="6,2" Margin="2,0,2,2" Click="OnDateQuickFill" />
+                                    <ui:Button Content="一月后" Tag="EndDate:Month" Padding="6,2" Margin="2,0,2,2" Click="OnDateQuickFill" />
+                                </WrapPanel>
+                            </DockPanel>
+                            <!-- 截止时间（时 : 分） -->
+                            <DockPanel Margin="0,6,0,0">
+                                <TextBlock Style="{StaticResource FieldLabel}" Text="截止时间" />
                                 <StackPanel Orientation="Horizontal">
-                                    <ComboBox x:Name="StartHourBox" Width="78" />
+                                    <ComboBox x:Name="EndHourBox" Width="78" />
                                     <TextBlock Text=":" VerticalAlignment="Center" Margin="6,0,6,0" FontWeight="Bold" />
-                                    <ComboBox x:Name="StartMinuteBox" Width="78" />
+                                    <ComboBox x:Name="EndMinuteBox" Width="78" />
                                 </StackPanel>
-                                <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
-                                    <TextBlock Text="快填：" VerticalAlignment="Center"
-                                               Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
-                                    <ui:Button Content="现在" Tag="StartTime:Now" Padding="8,2" Margin="2,0" Click="OnTimeQuickFill" />
-                                    <ui:Button Content="+0.5H" Tag="StartTime:H0.5" Padding="8,2" Margin="2,0" Click="OnTimeQuickFill" />
-                                    <ui:Button Content="+1H" Tag="StartTime:H1" Padding="8,2" Margin="2,0" Click="OnTimeQuickFill" />
-                                    <ui:Button Content="+2H" Tag="StartTime:H2" Padding="8,2" Margin="2,0" Click="OnTimeQuickFill" />
-                                    <ui:Button Content="+8H" Tag="StartTime:H8" Padding="8,2" Margin="2,0" Click="OnTimeQuickFill" />
-                                    <ui:Button Content="+12H" Tag="StartTime:H12" Padding="8,2" Margin="2,0" Click="OnTimeQuickFill" />
-                                </StackPanel>
-                            </StackPanel>
+                            </DockPanel>
+                            <DockPanel Margin="0,4,0,0">
+                                <TextBlock Style="{StaticResource QuickFillLabel}" Text="快填" />
+                                <WrapPanel>
+                                    <ui:Button Content="现在" Tag="EndTime:Now" Padding="6,2" Margin="2,0,2,2" Click="OnTimeQuickFill" />
+                                    <ui:Button Content="+0.5H" Tag="EndTime:H0.5" Padding="6,2" Margin="2,0,2,2" Click="OnTimeQuickFill" />
+                                    <ui:Button Content="+1H" Tag="EndTime:H1" Padding="6,2" Margin="2,0,2,2" Click="OnTimeQuickFill" />
+                                    <ui:Button Content="+2H" Tag="EndTime:H2" Padding="6,2" Margin="2,0,2,2" Click="OnTimeQuickFill" />
+                                    <ui:Button Content="+8H" Tag="EndTime:H8" Padding="6,2" Margin="2,0,2,2" Click="OnTimeQuickFill" />
+                                    <ui:Button Content="+12H" Tag="EndTime:H12" Padding="6,2" Margin="2,0,2,2" Click="OnTimeQuickFill" />
+                                </WrapPanel>
+                            </DockPanel>
 
                             <Separator Style="{StaticResource TaskEditSeparator}" />
 
-                            <TextBlock Text="截止时间" Margin="0,0,0,2" />
-                            <DatePicker x:Name="EndDatePicker" HorizontalAlignment="Stretch" />
-                            <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
-                                <TextBlock Text="快填：" VerticalAlignment="Center"
-                                           Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
-                                <ui:Button Content="今天" Tag="EndDate:Today" Padding="8,2" Margin="2,0" Click="OnDateQuickFill" />
-                                <ui:Button Content="明天" Tag="EndDate:Tomorrow" Padding="8,2" Margin="2,0" Click="OnDateQuickFill" />
-                                <ui:Button Content="后天" Tag="EndDate:DayAfter" Padding="8,2" Margin="2,0" Click="OnDateQuickFill" />
-                                <ui:Button Content="一周后" Tag="EndDate:Week" Padding="8,2" Margin="2,0" Click="OnDateQuickFill" />
-                                <ui:Button Content="一月后" Tag="EndDate:Month" Padding="8,2" Margin="2,0" Click="OnDateQuickFill" />
-                            </StackPanel>
-                            <TextBlock Text="截止时间（时 : 分）" Margin="0,6,0,2" />
-                            <StackPanel Orientation="Horizontal">
-                                <ComboBox x:Name="EndHourBox" Width="78" />
-                                <TextBlock Text=":" VerticalAlignment="Center" Margin="6,0,6,0" FontWeight="Bold" />
-                                <ComboBox x:Name="EndMinuteBox" Width="78" />
-                            </StackPanel>
-                            <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
-                                <TextBlock Text="快填：" VerticalAlignment="Center"
-                                           Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
-                                <ui:Button Content="现在" Tag="EndTime:Now" Padding="8,2" Margin="2,0" Click="OnTimeQuickFill" />
-                                <ui:Button Content="+0.5H" Tag="EndTime:H0.5" Padding="8,2" Margin="2,0" Click="OnTimeQuickFill" />
-                                <ui:Button Content="+1H" Tag="EndTime:H1" Padding="8,2" Margin="2,0" Click="OnTimeQuickFill" />
-                                <ui:Button Content="+2H" Tag="EndTime:H2" Padding="8,2" Margin="2,0" Click="OnTimeQuickFill" />
-                                <ui:Button Content="+8H" Tag="EndTime:H8" Padding="8,2" Margin="2,0" Click="OnTimeQuickFill" />
-                                <ui:Button Content="+12H" Tag="EndTime:H12" Padding="8,2" Margin="2,0" Click="OnTimeQuickFill" />
-                            </StackPanel>
-
-                            <Separator Style="{StaticResource TaskEditSeparator}" />
-
-                            <TextBlock Text="到期提醒" FontWeight="Bold" Margin="0,0,0,2" />
-                            <CheckBox x:Name="TaskUseGlobalCheck" Content="使用全局默认设置"
-                                      Checked="OnTaskUseGlobalChanged" Unchecked="OnTaskUseGlobalChanged"
-                                      ToolTip="勾选则沿用「全局设置」的到期提醒；取消勾选可为本任务单独设置" />
-                            <StackPanel x:Name="TaskBehaviorPanel" Margin="0,4,0,0">
-                                <CheckBox x:Name="TaskKeepCheck" Content="保持显示"
-                                          Checked="OnTaskBehaviorChanged" Unchecked="OnTaskBehaviorChanged" />
-                                <CheckBox x:Name="TaskHideCheck" Content="自动隐藏"
-                                          Checked="OnTaskBehaviorChanged" Unchecked="OnTaskBehaviorChanged" />
-                                <CheckBox x:Name="TaskBlinkCheck" Content="闪烁提醒"
-                                          Checked="OnTaskBehaviorChanged" Unchecked="OnTaskBehaviorChanged" />
-                                <CheckBox x:Name="TaskNotifyCheck" Content="系统通知"
-                                          Checked="OnTaskBehaviorChanged" Unchecked="OnTaskBehaviorChanged" />
-                            </StackPanel>
+                            <!-- 到期提醒：显示模式下拉 + 通知勾选，单行 -->
+                            <DockPanel>
+                                <TextBlock Style="{StaticResource FieldLabel}" Text="到期提醒" />
+                                <CheckBox x:Name="TaskNotifyCheck" DockPanel.Dock="Right" Content="系统通知"
+                                          VerticalAlignment="Center" Margin="8,0,0,0"
+                                          ToolTip="到期时弹出一次系统气球通知（可与显示模式叠加）" />
+                                <ComboBox x:Name="TaskModeBox" HorizontalAlignment="Stretch"
+                                          SelectionChanged="OnTaskModeChanged"
+                                          ToolTip="到期后顶栏的显示方式；选「使用全局默认」则沿用全局设置（含系统通知），此时本任务通知不可单独勾选">
+                                    <ComboBoxItem Content="使用全局默认" Tag="global" />
+                                    <ComboBoxItem Content="保持显示" Tag="keep" />
+                                    <ComboBoxItem Content="自动隐藏" Tag="hide" />
+                                    <ComboBoxItem Content="闪烁提醒" Tag="blink" />
+                                </ComboBox>
+                            </DockPanel>
 
                             <ui:Button x:Name="SaveButton" Content="保存任务" Appearance="Primary"
                                        HorizontalAlignment="Stretch" Height="34" Margin="0,14,0,0" Click="OnSave" />
