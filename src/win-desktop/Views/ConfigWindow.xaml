@@ -112,6 +112,15 @@
                             <TextBlock Text="进度条高度（px）" Margin="0,12,0,2" />
                             <ComboBox x:Name="BarHeightBox" HorizontalAlignment="Stretch" />
 
+                            <TextBlock Text="任务到期后" Margin="0,12,0,2" />
+                            <ComboBox x:Name="ExpiredBehaviorBox" HorizontalAlignment="Stretch"
+                                      ToolTip="任务到达截止时刻后顶栏的表现方式">
+                                <ComboBoxItem Content="保持显示" Tag="keep" />
+                                <ComboBoxItem Content="闪烁提醒" Tag="blink" />
+                                <ComboBoxItem Content="系统通知" Tag="notify" />
+                                <ComboBoxItem Content="自动隐藏" Tag="hide" />
+                            </ComboBox>
+
                             <CheckBox x:Name="AutostartCheck" Content="开机自启动" Margin="0,16,0,0" />
 
                             <CheckBox x:Name="ShowConfigAtRuntimeCheck" Content="运行时显示此窗口"

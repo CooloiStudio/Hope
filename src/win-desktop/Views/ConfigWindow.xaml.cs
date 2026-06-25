@@ -64,6 +64,7 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
 
         RefreshBox.SelectionChanged += OnSettingsSelectionChanged;
         BarHeightBox.SelectionChanged += OnBarHeightBoxChanged;
+        ExpiredBehaviorBox.SelectionChanged += OnSettingsSelectionChanged;
         AutostartCheck.Checked += OnSettingsControlChanged;
         AutostartCheck.Unchecked += OnSettingsControlChanged;
         ShowConfigAtRuntimeCheck.Checked += OnSettingsControlChanged;
@@ -134,6 +135,7 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
             _loadingSettings = true;
             RefreshBox.SelectedItem = Math.Clamp(s.RefreshSec, 1, 10).ToString();
             BarHeightBox.SelectedItem = Math.Clamp(s.BarHeightPx, 1, 10).ToString();
+            SelectExpiredBehavior(s.ExpiredBehavior);
             AutostartCheck.IsChecked = s.Autostart;
             ShowConfigAtRuntimeCheck.IsChecked = s.ShowConfigAtRuntime;
             _loadingSettings = false;
@@ -166,6 +168,7 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
 
         _settings.RefreshSec = ParseIntItem(RefreshBox, _settings.RefreshSec);
         _settings.BarHeightPx = ParseIntItem(BarHeightBox, _settings.BarHeightPx);
+        _settings.ExpiredBehavior = SelectedExpiredBehavior();
         _settings.Autostart = AutostartCheck.IsChecked == true;
         _settings.ShowConfigAtRuntime = ShowConfigAtRuntimeCheck.IsChecked == true;
 
@@ -211,6 +214,22 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
 
     private static int ParseIntItem(ComboBox box, int fallback) =>
         box.SelectedItem is string s && int.TryParse(s, out var v) ? v : fallback;
+
+    private string SelectedExpiredBehavior() =>
+        (ExpiredBehaviorBox.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? "keep";
+
+    private void SelectExpiredBehavior(string behavior)
+    {
+        foreach (ComboBoxItem item in ExpiredBehaviorBox.Items)
+        {
+            if (string.Equals(item.Tag?.ToString(), behavior, StringComparison.OrdinalIgnoreCase))
+            {
+                ExpiredBehaviorBox.SelectedItem = item;
+                return;
+            }
+        }
+        ExpiredBehaviorBox.SelectedIndex = 0; // 回退到 keep
+    }
 
     // 写入 / 删除 HKCU Run 项，实现开机自启（§5.3.3 新增 3）。
     private static void ApplyAutostart(bool enable)

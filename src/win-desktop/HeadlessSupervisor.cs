@@ -31,6 +31,13 @@ public sealed class HeadlessSupervisor : IDisposable
                         CreateNoWindow = true,
                         WindowStyle = ProcessWindowStyle.Hidden,
                     };
+                    // 传入自身路径，接通反方向互拉：Desktop 异常退出时由 Headless 重新拉起（文档 §3.3）。
+                    var selfPath = Environment.ProcessPath;
+                    if (!string.IsNullOrEmpty(selfPath))
+                    {
+                        psi.ArgumentList.Add("--desktop");
+                        psi.ArgumentList.Add(selfPath);
+                    }
                     Process.Start(psi);
                 }
             }

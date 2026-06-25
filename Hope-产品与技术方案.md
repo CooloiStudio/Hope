@@ -29,9 +29,9 @@
 | 点击穿透 & 不出 Alt+Tab | ✅ | `NativeMethods` + `WM_NCHITTEST` → `HTTRANSPARENT` |
 | 悬停展示任务名 + 倒计时 | ✅ | `OverlayWindow`：`endAt` 倒计时 Tooltip |
 | 跟随图片/动图 | ✅ | `Overlay/ImageSprite`：Bgra32 保留 alpha；>15px 等比缩放、GIF 播放 |
-| 截止后行为 `expiredBehavior` | ⚠️ | Headless + Desktop 逻辑 ✅（`notify`/`blink`/`hide`）；**配置窗体尚无设置项**，默认 `keep` |
+| 截止后行为 `expiredBehavior` | ✅ | Headless + Desktop 逻辑 ✅（`keep`/`blink`/`notify`/`hide`）；配置窗『全局设置』已加下拉框，修改即生效 |
 | Desktop → Headless 互拉 | ✅ | `HeadlessSupervisor`：检测进程缺失则拉起 |
-| Headless → Desktop 互拉 | ⚠️ | `main.go --desktop` 已实现；**Desktop 拉起 Headless 时未传 `--desktop`** |
+| Headless → Desktop 互拉 | ✅ | `main.go --desktop` 已实现；`HeadlessSupervisor` 拉起 Headless 时传入自身路径，双向互拉已接通 |
 | Desktop 单实例 | ✅ | `Global\HopeDesktop` Mutex |
 | WPF-UI Fluent 主题（配置窗） | ✅ | `App.xaml` 合并主题字典；`FluentWindow` + `TitleBar`；首帧后延迟应用 Mica（Win11）/ Acrylic（Win10），托盘延迟打开 + 隐藏时 `UnWatch`，规避 `Show()` 卡死 |
 | CI 编译 & 单测 | ✅ | `.github/workflows/release.yml`：`go test` + `dotnet publish` |
@@ -39,7 +39,7 @@
 | VS Code 调试配置 | ✅ | `Hope.sln` + `.vscode/launch.json`（net10.0-windows） |
 | Phase 2 全屏插件 | ❌ | `src/plugins/fullscreen/` 仅占位 README |
 
-**当前可交付边界：** v0.4 配置窗与设置链路主体已通，FluentWindow/Mica 已落地；距 v1.0 尚差 `expiredBehavior` 设置 UI、双向互拉联调、帮助文档与验收清单人工回归。
+**当前可交付边界：** v0.4 配置窗与设置链路已通，FluentWindow/Mica、`expiredBehavior` 设置 UI、双向互拉均已落地；距 v1.0 尚差帮助文档与验收清单人工回归。
 
 ### 0.2 验收标准对照（§9）
 
@@ -55,7 +55,7 @@
 | 8 | 托盘退出 & 互拉停止 | ✅ |
 | 9 | 单实例 | ✅ |
 | 10 | 无任务不显示 | ✅ |
-| 11 | 到期 `notify` | ✅（需 `expiredBehavior=notify`，当前仅能通过改 `config.json`） |
+| 11 | 到期 `notify` | ✅（配置窗『全局设置』可选「系统通知」） |
 | 12 | Headless 崩溃拉起 | ✅（Desktop 侧） |
 | 13 | 暂停不冻结墙钟 | ✅ |
 
@@ -94,7 +94,7 @@
 | 模块 | 说明 | 状态 |
 |------|------|------|
 | Headless 核心 | Go 后台：任务计时、百分比计算、配置持久化、IPC 广播 | ✅ |
-| 配置窗口 | WPF：创建/编辑任务、全局设置、实时预览 | ✅（`expiredBehavior` 设置项除外） |
+| 配置窗口 | WPF：创建/编辑任务、全局设置、实时预览 | ✅ |
 | 系统托盘 | 托盘图标入口：打开设置、暂停/恢复、退出 | ✅ |
 | DWM 覆盖层 | 透明置顶、鼠标穿透的顶栏进度条窗口 | ✅ |
 | 跟随图片/动图 | 进度条下方、随 `fillEnd` 移动 | ✅ |
@@ -163,7 +163,7 @@
 **进程互保（Watchdog）：**
 
 - Headless 退出异常时，Desktop 在数秒内重新拉起 Headless。✅ `HeadlessSupervisor`
-- Desktop 退出异常时，Headless 在数秒内重新拉起 Desktop（Headless 需以 `--desktop <path>` 启动）。⚠️ 代码已有，**Desktop 默认拉起未带该参数**
+- Desktop 退出异常时，Headless 在数秒内重新拉起 Desktop（Headless 以 `--desktop <path>` 启动）。✅ `HeadlessSupervisor` 拉起 Headless 时已传入自身路径
 - 用户托盘「退出」时，双方约定正常关闭，互拉逻辑不触发。✅
 
 ---
@@ -370,7 +370,7 @@ go build -ldflags="-s -w -H=windowsgui" -o hope-headless.exe .
 
 > 广播额外字段 `expired[]`（任务刚到期时一次性下发，供 Desktop 执行 `expiredBehavior`）。✅ 已实现
 
-### 5.3 WPF 配置窗体 + 系统托盘 ✅（`expiredBehavior` 设置项除外）
+### 5.3 WPF 配置窗体 + 系统托盘 ✅
 
 **配置窗体：**
 
@@ -378,8 +378,8 @@ go build -ldflags="-s -w -H=windowsgui" -o hope-headless.exe .
 - [x] 支持多任务列表：新建 / 编辑 / 删除
 - [x] 保存后通过 IPC 同步至 Headless
 - [x] 关闭窗口时 **最小化到托盘**，不退出进程
-- [x] 全局设置 Tab：进度条高度、刷新间隔、开机自启、运行时显示配置窗、重置窗高；**修改即 `updateSettings`**（无保存按钮）
-- [ ] `expiredBehavior` 设置项（后端已支持，UI 未做）
+- [x] 全局设置 Tab：进度条高度、刷新间隔、任务到期后行为、开机自启、运行时显示配置窗、重置窗高；**修改即 `updateSettings`**（无保存按钮）
+- [x] `expiredBehavior` 设置项（下拉框：保持 / 闪烁 / 通知 / 隐藏）
 
 #### 5.3.1 配置窗体交互增强（v0.4 新增需求）
 
@@ -474,7 +474,7 @@ go build -ldflags="-s -w -H=windowsgui" -o hope-headless.exe .
 - **开机自启**：HKCU Run + `settings.autostart`。
 - **运行时显示此窗口**：`settings.showConfigAtRuntime`，默认关；下次启动自动打开配置窗。
 - **重置窗口高度**：按任务编辑区内容重新 `FitHeightToTaskEditor()`。
-- [ ] **未做**：`expiredBehavior` 下拉配置。
+- [x] `expiredBehavior` 下拉配置（保持 / 闪烁 / 通知 / 隐藏）。
 
 **新增 4：双 Tab 布局** ✅
 
@@ -514,7 +514,7 @@ go build -ldflags="-s -w -H=windowsgui" -o hope-headless.exe .
 **进程互保：**
 
 - [x] Desktop 监视 Headless（见 §3.3）
-- [ ] Headless 监视 Desktop（需安装包或启动参数 `--desktop`）
+- [x] Headless 监视 Desktop（`HeadlessSupervisor` 拉起 Headless 时传 `--desktop <自身路径>`）
 - [x] 托盘「退出」：Desktop 先发 `quit`，双方正常结束，禁用互拉
 
 **托盘菜单：**
@@ -762,7 +762,7 @@ Hope/
 - **全局暂停不冻结墙钟**：暂停期间 Headless 仍按 `time.Now()` 维护各任务 `percent`；仅隐藏顶栏（`visible=false`）。恢复后顶栏立刻显示暂停期间已推进的进度
 - 例：08:00–18:00 任务，17:00 打开电脑 → 该任务 `percent = 90%`
 
-**截止后行为（已确定）：** ⚠️ 逻辑已实现，配置 UI 未做
+**截止后行为（已确定）：** ✅ 逻辑与配置 UI 均已实现
 
 - 用户在以下选项中 **单选（互斥）**，禁止多选：
   - `keep` 保持 — ✅
@@ -787,7 +787,7 @@ Hope/
 | 每任务颜色 | 用户必填 | 是 | ✅ 取色盘 + 去重校验 |
 | 跟随图片/动图 | 可选 | 是 | ✅ |
 | 显示显示器 | 主屏 | 是 | ✅ 仅主屏 |
-| 截止后行为 `expiredBehavior` | `keep` | 是 | ⚠️ 逻辑 ✅；配置 UI ❌ |
+| 截止后行为 `expiredBehavior` | `keep` | 是 | ✅ 逻辑 + 配置 UI |
 | 刷新间隔 `refreshSec` | 1s | 是 | ✅ 1–10s，即时生效 |
 | 开机自启 | 关 | 是 | ✅ HKCU Run + 持久化 |
 | 运行时显示配置窗 | 关 | 是 | ✅ `showConfigAtRuntime` |
@@ -803,7 +803,7 @@ Hope/
 | 场景 | 期望行为 | 状态 |
 |------|----------|------|
 | Headless 崩溃 | Desktop 重新拉起 Headless | ✅ |
-| Desktop 崩溃 | Headless 重新拉起 Desktop | ⚠️ 需 `--desktop` |
+| Desktop 崩溃 | Headless 重新拉起 Desktop | ✅ 拉起 Headless 时已传 `--desktop` |
 | Overlay 被挡 / 不可见 | **Phase 1 不检测、不提示** | ✅（未做检测） |
 | 独占全屏且未装插件 | **Phase 1 不检测、不提示** | ✅（未做检测） |
 | 系统休眠 / 唤醒 | 唤醒后按 `time.Now()` 立即重算 | ✅ |
@@ -812,7 +812,7 @@ Hope/
 ### 7.7 非功能需求
 
 - [x] 性能目标：CPU < 10%，内存 < 100MB（未正式压测，架构上满足）
-- [x] 可靠性：Headless ↔ Desktop 互相拉起（§3.3、§7.6）—— ⚠️ 双向互拉未完全接线
+- [x] 可靠性：Headless ↔ Desktop 互相拉起（§3.3、§7.6）—— ✅ 双向互拉已接通
 - [ ] 日志：用户可导出（写文件 ✅，导出 UI ❌）
 - [ ] 卸载：完全清理 `%APPDATA%\Hope`（安装包卸载行为待验）
 - [ ] 安装包小于 30MB（CI 产物待实测）
@@ -836,7 +836,7 @@ Hope/
 | v0.1 | Headless + IPC + 命令行验证 | ✅ |
 | v0.2 | WPF 配置 + 托盘 | ✅ |
 | v0.3 | DWM 分段顶栏 + 多任务闭环 + 跟随图片 | ✅ |
-| v0.4 | 设置 UI、配置窗交互增强、WPF-UI 主题（FluentWindow/Mica）、品牌图标、实时预览、窗高自适应 | ⚠️ **主体已完成**；剩 `expiredBehavior` UI、双向互拉 |
+| v0.4 | 设置 UI、配置窗交互增强、WPF-UI 主题（FluentWindow/Mica）、品牌图标、实时预览、窗高自适应、`expiredBehavior` UI、双向互拉 | ✅ **已完成** |
 | v1.0 | 安装包验收、帮助文档、Onboarding | 🔲 |
 | v1.x-plugin | 全屏游戏拓展包（独立发版） | ❌ |
 
@@ -906,8 +906,8 @@ Hope/
 5. 插件是否考虑上架 Microsoft Store？__________
 6. 旧版 `需求文档.md`？**建议废弃，仅作历史参考**
 7. 全局「暂停」是否冻结墙钟？**已决：不冻结** ✅
-8. Desktop 拉起 Headless 时是否传 `--desktop` 完成双向互拉？**待做（v0.4）**
-9. 设置项是否并入配置窗体？**待做（v0.4）**
+8. Desktop 拉起 Headless 时是否传 `--desktop` 完成双向互拉？**已完成（v0.4）**
+9. 设置项是否并入配置窗体？**已完成（v0.4）**
 
 ---
 
