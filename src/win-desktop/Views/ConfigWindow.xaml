@@ -14,7 +14,9 @@
         FontFamily="Microsoft YaHei UI" FontSize="13">
     <Window.Resources>
         <!-- DatePicker / Calendar 沿用 WPF-UI ControlsDictionary 的 Fluent 隐式样式（深色圆角 + Fluent 日历）。
-             （日历弹窗半透明问题待方案 B：覆盖 Popup 容器背景，本轮未处理。） -->
+             日历弹窗背景键 CalendarViewBackground 默认取 ControlFillColorInputActive（暗色下 #B31E1E1E，半透明），
+             独立弹窗中会透出桌面；此处仅覆盖该键为不透明表面色，不动其它控件背景。 -->
+        <SolidColorBrush x:Key="CalendarViewBackground" Color="{DynamicResource SolidBackgroundFillColorBase}" />
         <!-- 表单字段标签：定宽左列，使所有行的控件竖直对齐（紧凑单行布局） -->
         <Style x:Key="FieldLabel" TargetType="{x:Type TextBlock}">
             <Setter Property="Width" Value="56" />
