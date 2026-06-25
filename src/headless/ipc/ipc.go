@@ -26,11 +26,12 @@ type State struct {
 	Expired  []ExpiredEvent `json:"expired,omitempty"`
 }
 
-// ExpiredEvent 在任务到达截止时刻时随广播一次性下发，供 Desktop 执行 expiredBehavior。
+// ExpiredEvent 在任务到达截止时刻时随广播一次性下发，供 Desktop 执行一次性提醒（如 notify）。
+// keep / blink / hide 等持续表现由广播 Segment 的 expired / behaviors 字段驱动。
 type ExpiredEvent struct {
-	TaskID   string `json:"taskId"`
-	Name     string `json:"name"`
-	Behavior string `json:"behavior"` // keep / blink / notify / hide
+	TaskID    string   `json:"taskId"`
+	Name      string   `json:"name"`
+	Behaviors []string `json:"behaviors"` // 生效的到期提醒集合：keep / blink / notify / hide
 }
 
 // Command 为客户端 → 服务端的控制命令。

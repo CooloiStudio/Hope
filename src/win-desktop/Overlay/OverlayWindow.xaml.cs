@@ -1,6 +1,7 @@
 using System.Windows;
 using System.Windows.Interop;
 using System.Windows.Media;
+using System.Windows.Media.Animation;
 using System.Windows.Shapes;
 using System.Windows.Threading;
 using Hope.Desktop.Interop;
@@ -23,11 +24,22 @@ public partial class OverlayWindow : Window
     // 图片精灵最大高度（进度条下方），单位 DIP。超过则等比缩小到此高度。
     private const double ImageMaxHeight = 15;
 
+    // 闪烁脉冲参数：柔和正弦渐变（淡出至近透明再淡入），单程时长 → 全周期约 2×。
+    private const double BlinkHalfPeriodSec = 0.8;
+    private const double BlinkMinAlpha = 0.05;
+
     private readonly DispatcherTimer _hoverTimer;
     private readonly DispatcherTimer _gifTimer;
     private readonly Dictionary<string, ImageSprite> _sprites = new();
     private List<Segment> _segments = new();
     private int _barHeightPx = 4;
+
+    // 闪烁状态：当前正在脉冲的色段矩形、已查看（停止脉冲）的任务、本帧应闪烁的任务集合。
+    private readonly List<Rectangle> _blinkRects = new();
+    private readonly HashSet<string> _acknowledgedBlink = new();
+    private readonly HashSet<string> _blinkingIds = new();
+    // 上次渲染的分段签名：未变化时跳过重建，避免每秒重置闪烁动画导致渐变不连续。
+    private string _lastRenderSig = "";
 
     public OverlayWindow()
     {
@@ -76,6 +88,14 @@ public partial class OverlayWindow : Window
         _segments = msg.Segments ?? new List<Segment>();
         _barHeightPx = Math.Clamp(barHeightPx, 1, 10);
 
+        // 重算本帧应闪烁的任务（到期 + 行为含 blink）；已查看集合裁剪到仍在闪烁的任务，
+        // 以便任务被重新设定时间后再次到期可重新闪烁。
+        _blinkingIds.Clear();
+        foreach (var s in _segments)
+            if (s.Expired && s.Behaviors != null && s.Behaviors.Contains("blink"))
+                _blinkingIds.Add(s.TaskId);
+        _acknowledgedBlink.IntersectWith(_blinkingIds);
+
         bool show = msg.Visible && _segments.Count > 0;
         bool hasImage = show && _segments.Any(s => ImageSprite.IsUsable(s.Gif));
 
@@ -97,6 +117,33 @@ public partial class OverlayWindow : Window
             HoverPopup.IsOpen = false;
             if (IsVisible) Hide();
         }
+    }
+
+    // 在色段矩形上挂柔和 alpha 渐变动画（合成级，平滑且持续）。
+    private static void StartBlink(Rectangle r)
+    {
+        var anim = new DoubleAnimation
+        {
+            From = 1.0,
+            To = BlinkMinAlpha,
+            Duration = TimeSpan.FromSeconds(BlinkHalfPeriodSec),
+            AutoReverse = true,
+            RepeatBehavior = RepeatBehavior.Forever,
+            EasingFunction = new SineEase { EasingMode = EasingMode.EaseInOut },
+        };
+        r.BeginAnimation(UIElement.OpacityProperty, anim);
+    }
+
+    /// <summary>用户已查看到期提醒（如打开设置）：停止当前闪烁脉冲并复位透明度。</summary>
+    public void AcknowledgeBlink()
+    {
+        foreach (var id in _blinkingIds) _acknowledgedBlink.Add(id);
+        foreach (var r in _blinkRects)
+        {
+            r.BeginAnimation(UIElement.OpacityProperty, null); // 解除动画
+            r.Opacity = 1.0;
+        }
+        _blinkRects.Clear();
     }
 
     // 依据当前分段维护图片精灵：按 fillEnd 定位到进度前沿，跟随进度移动。
@@ -165,9 +212,16 @@ public partial class OverlayWindow : Window
 
     private void Render()
     {
-        BarCanvas.Children.Clear();
         double w = Width;
         if (w <= 0) return;
+
+        // 分段几何/颜色/到期态未变化时跳过重建，让已挂载的闪烁动画连续运行（避免每秒重置）。
+        string sig = BuildRenderSignature(w);
+        if (sig == _lastRenderSig && BarCanvas.Children.Count > 0) return;
+        _lastRenderSig = sig;
+
+        BarCanvas.Children.Clear();
+        _blinkRects.Clear();
 
         // 仅绘制已填充部分（barStart → fillEnd），未完成部分不画任何底色（保持透明、不可点击）。
         // 进度条高度恒为 _barHeightPx，不随图片区扩展而变粗。
@@ -187,7 +241,31 @@ public partial class OverlayWindow : Window
             Canvas.SetLeft(fill, x0);
             Canvas.SetTop(fill, 0);
             BarCanvas.Children.Add(fill);
+
+            // 到期且行为含 blink、且用户尚未查看 → 挂柔和渐变动画。
+            if (seg.Expired && !_acknowledgedBlink.Contains(seg.TaskId) &&
+                seg.Behaviors != null && seg.Behaviors.Contains("blink"))
+            {
+                _blinkRects.Add(fill);
+                StartBlink(fill);
+            }
         }
+    }
+
+    // 渲染签名：涵盖所有影响绘制与闪烁判定的输入；据此决定是否需要重建。
+    private string BuildRenderSignature(double w)
+    {
+        var sb = new System.Text.StringBuilder();
+        sb.Append(w).Append('|').Append(_barHeightPx).Append('|');
+        foreach (var s in _segments)
+        {
+            bool blink = s.Behaviors != null && s.Behaviors.Contains("blink");
+            sb.Append(s.TaskId).Append(':').Append(s.BarStart).Append(':').Append(s.FillEnd)
+              .Append(':').Append(s.Color).Append(':').Append(s.Expired ? 1 : 0)
+              .Append(':').Append(blink && !_acknowledgedBlink.Contains(s.TaskId) ? 1 : 0)
+              .Append(';');
+        }
+        return sb.ToString();
     }
 
     private void OnHoverTick(object? sender, EventArgs e)
@@ -240,19 +318,6 @@ public partial class OverlayWindow : Window
     {
         try { return (Color)ColorConverter.ConvertFromString(hex); }
         catch { return Color.FromRgb(0xFF, 0x6B, 0x35); }
-    }
-
-    /// <summary>到期闪烁提示（expiredBehavior=blink）。</summary>
-    public void Blink()
-    {
-        int count = 0;
-        var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(250) };
-        timer.Tick += (_, _) =>
-        {
-            BarCanvas.Opacity = BarCanvas.Opacity < 0.5 ? 1.0 : 0.2;
-            if (++count >= 8) { BarCanvas.Opacity = 1.0; timer.Stop(); }
-        };
-        timer.Start();
     }
 
     /// <summary>彻底关闭（退出时调用）。</summary>

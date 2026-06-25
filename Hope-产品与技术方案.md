@@ -29,7 +29,7 @@
 | 点击穿透 & 不出 Alt+Tab | ✅ | `NativeMethods` + `WM_NCHITTEST` → `HTTRANSPARENT` |
 | 悬停展示任务名 + 倒计时 | ✅ | `OverlayWindow`：`endAt` 倒计时 Tooltip |
 | 跟随图片/动图 | ✅ | `Overlay/ImageSprite`：Bgra32 保留 alpha；>15px 等比缩放、GIF 播放 |
-| 截止后行为 `expiredBehavior` | ✅ | Headless + Desktop 逻辑 ✅（`keep`/`blink`/`notify`/`hide`）；配置窗『全局设置』已加下拉框，修改即生效 |
+| 截止后行为 `expiredBehaviors`（多选） | ✅ | Headless + Desktop 逻辑 ✅；`keep`/`blink`/`hide` 互斥 + `notify` 叠加；全局默认 + 任务级覆盖；`blink` 为柔和 alpha 渐变持续到查看 |
 | Desktop → Headless 互拉 | ✅ | `HeadlessSupervisor`：检测进程缺失则拉起 |
 | Headless → Desktop 互拉 | ✅ | `main.go --desktop` 已实现；`HeadlessSupervisor` 拉起 Headless 时传入自身路径，双向互拉已接通 |
 | Desktop 单实例 | ✅ | `Global\HopeDesktop` Mutex |
@@ -39,7 +39,7 @@
 | VS Code 调试配置 | ✅ | `Hope.sln` + `.vscode/launch.json`（net10.0-windows） |
 | Phase 2 全屏插件 | ❌ | `src/plugins/fullscreen/` 仅占位 README |
 
-**当前可交付边界：** v0.4 配置窗与设置链路已通，FluentWindow/Mica、`expiredBehavior` 设置 UI、双向互拉均已落地；距 v1.0 尚差帮助文档与验收清单人工回归。
+**当前可交付边界：** v0.4 配置窗与设置链路已通，FluentWindow/Mica、双向互拉均已落地；v0.5 到期提醒已升级为「多选互斥 + 全局默认 + 任务级覆盖」，`blink` 改为柔和 alpha 渐变并持续到查看；距 v1.0 尚差帮助文档与验收清单人工回归。
 
 ### 0.2 验收标准对照（§9）
 
@@ -55,7 +55,7 @@
 | 8 | 托盘退出 & 互拉停止 | ✅ |
 | 9 | 单实例 | ✅ |
 | 10 | 无任务不显示 | ✅ |
-| 11 | 到期 `notify` | ✅（配置窗『全局设置』可选「系统通知」） |
+| 11 | 到期提醒 `expiredBehaviors`（多选） | ✅（保持/隐藏/闪烁互斥 + 通知叠加；全局默认 + 任务级覆盖） |
 | 12 | Headless 崩溃拉起 | ✅（Desktop 侧） |
 | 13 | 暂停不冻结墙钟 | ✅ |
 
@@ -345,7 +345,7 @@ go build -ldflags="-s -w -H=windowsgui" -o hope-headless.exe .
 ```
 
 ```json
-{"action":"updateSettings","settings":{"barHeightPx":4,"expiredBehavior":"notify"}}
+{"action":"updateSettings","settings":{"barHeightPx":4,"expiredBehaviors":["keep","notify"]}}
 ```
 
 ```json
@@ -368,7 +368,8 @@ go build -ldflags="-s -w -H=windowsgui" -o hope-headless.exe .
 {"action":"quit"}
 ```
 
-> 广播额外字段 `expired[]`（任务刚到期时一次性下发，供 Desktop 执行 `expiredBehavior`）。✅ 已实现
+> 广播额外字段 `expired[]`（任务刚到期时一次性下发，携带 `behaviors[]`，供 Desktop 执行 **一次性** 提醒如 `notify`）。✅ 已实现
+> `keep` / `blink` / `hide` 等 **持续** 表现由广播 `segments[]` 中每段的 `expired`（bool）与 `behaviors[]` 字段驱动：到期保留段标 `expired:true`，含 `blink` 时由 Overlay 做柔和 alpha 渐变。✅ 已实现
 
 ### 5.3 WPF 配置窗体 + 系统托盘 ✅
 
@@ -379,7 +380,8 @@ go build -ldflags="-s -w -H=windowsgui" -o hope-headless.exe .
 - [x] 保存后通过 IPC 同步至 Headless
 - [x] 关闭窗口时 **最小化到托盘**，不退出进程
 - [x] 全局设置 Tab：进度条高度、刷新间隔、任务到期后行为、开机自启、运行时显示配置窗、重置窗高；**修改即 `updateSettings`**（无保存按钮）
-- [x] `expiredBehavior` 设置项（下拉框：保持 / 闪烁 / 通知 / 隐藏）
+- [x] `expiredBehaviors` 设置项（**多选复选框**：保持显示 / 自动隐藏 / 闪烁提醒 / 系统通知；保持/隐藏/闪烁三者自动互斥，通知可叠加）——此为全局默认值
+- [x] 任务编辑区「到期提醒」分区：默认「使用全局默认」；取消后可为该任务单独多选（任务级覆盖 `task.expiredBehaviors`）
 
 #### 5.3.1 配置窗体交互增强（v0.4 新增需求）
 
@@ -474,7 +476,7 @@ go build -ldflags="-s -w -H=windowsgui" -o hope-headless.exe .
 - **开机自启**：HKCU Run + `settings.autostart`。
 - **运行时显示此窗口**：`settings.showConfigAtRuntime`，默认关；下次启动自动打开配置窗。
 - **重置窗口高度**：按任务编辑区内容重新 `FitHeightToTaskEditor()`。
-- [x] `expiredBehavior` 下拉配置（保持 / 闪烁 / 通知 / 隐藏）。
+- [x] `expiredBehaviors` 多选配置（保持显示 / 自动隐藏 / 闪烁提醒 / 系统通知；三显示模式互斥 + 通知叠加），全局为默认值；任务编辑区可单独覆盖。
 
 **新增 4：双 Tab 布局** ✅
 
@@ -577,7 +579,7 @@ WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE
 - [x] 按 IPC `segments` 从左至右绘制各色段**已填充部分**（`barStart` → `fillEnd`）
 - [x] **不绘制未完成部分的底色**：`fillEnd` 之后透明，不可点击、悬停不交互
 - [x] 进度条**粗细恒为 `barHeightPx`（1~10px）**，不随是否带图片而变化
-- [x] 过期 `expiredBehavior=blink`：顶栏闪烁动画（`OverlayWindow.Blink`）
+- [x] 过期 `behaviors` 含 `blink`：该到期保留段做**柔和 alpha 渐变脉冲**（`DoubleAnimation`，正弦缓动淡出/淡入），持续到用户打开设置（`AcknowledgeBlink`）后停止
 - [x] **跟随图片/动图：** 含 `gif` 的段在进度条**下方**渲染（`ImageSprite`），水平中心对齐 `fillEnd`、随进度移动
   - [x] 支持常见图片格式（GIF / PNG / JPG / BMP / WebP / TIFF 等）；**动画 WebP / APNG 仅首帧**（`System.Drawing` 限制）
   - [x] 图片高度 **超过 15px 时等比缩放到 15px**，不超过则保持原始尺寸
@@ -762,14 +764,19 @@ Hope/
 - **全局暂停不冻结墙钟**：暂停期间 Headless 仍按 `time.Now()` 维护各任务 `percent`；仅隐藏顶栏（`visible=false`）。恢复后顶栏立刻显示暂停期间已推进的进度
 - 例：08:00–18:00 任务，17:00 打开电脑 → 该任务 `percent = 90%`
 
-**截止后行为（已确定）：** ✅ 逻辑与配置 UI 均已实现
+**截止后行为（已确定）：** ✅ 逻辑与配置 UI 均已实现（v0.5 改造为多选 + 任务级覆盖）
 
-- 用户在以下选项中 **单选（互斥）**，禁止多选：
-  - `keep` 保持 — ✅
-  - `blink` 闪烁 — ✅ Overlay 闪烁
-  - `notify` 系统通知 — ✅ 托盘气球
-  - `hide` 自动隐藏 — ✅ 到期后移出活跃段
-- 配置字段：`expiredBehavior`，默认 `keep`（可手动改 `config.json`）
+- 提醒方式为 **多选复选框**，存为字符串集合 `expiredBehaviors`（取代旧的单值 `expiredBehavior`）：
+  - `keep` 保持显示 — ✅ 到期后该任务以 **100% 满色段** 常驻顶栏，直到手动删除或改为隐藏
+  - `blink` 闪烁提醒 — ✅ 到期后该段做 **柔和 alpha 渐变**（淡出至近透明再淡入，正弦缓动），**持续到用户打开设置查看后停止**
+  - `hide` 自动隐藏 — ✅ 到期后从顶栏移出该段
+  - `notify` 系统通知 — ✅ 到期时弹一次托盘气球
+- **自动互斥**：`keep` / `blink` / `hide` 三者同为「显示模式」，**互斥仅能选其一**；`notify` 可独立叠加在任意显示模式之上。
+- **全局默认 + 任务级覆盖**：
+  - 全局设置中的 `expiredBehaviors` 为 **默认值**，应用于未单独设置的任务。
+  - 每个任务可在任务编辑区取消「使用全局默认」后单独配置自己的 `expiredBehaviors`（任务级，存于 `task.expiredBehaviors`，为空表示沿用全局）。
+- 默认值：全局 `expiredBehaviors = ["keep"]`。旧配置中的单值 `expiredBehavior` 在加载时 **自动迁移** 为单元素数组。
+- 显示判定：到期任务仅当生效行为为纯 `hide`（且不含 `keep`/`blink`）时移出顶栏；其余一律保留为满色段。
 
 **无任务时（已确定）：** 不创建 / 不显示顶栏窗口（`visible = false`）
 
@@ -787,7 +794,7 @@ Hope/
 | 每任务颜色 | 用户必填 | 是 | ✅ 取色盘 + 去重校验 |
 | 跟随图片/动图 | 可选 | 是 | ✅ |
 | 显示显示器 | 主屏 | 是 | ✅ 仅主屏 |
-| 截止后行为 `expiredBehavior` | `keep` | 是 | ✅ 逻辑 + 配置 UI |
+| 截止后行为 `expiredBehaviors`（多选） | `["keep"]` | 是 | ✅ 多选互斥 + 任务级覆盖；全局为默认 |
 | 刷新间隔 `refreshSec` | 1s | 是 | ✅ 1–10s，即时生效 |
 | 开机自启 | 关 | 是 | ✅ HKCU Run + 持久化 |
 | 运行时显示配置窗 | 关 | 是 | ✅ `showConfigAtRuntime` |
@@ -837,6 +844,7 @@ Hope/
 | v0.2 | WPF 配置 + 托盘 | ✅ |
 | v0.3 | DWM 分段顶栏 + 多任务闭环 + 跟随图片 | ✅ |
 | v0.4 | 设置 UI、配置窗交互增强、WPF-UI 主题（FluentWindow/Mica）、品牌图标、实时预览、窗高自适应、`expiredBehavior` UI、双向互拉 | ✅ **已完成** |
+| v0.5 | 到期提醒升级：多选互斥（保持/隐藏/闪烁 + 通知）、全局默认 + 任务级覆盖、`blink` 改柔和 alpha 渐变并持续到查看、`keep` 保留满色段 | ✅ **已完成** |
 | v1.0 | 安装包验收、帮助文档、Onboarding | 🔲 |
 | v1.x-plugin | 全屏游戏拓展包（独立发版） | ❌ |
 
@@ -878,7 +886,10 @@ Hope/
 | 8 | 用户点击托盘「退出」 | — | 所有 Hope 进程结束，互拉停止 | ✅ |
 | 9 | 二次启动 | — | 单实例，不重复顶栏 | ✅ |
 | 10 | 无任务 | — | 不显示顶栏 | ✅ |
-| 11 | 任务到期且 `expiredBehavior=notify` | 到达 endAt | 触发一次系统通知 | ✅ |
+| 11 | 任务到期且 `behaviors` 含 `notify` | 到达 endAt | 触发一次系统通知 | ✅ |
+| 11b | 任务到期且 `behaviors` 含 `keep` | 到达 endAt | 该段保留为 100% 满色常驻顶栏 | ✅ |
+| 11c | 任务到期且 `behaviors` 含 `blink` | 到达 endAt | 该段柔和 alpha 渐变脉冲，打开设置后停止 | ✅ |
+| 11d | 任务到期且 `behaviors` 为纯 `hide` | 到达 endAt | 该段从顶栏移出 | ✅ |
 | 12 | Headless 被结束 | Desktop 仍运行 | 数秒内 Headless 被 Desktop 拉起 | ✅ |
 | 13 | 任务进行中 | 托盘暂停 10 分钟后继续 | 顶栏隐藏期间进度仍推进；恢复后 percent 一致 | ✅ |
 

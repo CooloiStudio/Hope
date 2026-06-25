@@ -97,16 +97,9 @@ public partial class App : Application
 
     private void HandleExpired(ExpiredEvent ev)
     {
-        switch (ev.Behavior)
-        {
-            case "notify":
-                _tray?.ShowBalloonTip(5000, "Hope · 任务到期", $"「{ev.Name}」已到达截止时间", ToolTipIcon.Info);
-                break;
-            case "blink":
-                _overlay.Blink();
-                break;
-            // keep / hide：无需额外动作（hide 时该任务已从活跃段中移除）
-        }
+        // 一次性提醒：notify 弹气球。keep/hide/blink 为持续表现，由 Overlay 依据 Segment 状态驱动。
+        if (ev.Behaviors != null && ev.Behaviors.Contains("notify"))
+            _tray?.ShowBalloonTip(5000, "Hope · 任务到期", $"「{ev.Name}」已到达截止时间", ToolTipIcon.Info);
     }
 
     private void SetupTray()
@@ -179,6 +172,8 @@ public partial class App : Application
     private void ShowConfig()
     {
         DesktopLog.Info("ShowConfig: menu click, scheduling deferred open");
+        // 打开设置即视为用户已查看到期提醒：停止当前闪烁脉冲。
+        _overlay.AcknowledgeBlink();
         // 托盘菜单为模态循环；延迟到菜单关闭后再创建/显示 FluentWindow，避免与 Win10 背景渲染争用 UI 线程。
         var timer = new System.Windows.Forms.Timer { Interval = 10 };
         timer.Tick += (_, _) =>

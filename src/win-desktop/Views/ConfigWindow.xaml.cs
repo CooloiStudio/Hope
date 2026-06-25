@@ -10,6 +10,7 @@ using System.Windows.Threading;
 using Hope.Desktop;
 using Hope.Desktop.Ipc;
 using ComboBox = System.Windows.Controls.ComboBox;
+using CheckBox = System.Windows.Controls.CheckBox;
 using Color = System.Windows.Media.Color;
 using Brush = System.Windows.Media.Brush;
 using Brushes = System.Windows.Media.Brushes;
@@ -31,6 +32,8 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
     private string? _editingId;
     private SettingsDto _settings = new();
     private bool _loadingSettings;
+    private bool _loadingTaskBehaviors;
+    private bool _applyingExclusion;
     private DateTimeOffset _taskCreatedAt = DateTimeOffset.Now;
     private readonly DispatcherTimer _previewTimer;
     private readonly System.Windows.Controls.Image _previewImage;
@@ -64,7 +67,6 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
 
         RefreshBox.SelectionChanged += OnSettingsSelectionChanged;
         BarHeightBox.SelectionChanged += OnBarHeightBoxChanged;
-        ExpiredBehaviorBox.SelectionChanged += OnSettingsSelectionChanged;
         AutostartCheck.Checked += OnSettingsControlChanged;
         AutostartCheck.Unchecked += OnSettingsControlChanged;
         ShowConfigAtRuntimeCheck.Checked += OnSettingsControlChanged;
@@ -135,7 +137,7 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
             _loadingSettings = true;
             RefreshBox.SelectedItem = Math.Clamp(s.RefreshSec, 1, 10).ToString();
             BarHeightBox.SelectedItem = Math.Clamp(s.BarHeightPx, 1, 10).ToString();
-            SelectExpiredBehavior(s.ExpiredBehavior);
+            LoadBehaviors(s.ExpiredBehaviors, GlobalKeepCheck, GlobalHideCheck, GlobalBlinkCheck, GlobalNotifyCheck);
             AutostartCheck.IsChecked = s.Autostart;
             ShowConfigAtRuntimeCheck.IsChecked = s.ShowConfigAtRuntime;
             _loadingSettings = false;
@@ -168,7 +170,7 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
 
         _settings.RefreshSec = ParseIntItem(RefreshBox, _settings.RefreshSec);
         _settings.BarHeightPx = ParseIntItem(BarHeightBox, _settings.BarHeightPx);
-        _settings.ExpiredBehavior = SelectedExpiredBehavior();
+        _settings.ExpiredBehaviors = CollectBehaviors(GlobalKeepCheck, GlobalHideCheck, GlobalBlinkCheck, GlobalNotifyCheck);
         _settings.Autostart = AutostartCheck.IsChecked == true;
         _settings.ShowConfigAtRuntime = ShowConfigAtRuntimeCheck.IsChecked == true;
 
@@ -215,20 +217,80 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
     private static int ParseIntItem(ComboBox box, int fallback) =>
         box.SelectedItem is string s && int.TryParse(s, out var v) ? v : fallback;
 
-    private string SelectedExpiredBehavior() =>
-        (ExpiredBehaviorBox.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? "keep";
+    // ===== 到期提醒（多选 + 自动互斥）=====
 
-    private void SelectExpiredBehavior(string behavior)
+    // 全局默认勾选变化：应用互斥后提交设置。
+    private void OnGlobalBehaviorChanged(object sender, RoutedEventArgs e)
     {
-        foreach (ComboBoxItem item in ExpiredBehaviorBox.Items)
+        if (_loadingSettings) return;
+        ApplyBehaviorExclusion(sender as CheckBox, GlobalKeepCheck, GlobalHideCheck, GlobalBlinkCheck);
+        CommitSettings();
+    }
+
+    // 任务级勾选变化：仅应用互斥（任务在「保存任务」时落盘）。
+    private void OnTaskBehaviorChanged(object sender, RoutedEventArgs e)
+    {
+        if (_loadingTaskBehaviors) return;
+        ApplyBehaviorExclusion(sender as CheckBox, TaskKeepCheck, TaskHideCheck, TaskBlinkCheck);
+    }
+
+    // 切换「使用全局默认」：启用/禁用任务级勾选区。
+    private void OnTaskUseGlobalChanged(object sender, RoutedEventArgs e)
+    {
+        if (TaskBehaviorPanel != null)
+            TaskBehaviorPanel.IsEnabled = TaskUseGlobalCheck.IsChecked != true;
+    }
+
+    // 自动互斥：keep / blink / hide 三者同为「显示模式」，仅能选其一；勾选其一即取消另两个。
+    // notify 为独立叠加项，不参与互斥。
+    private void ApplyBehaviorExclusion(CheckBox? changed, CheckBox keep, CheckBox hide, CheckBox blink)
+    {
+        if (_applyingExclusion || changed == null) return;
+        if (changed != keep && changed != hide && changed != blink) return; // notify 等不互斥
+        if (changed.IsChecked != true) return; // 取消勾选不触发互斥
+        _applyingExclusion = true;
+        try
         {
-            if (string.Equals(item.Tag?.ToString(), behavior, StringComparison.OrdinalIgnoreCase))
-            {
-                ExpiredBehaviorBox.SelectedItem = item;
-                return;
-            }
+            if (changed != keep) keep.IsChecked = false;
+            if (changed != hide) hide.IsChecked = false;
+            if (changed != blink) blink.IsChecked = false;
         }
-        ExpiredBehaviorBox.SelectedIndex = 0; // 回退到 keep
+        finally { _applyingExclusion = false; }
+    }
+
+    private static List<string> CollectBehaviors(CheckBox keep, CheckBox hide, CheckBox blink, CheckBox notify)
+    {
+        var list = new List<string>();
+        if (keep.IsChecked == true) list.Add("keep");
+        if (hide.IsChecked == true) list.Add("hide");
+        if (blink.IsChecked == true) list.Add("blink");
+        if (notify.IsChecked == true) list.Add("notify");
+        return list;
+    }
+
+    private void LoadBehaviors(List<string>? behaviors, CheckBox keep, CheckBox hide, CheckBox blink, CheckBox notify)
+    {
+        var set = behaviors ?? new List<string>();
+        keep.IsChecked = set.Contains("keep");
+        hide.IsChecked = set.Contains("hide");
+        blink.IsChecked = set.Contains("blink");
+        notify.IsChecked = set.Contains("notify");
+    }
+
+    // 载入任务级到期提醒：为空表示沿用全局默认（勾上「使用全局默认」并禁用细项）。
+    private void LoadTaskBehaviors(List<string>? behaviors)
+    {
+        _loadingTaskBehaviors = true;
+        try
+        {
+            bool useGlobal = behaviors == null || behaviors.Count == 0;
+            TaskUseGlobalCheck.IsChecked = useGlobal;
+            // 未覆盖时，细项展示全局默认值作为参考。
+            LoadBehaviors(useGlobal ? _settings.ExpiredBehaviors : behaviors,
+                TaskKeepCheck, TaskHideCheck, TaskBlinkCheck, TaskNotifyCheck);
+            if (TaskBehaviorPanel != null) TaskBehaviorPanel.IsEnabled = !useGlobal;
+        }
+        finally { _loadingTaskBehaviors = false; }
     }
 
     // 写入 / 删除 HKCU Run 项，实现开机自启（§5.3.3 新增 3）。
@@ -354,6 +416,7 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
         SetDateTime(StartDatePicker, StartHourBox, StartMinuteBox,
             row.StartAt?.LocalDateTime ?? DateTime.Now);
         SetDateTime(EndDatePicker, EndHourBox, EndMinuteBox, row.EndAt.LocalDateTime);
+        LoadTaskBehaviors(row.ExpiredBehaviors);
         StatusText.Text = $"正在编辑：{row.Name}";
         UpdatePreview();
         MainTabs.SelectedItem = TaskTab; // 选中任务自动切到任务编辑 Tab（§5.3.3 新增 4）
@@ -369,6 +432,7 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
         SelectType("scheduled");
         SetDateTime(StartDatePicker, StartHourBox, StartMinuteBox, DateTime.Now);
         SetDateTime(EndDatePicker, EndHourBox, EndMinuteBox, DateTime.Now.AddHours(1));
+        LoadTaskBehaviors(null); // 新任务默认沿用全局
         TaskGrid.SelectedItem = null;
         StatusText.Text = "新建任务";
         UpdatePreview();
@@ -409,6 +473,9 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
             Gif = string.IsNullOrEmpty(gif) ? null : gif,
             StartAt = start,
             EndAt = end,
+            ExpiredBehaviors = TaskUseGlobalCheck.IsChecked == true
+                ? null
+                : CollectBehaviors(TaskKeepCheck, TaskHideCheck, TaskBlinkCheck, TaskNotifyCheck),
         };
 
         _ipc.Send(new Command { Action = _editingId == null ? "createTask" : "updateTask", Task = dto });
@@ -657,6 +724,7 @@ public sealed class TaskRow
     public DateTimeOffset? StartAt { get; init; }
     public DateTimeOffset EndAt { get; init; }
     public DateTimeOffset? CreatedAt { get; init; }
+    public List<string>? ExpiredBehaviors { get; init; }
 
     public string TypeLabel => Type == "instant" ? "即时" : "定时";
     public string EndLabel => EndAt.LocalDateTime.ToString("MM-dd HH:mm");
@@ -679,5 +747,6 @@ public sealed class TaskRow
         StartAt = t.StartAt,
         EndAt = t.EndAt,
         CreatedAt = t.CreatedAt,
+        ExpiredBehaviors = t.ExpiredBehaviors,
     };
 }

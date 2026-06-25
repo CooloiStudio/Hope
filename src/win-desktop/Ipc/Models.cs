@@ -24,14 +24,16 @@ public sealed class Segment
     [JsonPropertyName("percent")] public double Percent { get; set; }
     [JsonPropertyName("fillEnd")] public double FillEnd { get; set; }
     [JsonPropertyName("endAt")] public DateTimeOffset EndAt { get; set; }
+    [JsonPropertyName("expired")] public bool Expired { get; set; }
+    [JsonPropertyName("behaviors")] public List<string>? Behaviors { get; set; }
 }
 
-/// <summary>任务到期一次性事件。</summary>
+/// <summary>任务到期一次性事件（供 notify 等一次性提醒；keep/blink/hide 由 Segment 持续驱动）。</summary>
 public sealed class ExpiredEvent
 {
     [JsonPropertyName("taskId")] public string TaskId { get; set; } = "";
     [JsonPropertyName("name")] public string Name { get; set; } = "";
-    [JsonPropertyName("behavior")] public string Behavior { get; set; } = "keep";
+    [JsonPropertyName("behaviors")] public List<string>? Behaviors { get; set; }
 }
 
 /// <summary>客户端→服务端命令。</summary>
@@ -54,13 +56,16 @@ public sealed class TaskDto
     [JsonPropertyName("startAt")] public DateTimeOffset? StartAt { get; set; }
     [JsonPropertyName("endAt")] public DateTimeOffset EndAt { get; set; }
     [JsonPropertyName("createdAt")] public DateTimeOffset? CreatedAt { get; set; }
+    // 任务级到期提醒覆盖；null/空 表示沿用全局默认。
+    [JsonPropertyName("expiredBehaviors")] public List<string>? ExpiredBehaviors { get; set; }
 }
 
 /// <summary>用户设置，字段与 Go 端 config.Settings 对齐。</summary>
 public sealed class SettingsDto
 {
     [JsonPropertyName("barHeightPx")] public int BarHeightPx { get; set; } = 4;
-    [JsonPropertyName("expiredBehavior")] public string ExpiredBehavior { get; set; } = "keep";
+    // 全局默认到期提醒（多选）。
+    [JsonPropertyName("expiredBehaviors")] public List<string> ExpiredBehaviors { get; set; } = new() { "keep" };
     [JsonPropertyName("refreshSec")] public int RefreshSec { get; set; } = 1;
     [JsonPropertyName("monitor")] public string Monitor { get; set; } = "primary";
     [JsonPropertyName("autostart")] public bool Autostart { get; set; }

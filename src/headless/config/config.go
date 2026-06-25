@@ -17,34 +17,27 @@ var utf8BOM = []byte{0xEF, 0xBB, 0xBF}
 
 func stripBOM(b []byte) []byte { return bytes.TrimPrefix(b, utf8BOM) }
 
-// ExpiredBehavior 定义任务到期后的顶栏表现（单选，互斥）。
-type ExpiredBehavior string
-
-const (
-	ExpiredKeep   ExpiredBehavior = "keep"   // 保持
-	ExpiredBlink  ExpiredBehavior = "blink"  // 闪烁
-	ExpiredNotify ExpiredBehavior = "notify" // 系统通知
-	ExpiredHide   ExpiredBehavior = "hide"   // 自动隐藏
-)
-
 // Settings 为用户可配置项，对应文档 §7.4。
+// ExpiredBehaviors 为「全局默认」到期提醒（多选）；任务可在 task.Task.ExpiredBehaviors 单独覆盖。
 type Settings struct {
-	BarHeightPx     int             `json:"barHeightPx"`
-	ExpiredBehavior ExpiredBehavior `json:"expiredBehavior"`
-	RefreshSec      int             `json:"refreshSec"`
-	Monitor         string          `json:"monitor"` // 首版仅 "primary"
-	Autostart           bool            `json:"autostart"`
-	ShowConfigAtRuntime bool            `json:"showConfigAtRuntime"`
-	Language            string          `json:"language"`
+	BarHeightPx         int      `json:"barHeightPx"`
+	ExpiredBehaviors    []string `json:"expiredBehaviors"`
+	RefreshSec          int      `json:"refreshSec"`
+	Monitor             string   `json:"monitor"` // 首版仅 "primary"
+	Autostart           bool     `json:"autostart"`
+	ShowConfigAtRuntime bool     `json:"showConfigAtRuntime"`
+	Language            string   `json:"language"`
+	// LegacyExpiredBehavior 兼容旧版单值字段，仅用于迁移读入，迁移后清空不再写出。
+	LegacyExpiredBehavior string `json:"expiredBehavior,omitempty"`
 }
 
 // DefaultSettings 返回文档约定的默认设置。
 func DefaultSettings() Settings {
 	return Settings{
-		BarHeightPx:     4,
-		ExpiredBehavior: ExpiredKeep,
-		RefreshSec:      1,
-		Monitor:         "primary",
+		BarHeightPx:         4,
+		ExpiredBehaviors:    []string{task.BehaviorKeep},
+		RefreshSec:          1,
+		Monitor:             "primary",
 		Autostart:           false,
 		ShowConfigAtRuntime: false,
 		Language:            "zh-CN",
@@ -105,8 +98,12 @@ func mergeSettings(def, loaded Settings) Settings {
 	if loaded.BarHeightPx > 0 {
 		out.BarHeightPx = loaded.BarHeightPx
 	}
-	if loaded.ExpiredBehavior != "" {
-		out.ExpiredBehavior = loaded.ExpiredBehavior
+	switch {
+	case len(loaded.ExpiredBehaviors) > 0:
+		out.ExpiredBehaviors = loaded.ExpiredBehaviors
+	case loaded.LegacyExpiredBehavior != "":
+		// 旧版单值 → 迁移为多选集合
+		out.ExpiredBehaviors = []string{loaded.LegacyExpiredBehavior}
 	}
 	if loaded.RefreshSec > 0 {
 		out.RefreshSec = loaded.RefreshSec

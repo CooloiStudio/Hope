@@ -34,12 +34,13 @@ func New(store *config.Store, log *slog.Logger) *Engine {
 // ComputeState 基于当前墙钟时间计算一帧广播状态。
 func (e *Engine) ComputeState() ipc.State {
 	now := time.Now()
-	_, tasks := e.store.Snapshot()
-	layout := task.BuildLayout(tasks, now)
+	settings, tasks := e.store.Snapshot()
+	behaviorsOf := func(t *task.Task) []string { return effectiveBehaviors(t, settings) }
+	layout := task.BuildLayout(tasks, now, behaviorsOf)
 
 	e.mu.Lock()
 	paused, hidden := e.paused, e.hidden
-	events := e.collectExpiredLocked(tasks, now)
+	events := e.collectExpiredLocked(tasks, now, behaviorsOf)
 	e.mu.Unlock()
 
 	st := ipc.State{
@@ -51,30 +52,38 @@ func (e *Engine) ComputeState() ipc.State {
 	case paused:
 		st.State = "paused"
 		st.Visible = false
-	case !layout.HasActive && layout.HadAny:
-		st.State = "expired"
-		st.Visible = false
-	case !layout.HasActive:
-		st.State = "idle"
-		st.Visible = false
-	default:
+	case len(layout.Segments) > 0:
+		// 含未过期段或「保持显示」的到期段时顶栏可见。
 		st.State = "running"
 		st.Visible = !hidden
+	case layout.HadAny:
+		st.State = "expired"
+		st.Visible = false
+	default:
+		st.State = "idle"
+		st.Visible = false
 	}
 	return st
 }
 
-// collectExpiredLocked 返回自上次以来新到期的任务事件（一次性）。调用方需持有锁。
-func (e *Engine) collectExpiredLocked(tasks []*task.Task, now time.Time) []ipc.ExpiredEvent {
-	settings, _ := e.store.Snapshot()
+// effectiveBehaviors 返回任务生效的到期提醒：任务级覆盖优先，否则回退全局默认。
+func effectiveBehaviors(t *task.Task, s config.Settings) []string {
+	if len(t.ExpiredBehaviors) > 0 {
+		return t.ExpiredBehaviors
+	}
+	return s.ExpiredBehaviors
+}
+
+// collectExpiredLocked 返回自上次以来新到期的任务事件（一次性，供一次性提醒如 notify）。调用方需持有锁。
+func (e *Engine) collectExpiredLocked(tasks []*task.Task, now time.Time, behaviorsOf func(*task.Task) []string) []ipc.ExpiredEvent {
 	var out []ipc.ExpiredEvent
 	for _, t := range tasks {
 		if t.IsExpired(now) && !e.signaled[t.ID] {
 			e.signaled[t.ID] = true
 			out = append(out, ipc.ExpiredEvent{
-				TaskID:   t.ID,
-				Name:     t.Name,
-				Behavior: string(settings.ExpiredBehavior),
+				TaskID:    t.ID,
+				Name:      t.Name,
+				Behaviors: behaviorsOf(t),
 			})
 		}
 	}

@@ -13,6 +13,11 @@ func mustTime(s string) time.Time {
 	return t
 }
 
+// 测试用行为解析器。
+func noBehaviors(*Task) []string   { return nil }
+func hideBehaviors(*Task) []string { return []string{BehaviorHide} }
+func keepBehaviors(*Task) []string { return []string{BehaviorKeep} }
+
 // 验证文档示例：08:00–18:00 任务，17:00 时进度应为 90%。
 func TestScheduledPercent90(t *testing.T) {
 	start := mustTime("2026-06-23T08:00:00+08:00")
@@ -68,7 +73,7 @@ func TestBuildLayoutV2Bands(t *testing.T) {
 		{ID: "a", Name: "A", Type: Scheduled, Color: "#E53935", StartAt: &sA, EndAt: mustTime("2026-06-23T11:00:00+08:00")}, // 54/180 = 30%
 	}
 
-	layout := BuildLayout(tasks, now)
+	layout := BuildLayout(tasks, now, noBehaviors)
 	if !layout.HasActive {
 		t.Fatal("expected active tasks")
 	}
@@ -111,13 +116,58 @@ func TestBuildLayoutSingleActive(t *testing.T) {
 		{ID: "b", Name: "B", Type: Scheduled, Color: "#43A047", StartAt: &s2, EndAt: mustTime("2026-06-23T10:00:00+08:00")},
 	}
 	now := mustTime("2026-06-23T09:30:00+08:00") // a 过期，b 在 30min/60min = 50%
-	layout := BuildLayout(tasks, now)
+	// hide：到期任务被移除，仅余活跃的 b。
+	layout := BuildLayout(tasks, now, hideBehaviors)
 	if len(layout.Segments) != 1 {
 		t.Fatalf("segments = %d, want 1 (only b active)", len(layout.Segments))
 	}
 	s := layout.Segments[0]
 	if s.TaskID != "b" || s.BarStart != 0 || s.BarEnd != 50 {
 		t.Fatalf("segment = %+v, want b [0,50]", s)
+	}
+}
+
+// keep：到期任务保留为 100% 满色段，挂在活跃段之后并标记 Expired。
+func TestBuildLayoutKeepsExpired(t *testing.T) {
+	s1 := mustTime("2026-06-23T08:00:00+08:00")
+	s2 := mustTime("2026-06-23T09:00:00+08:00")
+	tasks := []*Task{
+		{ID: "a", Name: "A", Type: Scheduled, Color: "#E53935", StartAt: &s1, EndAt: mustTime("2026-06-23T09:00:00+08:00")},
+		{ID: "b", Name: "B", Type: Scheduled, Color: "#43A047", StartAt: &s2, EndAt: mustTime("2026-06-23T10:00:00+08:00")},
+	}
+	now := mustTime("2026-06-23T09:30:00+08:00") // a 过期；b 50%
+	layout := BuildLayout(tasks, now, keepBehaviors)
+	if len(layout.Segments) != 2 {
+		t.Fatalf("segments = %d, want 2 (b active + a kept)", len(layout.Segments))
+	}
+	// b 在前（50%），a 保留在末端（100%）。
+	if layout.Segments[0].TaskID != "b" || layout.Segments[0].BarEnd != 50 {
+		t.Fatalf("segment0 = %+v, want b [.,50]", layout.Segments[0])
+	}
+	a := layout.Segments[1]
+	if a.TaskID != "a" || a.BarStart != 50 || a.BarEnd != 100 || !a.Expired {
+		t.Fatalf("segment1 = %+v, want a [50,100] expired", a)
+	}
+}
+
+// KeepsVisibleWhenExpired：仅纯 hide 隐藏；其余（含空集合、blink+hide）保留。
+func TestKeepsVisibleWhenExpired(t *testing.T) {
+	cases := []struct {
+		bs   []string
+		want bool
+	}{
+		{nil, true},
+		{[]string{BehaviorKeep}, true},
+		{[]string{BehaviorHide}, false},
+		{[]string{BehaviorHide, BehaviorNotify}, false},
+		{[]string{BehaviorBlink, BehaviorHide}, true}, // blink 强制可见
+		{[]string{BehaviorKeep, BehaviorHide}, true},
+		{[]string{BehaviorNotify}, true},
+	}
+	for _, c := range cases {
+		if got := KeepsVisibleWhenExpired(c.bs); got != c.want {
+			t.Fatalf("KeepsVisibleWhenExpired(%v) = %v, want %v", c.bs, got, c.want)
+		}
 	}
 }
 
@@ -129,7 +179,7 @@ func TestBuildLayoutSkipsZeroWidth(t *testing.T) {
 		{ID: "b", Name: "B", Type: Scheduled, Color: "#43A047", StartAt: &s, EndAt: mustTime("2026-06-23T09:00:00+08:00")},
 	}
 	now := mustTime("2026-06-23T08:30:00+08:00") // 两者均 50%
-	layout := BuildLayout(tasks, now)
+	layout := BuildLayout(tasks, now, noBehaviors)
 	if len(layout.Segments) != 1 {
 		t.Fatalf("segments = %d, want 1 (second is zero-width, skipped)", len(layout.Segments))
 	}

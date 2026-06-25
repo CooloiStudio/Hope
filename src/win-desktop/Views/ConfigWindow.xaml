@@ -112,14 +112,22 @@
                             <TextBlock Text="进度条高度（px）" Margin="0,12,0,2" />
                             <ComboBox x:Name="BarHeightBox" HorizontalAlignment="Stretch" />
 
-                            <TextBlock Text="任务到期后" Margin="0,12,0,2" />
-                            <ComboBox x:Name="ExpiredBehaviorBox" HorizontalAlignment="Stretch"
-                                      ToolTip="任务到达截止时刻后顶栏的表现方式">
-                                <ComboBoxItem Content="保持显示" Tag="keep" />
-                                <ComboBoxItem Content="闪烁提醒" Tag="blink" />
-                                <ComboBoxItem Content="系统通知" Tag="notify" />
-                                <ComboBoxItem Content="自动隐藏" Tag="hide" />
-                            </ComboBox>
+                            <TextBlock Text="任务到期后（默认；可多选，每个任务可单独覆盖）" Margin="0,12,0,2"
+                                       TextWrapping="Wrap" />
+                            <StackPanel>
+                                <CheckBox x:Name="GlobalKeepCheck" Content="保持显示"
+                                          Checked="OnGlobalBehaviorChanged" Unchecked="OnGlobalBehaviorChanged"
+                                          ToolTip="到期后该任务以满色保留在顶栏" />
+                                <CheckBox x:Name="GlobalHideCheck" Content="自动隐藏"
+                                          Checked="OnGlobalBehaviorChanged" Unchecked="OnGlobalBehaviorChanged"
+                                          ToolTip="到期后从顶栏移除该任务（与「保持显示」互斥）" />
+                                <CheckBox x:Name="GlobalBlinkCheck" Content="闪烁提醒"
+                                          Checked="OnGlobalBehaviorChanged" Unchecked="OnGlobalBehaviorChanged"
+                                          ToolTip="到期后柔和淡入淡出闪烁，直到打开设置查看（自动转为保持显示）" />
+                                <CheckBox x:Name="GlobalNotifyCheck" Content="系统通知"
+                                          Checked="OnGlobalBehaviorChanged" Unchecked="OnGlobalBehaviorChanged"
+                                          ToolTip="到期时弹出一次系统气球通知" />
+                            </StackPanel>
 
                             <CheckBox x:Name="AutostartCheck" Content="开机自启动" Margin="0,16,0,0" />
 
@@ -254,6 +262,23 @@
                                 <ui:Button Content="+2H" Tag="EndTime:H2" Padding="8,2" Margin="2,0" Click="OnTimeQuickFill" />
                                 <ui:Button Content="+8H" Tag="EndTime:H8" Padding="8,2" Margin="2,0" Click="OnTimeQuickFill" />
                                 <ui:Button Content="+12H" Tag="EndTime:H12" Padding="8,2" Margin="2,0" Click="OnTimeQuickFill" />
+                            </StackPanel>
+
+                            <Separator Style="{StaticResource TaskEditSeparator}" />
+
+                            <TextBlock Text="到期提醒" FontWeight="Bold" Margin="0,0,0,2" />
+                            <CheckBox x:Name="TaskUseGlobalCheck" Content="使用全局默认设置"
+                                      Checked="OnTaskUseGlobalChanged" Unchecked="OnTaskUseGlobalChanged"
+                                      ToolTip="勾选则沿用「全局设置」的到期提醒；取消勾选可为本任务单独设置" />
+                            <StackPanel x:Name="TaskBehaviorPanel" Margin="0,4,0,0">
+                                <CheckBox x:Name="TaskKeepCheck" Content="保持显示"
+                                          Checked="OnTaskBehaviorChanged" Unchecked="OnTaskBehaviorChanged" />
+                                <CheckBox x:Name="TaskHideCheck" Content="自动隐藏"
+                                          Checked="OnTaskBehaviorChanged" Unchecked="OnTaskBehaviorChanged" />
+                                <CheckBox x:Name="TaskBlinkCheck" Content="闪烁提醒"
+                                          Checked="OnTaskBehaviorChanged" Unchecked="OnTaskBehaviorChanged" />
+                                <CheckBox x:Name="TaskNotifyCheck" Content="系统通知"
+                                          Checked="OnTaskBehaviorChanged" Unchecked="OnTaskBehaviorChanged" />
                             </StackPanel>
 
                             <ui:Button x:Name="SaveButton" Content="保存任务" Appearance="Primary"
