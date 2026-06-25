@@ -197,7 +197,7 @@
                             <Separator Style="{StaticResource TaskEditSeparator}" />
 
                             <StackPanel x:Name="StartPanel">
-                                <TextBlock Text="开始日期" Margin="0,8,0,2" />
+                                <TextBlock Text="开始时间" Margin="0,8,0,2" />
                                 <DatePicker x:Name="StartDatePicker" HorizontalAlignment="Stretch" />
                                 <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
                                     <TextBlock Text="快填：" VerticalAlignment="Center"
@@ -228,7 +228,7 @@
 
                             <Separator Style="{StaticResource TaskEditSeparator}" />
 
-                            <TextBlock Text="截止日期" Margin="0,0,0,2" />
+                            <TextBlock Text="截止时间" Margin="0,0,0,2" />
                             <DatePicker x:Name="EndDatePicker" HorizontalAlignment="Stretch" />
                             <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
                                 <TextBlock Text="快填：" VerticalAlignment="Center"
