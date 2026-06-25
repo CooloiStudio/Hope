@@ -11,9 +11,13 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"syscall"
 	"time"
+	"unsafe"
+
+	"golang.org/x/sys/windows"
 
 	"hope/headless/config"
 	"hope/headless/engine"
@@ -98,27 +102,49 @@ func runBroadcastLoop(ctx context.Context, store *config.Store, eng *engine.Engi
 	}
 }
 
-// superviseDesktop 启动并监视 Desktop 进程；其异常退出时重新拉起（文档 §3.3 互保）。
+// superviseDesktop 轮询监视 Desktop 进程：仅当其不在运行时才拉起，异常退出时补拉（文档 §3.3 互保）。
+// 注意：通常是 Desktop 先拉起本核心并传入 --desktop，故必须先判断 Desktop 是否已在运行，
+// 否则会与已存在的 Desktop 反复重复拉起（后者撞单实例互斥秒退）形成 fork 死循环。
 func superviseDesktop(ctx context.Context, log *slog.Logger, path string, quitting *atomic.Bool) {
+	exeName := filepath.Base(path)
 	for {
 		if ctx.Err() != nil || quitting.Load() {
 			return
 		}
-		cmd := exec.Command(path)
-		cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
-		if err := cmd.Start(); err != nil {
-			log.Error("start desktop failed", "err", err)
-			time.Sleep(3 * time.Second)
-			continue
+		if !isProcessRunning(exeName) {
+			cmd := exec.Command(path)
+			cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+			if err := cmd.Start(); err != nil {
+				log.Error("start desktop failed", "err", err)
+			} else {
+				log.Info("desktop launched", "pid", cmd.Process.Pid, "exe", exeName)
+			}
 		}
-		log.Info("desktop started", "pid", cmd.Process.Pid)
-		_ = cmd.Wait()
-		if quitting.Load() || ctx.Err() != nil {
+		select {
+		case <-ctx.Done():
 			return
+		case <-time.After(2 * time.Second):
 		}
-		log.Warn("desktop exited unexpectedly, relaunching")
-		time.Sleep(2 * time.Second)
 	}
+}
+
+// isProcessRunning 报告是否存在指定可执行名（如 hope-desktop.exe）的进程。
+func isProcessRunning(exeName string) bool {
+	snap, err := windows.CreateToolhelp32Snapshot(windows.TH32CS_SNAPPROCESS, 0)
+	if err != nil {
+		return false
+	}
+	defer windows.CloseHandle(snap)
+
+	var entry windows.ProcessEntry32
+	entry.Size = uint32(unsafe.Sizeof(entry))
+	target := strings.ToLower(exeName)
+	for err = windows.Process32First(snap, &entry); err == nil; err = windows.Process32Next(snap, &entry) {
+		if strings.ToLower(windows.UTF16ToString(entry.ExeFile[:])) == target {
+			return true
+		}
+	}
+	return false
 }
 
 // newLogger 构建写入文件（始终）与控制台（--debug）的结构化日志。
