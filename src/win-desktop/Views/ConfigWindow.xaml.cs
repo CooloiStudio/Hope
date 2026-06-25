@@ -63,9 +63,6 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
             RefreshBox.Items.Add(i.ToString());
             BarHeightBox.Items.Add(i.ToString());
         }
-        for (int i = 1; i <= 30; i++) RecurIntervalBox.Items.Add(i.ToString());
-        RecurIntervalBox.SelectedItem = "2";
-        RecurIntervalBox.SelectionChanged += (_, _) => UpdatePreview();
         foreach (var chk in WeekdayChecks())
         {
             chk.Checked += (_, _) => UpdatePreview();
@@ -319,6 +316,21 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
         ScheduleFitHeightToTaskEditor();
     }
 
+    // 间隔输入框仅允许数字（范围在保存/预览处校验为 3~799）。
+    private void OnRecurIntervalChanged(object sender, TextChangedEventArgs e)
+    {
+        var box = RecurIntervalBox;
+        var digits = new string(box.Text.Where(char.IsDigit).ToArray());
+        if (digits != box.Text)
+        {
+            int caret = box.CaretIndex;
+            box.Text = digits;
+            box.CaretIndex = Math.Min(caret, digits.Length);
+            return; // 赋值会再次触发，落到下面分支
+        }
+        UpdatePreview();
+    }
+
     private void UpdateRecurVisibility()
     {
         var mode = RecurMode();
@@ -338,7 +350,8 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
             case "daily":
                 return new RecurrenceDto { Mode = "daily" };
             case "everyN":
-                return new RecurrenceDto { Mode = "everyN", Interval = ParseIntItem(RecurIntervalBox, 2) };
+                int.TryParse(RecurIntervalBox.Text, out var iv);
+                return new RecurrenceDto { Mode = "everyN", Interval = iv };
             case "weekly":
                 var days = WeekdayMap().Where(p => p.chk.IsChecked == true).Select(p => p.weekday).ToList();
                 return new RecurrenceDto { Mode = "weekly", Weekdays = days };
@@ -355,7 +368,8 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
             if (string.Equals(item.Tag?.ToString(), mode, StringComparison.OrdinalIgnoreCase))
             { RecurModeBox.SelectedItem = item; break; }
         }
-        RecurIntervalBox.SelectedItem = Math.Clamp(rec?.Interval > 0 ? rec.Interval : 2, 1, 30).ToString();
+        int iv = rec?.Interval ?? 0;
+        RecurIntervalBox.Text = (iv >= 2 && iv <= 800) ? iv.ToString() : "2";
         var set = rec?.Weekdays ?? new List<int>();
         foreach (var (chk, wd) in WeekdayMap()) chk.IsChecked = set.Contains(wd);
         UpdateRecurVisibility();
@@ -534,6 +548,12 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
                      (recurrence.Weekdays == null || recurrence.Weekdays.Count == 0))
             {
                 StatusText.Text = "循环「按星期」：请至少选择一天";
+                return;
+            }
+            else if (recurrence.Mode == "everyN" &&
+                     (recurrence.Interval < 2 || recurrence.Interval > 800))
+            {
+                StatusText.Text = "循环间隔需为 2~800（含端点）的整数";
                 return;
             }
             // 循环任务仅取时分窗口（支持跨午夜），不校验整体先后。
@@ -808,6 +828,7 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
     {
         bool scheduled = SelectedType() == "scheduled";
         if (StartPanel != null) StartPanel.Visibility = scheduled ? Visibility.Visible : Visibility.Collapsed;
+        if (RecurPanel != null) RecurPanel.Visibility = scheduled ? Visibility.Visible : Visibility.Collapsed;
         ScheduleFitHeightToTaskEditor();
     }
 
