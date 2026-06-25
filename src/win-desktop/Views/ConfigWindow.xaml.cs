@@ -98,6 +98,9 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
             ScheduleFitHeightToTaskEditor();
         };
 
+        var v = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version;
+        AboutVersionText.Text = v != null ? $"v{v.Major}.{v.Minor}.{v.Build}" : "v0.0.0";
+
         ContentRendered += (_, _) => EnsureFluentBackdrop();
         OnNew(this, new RoutedEventArgs());
         DesktopLog.Info("ConfigWindow ctor: done");

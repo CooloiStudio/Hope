@@ -13,9 +13,8 @@
         Foreground="{DynamicResource TextFillColorPrimaryBrush}"
         FontFamily="Microsoft YaHei UI" FontSize="13">
     <Window.Resources>
-        <!-- DatePicker / Calendar 不在窗口级覆盖：沿用 WPF-UI ControlsDictionary 的 Fluent 隐式样式
-             （深色圆角输入框 + Fluent 弹出日历）。窗口级显式 Style（无 BasedOn/Template）会退回系统默认模板，
-             造成白框 + 简谱日历，故移除。 -->
+        <!-- DatePicker / Calendar 沿用 WPF-UI ControlsDictionary 的 Fluent 隐式样式（深色圆角 + Fluent 日历）。
+             （日历弹窗半透明问题待方案 B：覆盖 Popup 容器背景，本轮未处理。） -->
         <!-- 表单字段标签：定宽左列，使所有行的控件竖直对齐（紧凑单行布局） -->
         <Style x:Key="FieldLabel" TargetType="{x:Type TextBlock}">
             <Setter Property="Width" Value="56" />
@@ -354,6 +353,22 @@
                             <ui:Button x:Name="NewButton" Content="清空（新建）"
                                        HorizontalAlignment="Stretch" Height="30" Margin="0,6,0,0" Click="OnNew" />
                         </StackPanel>
+                </TabItem>
+
+                <!-- 关于 -->
+                <TabItem Header="关于">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto"
+                                  HorizontalScrollBarVisibility="Disabled" Padding="4,8,8,4">
+                        <StackPanel>
+                            <TextBlock Text="Hope · 盼头" FontWeight="Bold" FontSize="18" Margin="0,4,0,2" />
+                            <TextBlock x:Name="AboutVersionText" Text="v0.0.0"
+                                       FontSize="14" Margin="0,0,0,12"
+                                       Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                            <TextBlock TextWrapping="Wrap"
+                                       Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                                       Text="桌面顶栏进度条 · 多任务多色 · 本地优先。" />
+                        </StackPanel>
+                    </ScrollViewer>
                 </TabItem>
             </TabControl>
         </Grid>
