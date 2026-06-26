@@ -152,30 +152,38 @@ func filterTasksByPosition(tasks []*task.Task, position, globalPosition string, 
 
 // buildAllFourLayout 将每个任务的进度按屏幕物理周长映射到四边。
 // startPos 为 BarPosition（用户选择的基础位置），baseDir 为 BarDirection（forward/reverse）。
-// 四边环绕顺序由 derive(startPos, baseDir) 决定：
-//   - 顺时针：top(左->右) -> right(上->下) -> bottom(右->左) -> left(下->上)
-//   - 逆时针：top(左->右) -> left(下->上) -> bottom(右->左) -> right(上->下)
-// 已填满的边生成满段，当前活跃边生成部分填充段并挂载图片；未到达的边不生成。
-// 图片旋转角度 = 从起始边到当前活跃边沿环绕方向经过的边数 * 90（顺时针正，逆时针负）。
+//
+// 环绕方向由起点+填充方向共同决定（非 forward=顺时针）：
+//   top+forward  → 顺时针（上右下左）
+//   top+reverse  → 逆时针（上左下右）
+//   bottom+forward → 逆时针（下右上左）
+//   bottom+reverse → 顺时针（下左下右）
+//   left+forward   → 逆时针（左下底右）
+//   left+reverse   → 顺时针（左上右底）
+//   right+forward  → 逆时针（右上底左）
+//   right+reverse  → 顺时针（右下左底）
+//
+// 已填满的边生成满段（BarEnd=100，不挂图片）；
+// 当前活跃边生成部分填充段（挂图片）；
+// 未到达的边不生成 Segment。
 func buildAllFourLayout(tasks []*task.Task, now time.Time, behaviorsOf func(*task.Task) []string, startPos, baseDir string, screenWidth, screenHeight float64) []task.Segment {
 	if screenWidth <= 0 || screenHeight <= 0 {
-		// 桌面端尚未上报尺寸时，使用常见 16:9 默认值作为降级，避免完全无法渲染。
 		screenWidth, screenHeight = 1920, 1080
 	}
 
-	clockwise, counterClockwise := deriveAllFourOrders(startPos)
-	sides := clockwise
-	if baseDir == "reverse" {
-		sides = counterClockwise
-	}
+	sides := deriveAllFourOrders(startPos, baseDir)
+	surroundDir := deriveSurroundDir(startPos, baseDir)
 
-	// 每条边在总周长上的起点偏移。
 	w, h := screenWidth, screenHeight
-	cum := []float64{0, w, w + h, w + h + w, 2 * (w + h)}
-	// 每条边对应的物理长度。
-	sideLen := []float64{w, h, w, h}
 
-	perim := 2 * (w + h)
+	// cum[i] = 第 i 条边起点在周长上的偏移，按实际 sides 顺序计算
+	cum := make([]float64, 5)
+	cum[0] = 0
+	for i := 0; i < 4; i++ {
+		cum[i+1] = cum[i] + edgeLen(sides[i], w, h)
+	}
+	perim := cum[4]
+
 	var out []task.Segment
 
 	for _, t := range tasks {
@@ -184,7 +192,7 @@ func buildAllFourLayout(tasks []*task.Task, now time.Time, behaviorsOf func(*tas
 		}
 		bs := behaviorsOf(t)
 		if !t.IsExpired(now) && t.Percent(now) <= 0 {
-			continue // 未开始
+			continue
 		}
 
 		var pct float64
@@ -201,15 +209,16 @@ func buildAllFourLayout(tasks []*task.Task, now time.Time, behaviorsOf func(*tas
 		}
 
 		x := perim * pct / 100.0
-		// 找到当前活跃边。
-		activeIdx := 0
+
+		// 找到当前活跃边 idx
+		activeIdx := 3
 		for i := 0; i < 4; i++ {
-			if x >= cum[i] && x < cum[i+1] {
+			if x < cum[i+1] {
 				activeIdx = i
 				break
 			}
 		}
-		// 当 pct == 100 时 x 可能恰好等于 perim，归为最后一条边。
+		// pct==100 时 x==perim，归为最后一条边
 		if x >= perim {
 			activeIdx = 3
 		}
@@ -217,10 +226,11 @@ func buildAllFourLayout(tasks []*task.Task, now time.Time, behaviorsOf func(*tas
 		for i := 0; i <= activeIdx; i++ {
 			pos := sides[i]
 			isActive := i == activeIdx
+
 			localStart := 0.0
 			localEnd := 100.0
 			if isActive {
-				localEnd = ((x - cum[i]) / sideLen[i]) * 100.0
+				localEnd = ((x - cum[i]) / edgeLen(pos, w, h)) * 100.0
 				if localEnd < 0 {
 					localEnd = 0
 				}
@@ -228,12 +238,12 @@ func buildAllFourLayout(tasks []*task.Task, now time.Time, behaviorsOf func(*tas
 					localEnd = 100
 				}
 			}
-			rotation := rotationForSide(sides, startPos, i)
+
 			seg := task.Segment{
 				TaskID:        t.ID,
 				Name:          t.Name,
 				Color:         t.Color,
-				Gif:           "", // 非活跃边不挂图片
+				Gif:           "",
 				ImageMaxSize:  t.ImageMaxSize,
 				BarStart:      round1(localStart),
 				BarEnd:        round1(localEnd),
@@ -243,7 +253,8 @@ func buildAllFourLayout(tasks []*task.Task, now time.Time, behaviorsOf func(*tas
 				Expired:       expired,
 				Behaviors:     bs,
 				Position:      pos,
-				ImageRotation: rotation,
+				Direction:     localDirection(pos, surroundDir),
+				ImageRotation: rotationForSide(sides, i),
 			}
 			if isActive {
 				seg.Gif = t.Gif
@@ -254,46 +265,130 @@ func buildAllFourLayout(tasks []*task.Task, now time.Time, behaviorsOf func(*tas
 	return out
 }
 
-// deriveAllFourOrders 返回以 startPos 为起点的顺时针与逆时针四边序列。
-// 顺时针顺序：top -> right -> bottom -> left；以 startPos 为起点旋转得到。
-// 逆时针顺序：top -> left -> bottom -> right；以 startPos 为起点旋转得到。
-func deriveAllFourOrders(startPos string) (clockwise, counterClockwise []string) {
-	cwBase := []string{"top", "right", "bottom", "left"}
-	ccwBase := []string{"top", "left", "bottom", "right"}
-	idx := -1
-	for i, p := range cwBase {
+// deriveAllFourOrders 返回以 startPos 为起点的四边环绕顺序。
+// 环绕方向由起点+填充方向共同决定，而非 forward=顺时针。
+//
+// 判断规则：填充方向决定"溢出端点"，溢出后自然走向决定顺时针/逆时针。
+//   top+forward（左→右，溢出右端点）→ 继续沿右边缘向下 = 顺时针
+//   top+reverse（右→左，溢出左端点）→ 继续沿左边缘向下 = 逆时针
+//   bottom+forward（左→右，溢出右端点）→ 继续沿右边缘向上 = 逆时针
+//   bottom+reverse（右→左，溢出左端点）→ 继续沿左边缘向上 = 顺时针
+//   left+forward（上→下，溢出下端点）→ 继续沿底边缘向右 = 逆时针
+//   left+reverse（下→上，溢出上端点）→ 继续沿顶边缘向右 = 顺时针
+//   right+forward（上→下，溢出下端点）→ 继续沿底边缘向左 = 逆时针
+//   right+reverse（下→上，溢出上端点）→ 继续沿顶边缘向左 = 顺时针
+func deriveAllFourOrders(startPos, baseDir string) []string {
+	surroundDir := deriveSurroundDir(startPos, baseDir)
+
+	var baseOrder []string
+	if surroundDir == "cw" {
+		baseOrder = []string{"top", "right", "bottom", "left"}
+	} else {
+		baseOrder = []string{"top", "left", "bottom", "right"}
+	}
+
+	// 旋转使 startPos 位于 [0]
+	offset := 0
+	for i, p := range baseOrder {
 		if p == startPos {
-			idx = i
+			offset = i
 			break
 		}
 	}
-	if idx < 0 {
-		idx = 0
+	rotated := make([]string, 4)
+	for i := 0; i < 4; i++ {
+		rotated[i] = baseOrder[(i+offset)%4]
 	}
-	rotate := func(base []string, offset int) []string {
-		out := make([]string, 4)
-		for i := 0; i < 4; i++ {
-			out[i] = base[(i+offset)%4]
-		}
-		return out
-	}
-	return rotate(cwBase, idx), rotate(ccwBase, idx)
+	return rotated
 }
 
-// rotationForSide 返回从起始边 startPos 沿 sides 顺序到 sides[idx] 所对应的图片旋转角度（度）。
-func rotationForSide(sides []string, startPos string, idx int) float64 {
-	startIdx := -1
-	for i, p := range sides {
-		if p == startPos {
-			startIdx = i
-			break
+// deriveSurroundDir 根据起点和填充方向判断环绕方向。
+// 返回 "cw"（顺时针）或 "ccw"（逆时针）。
+func deriveSurroundDir(startPos, fillDir string) string {
+	switch startPos {
+	case "top":
+		if fillDir == "forward" {
+			return "cw"
+		}
+		return "ccw"
+	case "bottom":
+		if fillDir == "forward" {
+			return "ccw"
+		}
+		return "cw"
+	case "left":
+		if fillDir == "forward" {
+			return "ccw"
+		}
+		return "cw"
+	case "right":
+		if fillDir == "forward" {
+			return "ccw"
+		}
+		return "cw"
+	default:
+		return "cw"
+	}
+}
+
+// edgeLen 返回一条边的物理像素长度。
+func edgeLen(side string, w, h float64) float64 {
+	if side == "top" || side == "bottom" {
+		return w
+	}
+	return h
+}
+
+// rotationForSide 返回 sides[idx] 对应的图片旋转角度（度）。
+// 旋转目标是让图片的同一边缘始终吸附进度条：
+//   top    → 图片顶部吸附 → 旋转 0°
+//   right  → 图片右侧吸附 → 旋转 90°
+//   bottom → 图片底部吸附 → 旋转 180°
+//   left   → 图片左侧吸附 → 旋转 270°
+// 此映射只取决于目标边的位置，与环绕方向无关。
+func rotationForSide(sides []string, idx int) float64 {
+	switch sides[idx] {
+	case "top":
+		return 0
+	case "right":
+		return 90
+	case "bottom":
+		return 180
+	case "left":
+		return 270
+	default:
+		return 0
+	}
+}
+
+// localDirection 返回某条边在给定环绕方向下的本地填充方向。
+// 顺时针：top=forward, right=forward, bottom=reverse, left=reverse。
+// 逆时针：top=reverse, left=forward, bottom=forward, right=reverse。
+func localDirection(side, surroundDir string) string {
+	if surroundDir == "cw" {
+		switch side {
+		case "top":
+			return "forward"
+		case "right":
+			return "forward"
+		case "bottom":
+			return "reverse"
+		case "left":
+			return "reverse"
+		}
+	} else {
+		switch side {
+		case "top":
+			return "reverse"
+		case "left":
+			return "forward"
+		case "bottom":
+			return "forward"
+		case "right":
+			return "reverse"
 		}
 	}
-	if startIdx < 0 {
-		startIdx = 0
-	}
-	steps := (idx - startIdx + 4) % 4
-	return float64(steps * 90)
+	return "forward"
 }
 
 func clamp(v, lo, hi float64) float64 {

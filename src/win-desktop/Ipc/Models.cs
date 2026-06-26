@@ -28,6 +28,7 @@ public sealed class Segment
     [JsonPropertyName("expired")] public bool Expired { get; set; }
     [JsonPropertyName("behaviors")] public List<string>? Behaviors { get; set; }
     [JsonPropertyName("position")] public string Position { get; set; } = "";
+    [JsonPropertyName("direction")] public string Direction { get; set; } = "";
     [JsonPropertyName("imageRotation")] public double ImageRotation { get; set; }
 }
 

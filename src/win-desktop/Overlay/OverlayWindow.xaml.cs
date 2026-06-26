@@ -43,6 +43,14 @@ public partial class OverlayWindow : Window
     private bool IsVertical => Position is PositionLeft or PositionRight;
     private bool IsReverse => Direction == "reverse";
 
+    // 判断某条 Segment 的本地填充方向（优先用 Segment.Direction，回退到窗口级 Direction）
+    private bool IsSegReverse(Segment seg)
+    {
+        if (!string.IsNullOrEmpty(seg.Direction))
+            return seg.Direction == "reverse";
+        return IsReverse;
+    }
+
     // 闪烁状态：当前正在脉冲的色段矩形、已查看（停止脉冲）的任务、本帧应闪烁的任务集合。
     private readonly List<Rectangle> _blinkRects = new();
     private readonly HashSet<string> _acknowledgedBlink = new();
@@ -233,7 +241,7 @@ public partial class OverlayWindow : Window
             // 设置旋转中心和角度
             sprite.SetRotation(seg.ImageRotation, cx, cy);
 
-            double localFill = IsReverse ? 100.0 - seg.FillEnd : seg.FillEnd;
+            double localFill = IsSegReverse(seg) ? 100.0 - seg.FillEnd : seg.FillEnd;
             double front = localFill / 100.0 * (IsVertical ? h : w);
 
             double left, top;
@@ -290,9 +298,9 @@ public partial class OverlayWindow : Window
         // 仅绘制已填充部分（barStart → fillEnd），未完成部分不画任何底色（保持透明、不可点击）。
         foreach (var seg in _segments)
         {
-            double localStart = IsReverse ? 100.0 - seg.BarEnd : seg.BarStart;
-            double localEnd = IsReverse ? 100.0 - seg.BarStart : seg.BarEnd;
-            double localFill = IsReverse ? 100.0 - seg.FillEnd : seg.FillEnd;
+            double localStart = IsSegReverse(seg) ? 100.0 - seg.BarEnd : seg.BarStart;
+            double localEnd = IsSegReverse(seg) ? 100.0 - seg.BarStart : seg.BarEnd;
+            double localFill = IsSegReverse(seg) ? 100.0 - seg.FillEnd : seg.FillEnd;
 
             if (IsVertical)
             {

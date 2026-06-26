@@ -271,6 +271,9 @@ type Segment struct {
 	Behaviors []string  `json:"behaviors,omitempty"` // 该任务生效的到期提醒（供 Overlay 闪烁判定）
 	// Position 为该段应渲染到的位置；空字符串表示沿用全局设置。
 	Position string `json:"position,omitempty"`
+	// Direction 为该段在所属边上的填充方向（forward / reverse）；
+	// 非四边环绕时为空，前端沿用窗口级 Direction。
+	Direction string `json:"direction,omitempty"`
 	// ImageRotation 为图片旋转角度（度），用于四边环绕时让图片始终从对应边向屏幕内侧。
 	ImageRotation float64 `json:"imageRotation,omitempty"`
 }
