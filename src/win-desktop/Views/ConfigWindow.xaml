@@ -2,6 +2,7 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+        xmlns:converters="clr-namespace:Hope.Desktop.Converters"
         Title="Hope · 盼头" Width="1010" MinWidth="1010" MinHeight="400"
         ResizeMode="CanResize"
         WindowStartupLocation="CenterScreen"
@@ -44,6 +45,9 @@
                 </Setter.Value>
             </Setter>
         </Style>
+        <!-- 布尔值与 Visibility 转换器：用于列表中根据完成状态显隐按钮/文本。 -->
+        <converters:BoolToVisibilityConverter x:Key="BoolToVisibilityConverter" />
+        <converters:BoolToVisibilityConverter x:Key="InvertedBoolToVisibilityConverter" Inverted="True" />
     </Window.Resources>
     <Grid>
         <Grid.RowDefinitions>
@@ -96,6 +100,23 @@
                         <DataGridTextColumn Header="名称" Binding="{Binding Name}" Width="*" />
                         <DataGridTextColumn Header="类型" Binding="{Binding TypeLabel}" Width="60" />
                         <DataGridTextColumn Header="截止" Binding="{Binding EndLabel}" Width="120" />
+                        <DataGridTemplateColumn Header="操作" Width="72" MinWidth="72">
+                            <DataGridTemplateColumn.CellTemplate>
+                                <DataTemplate>
+                                    <Grid>
+                                        <ui:Button Content="完成" Padding="6,2" FontSize="12"
+                                                   HorizontalAlignment="Center"
+                                                   Tag="{Binding Id}"
+                                                   Click="OnCompleteTask"
+                                                   Visibility="{Binding Completed, Converter={StaticResource InvertedBoolToVisibilityConverter}}" />
+                                        <TextBlock Text="已完成" FontSize="12"
+                                                   VerticalAlignment="Center" HorizontalAlignment="Center"
+                                                   Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                                                   Visibility="{Binding Completed, Converter={StaticResource BoolToVisibilityConverter}}" />
+                                    </Grid>
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellTemplate>
+                        </DataGridTemplateColumn>
                     </DataGrid.Columns>
                 </ui:DataGrid>
             </DockPanel>
@@ -129,6 +150,38 @@
                                         IsSnapToTickEnabled="True" VerticalAlignment="Center" />
                             </DockPanel>
 
+                            <TextBlock Text="进度条位置" Margin="0,12,0,2" />
+                            <ComboBox x:Name="BarPositionBox" HorizontalAlignment="Stretch"
+                                      SelectionChanged="OnBarPositionChanged"
+                                      ToolTip="进度条在屏幕上的位置；高级设置中可选择四边模式">
+                                <ComboBoxItem Content="屏幕顶边" Tag="top" IsSelected="True" />
+                                <ComboBoxItem Content="屏幕底边" Tag="bottom" />
+                                <ComboBoxItem Content="屏幕左边" Tag="left" />
+                                <ComboBoxItem Content="屏幕右边" Tag="right" />
+                                <ComboBoxItem Content="四边环绕（高级）" Tag="allFour" />
+                            </ComboBox>
+
+                            <Expander x:Name="AdvancedSettingsExpander" Header="高级设置" Margin="0,12,0,0">
+                                <StackPanel Margin="0,4,0,0">
+                                    <TextBlock Text="进度条方向" Margin="0,6,0,2" />
+                                    <ComboBox x:Name="BarDirectionBox" HorizontalAlignment="Stretch"
+                                              SelectionChanged="OnBarDirectionChanged"
+                                              ToolTip="根据位置自动选择默认方向；可手动覆盖">
+                                        <ComboBoxItem Content="默认" Tag="" IsSelected="True" />
+                                        <ComboBoxItem Content="从左到右" Tag="forward" />
+                                        <ComboBoxItem Content="从右到左" Tag="reverse" />
+                                        <ComboBoxItem Content="从上到下" Tag="forward" />
+                                        <ComboBoxItem Content="从下到上" Tag="reverse" />
+                                        <ComboBoxItem Content="顺时针" Tag="clockwise" />
+                                        <ComboBoxItem Content="逆时针" Tag="counterClockwise" />
+                                    </ComboBox>
+
+                                    <CheckBox x:Name="AdvancedPositionCheck" Content="允许为单个任务指定展示位置"
+                                              Margin="0,12,0,0"
+                                              ToolTip="开启后，任务编辑中会出现「展示位置」选项" />
+                                </StackPanel>
+                            </Expander>
+
                             <TextBlock Text="任务到期后（默认值；新建任务自动同步）" Margin="0,12,0,2"
                                        TextWrapping="Wrap" />
                             <DockPanel>
@@ -136,10 +189,11 @@
                                           VerticalAlignment="Center" Margin="8,0,0,0"
                                           ToolTip="到期时弹出一次系统气球通知（可与显示模式叠加）" />
                                 <ComboBox x:Name="GlobalModeBox" HorizontalAlignment="Stretch"
-                                          ToolTip="到期后顶栏的显示方式（三选一）">
+                                          ToolTip="到期后顶栏的显示方式（四选一）">
                                     <ComboBoxItem Content="保持显示" Tag="keep" />
                                     <ComboBoxItem Content="自动隐藏" Tag="hide" />
                                     <ComboBoxItem Content="闪烁提醒" Tag="blink" />
+                                    <ComboBoxItem Content="庆祝模式（四边闪烁）" Tag="celebrate" />
                                 </ComboBox>
                             </DockPanel>
 
@@ -185,6 +239,19 @@
                                         Cursor="Hand" MouseLeftButtonUp="OnPickColor"
                                         ToolTip="点击打开系统取色盘选择颜色" />
                                 <ui:TextBox x:Name="ColorBox" Text="#FF6B35" TextChanged="OnColorChanged" />
+                            </DockPanel>
+
+                            <!-- 展示位置（仅在高级设置中开启后显示） -->
+                            <DockPanel x:Name="TaskPositionRow" Margin="0,6,0,0" Visibility="Collapsed">
+                                <TextBlock Style="{StaticResource FieldLabel}" Text="展示位置" />
+                                <ComboBox x:Name="TaskPositionBox" HorizontalAlignment="Stretch"
+                                          ToolTip="空表示沿用全局位置">
+                                    <ComboBoxItem Content="默认（沿用全局）" Tag="" IsSelected="True" />
+                                    <ComboBoxItem Content="屏幕顶边" Tag="top" />
+                                    <ComboBoxItem Content="屏幕底边" Tag="bottom" />
+                                    <ComboBoxItem Content="屏幕左边" Tag="left" />
+                                    <ComboBoxItem Content="屏幕右边" Tag="right" />
+                                </ComboBox>
                             </DockPanel>
 
                             <!-- 图片 / 动图 -->
@@ -290,6 +357,7 @@
                                     <ComboBoxItem Content="保持显示" Tag="keep" />
                                     <ComboBoxItem Content="自动隐藏" Tag="hide" />
                                     <ComboBoxItem Content="闪烁提醒" Tag="blink" />
+                                    <ComboBoxItem Content="庆祝模式（四边闪烁）" Tag="celebrate" />
                                 </ComboBox>
                             </DockPanel>
 

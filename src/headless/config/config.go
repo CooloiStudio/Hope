@@ -27,6 +27,13 @@ type Settings struct {
 	Autostart           bool     `json:"autostart"`
 	ShowConfigAtRuntime bool     `json:"showConfigAtRuntime"`
 	Language            string   `json:"language"`
+	// BarPosition 全局进度条位置：top / bottom / left / right / allFour（默认 top）。
+	BarPosition string `json:"barPosition"`
+	// BarDirection 全局进度条方向：forward / reverse / clockwise / counterClockwise。
+	// 在 top/bottom 时默认 forward；在 left/right 时默认 forward；在 allFour 时默认 clockwise。
+	BarDirection string `json:"barDirection"`
+	// AdvancedPosition 为 true 时允许为单个任务指定展示位置（在高级设置中开启）。
+	AdvancedPosition bool `json:"advancedPosition"`
 	// LegacyExpiredBehavior 兼容旧版单值字段，仅用于迁移读入，迁移后清空不再写出。
 	LegacyExpiredBehavior string `json:"expiredBehavior,omitempty"`
 }
@@ -41,6 +48,9 @@ func DefaultSettings() Settings {
 		Autostart:           false,
 		ShowConfigAtRuntime: false,
 		Language:            "zh-CN",
+		BarPosition:         "top",
+		BarDirection:        "forward",
+		AdvancedPosition:    false,
 	}
 }
 
@@ -114,8 +124,15 @@ func mergeSettings(def, loaded Settings) Settings {
 	if loaded.Language != "" {
 		out.Language = loaded.Language
 	}
+	if loaded.BarPosition != "" {
+		out.BarPosition = loaded.BarPosition
+	}
+	if loaded.BarDirection != "" {
+		out.BarDirection = loaded.BarDirection
+	}
 	out.Autostart = loaded.Autostart
 	out.ShowConfigAtRuntime = loaded.ShowConfigAtRuntime
+	out.AdvancedPosition = loaded.AdvancedPosition
 	return out
 }
 

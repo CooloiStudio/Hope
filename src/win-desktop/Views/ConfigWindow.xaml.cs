@@ -76,6 +76,12 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
         AutostartCheck.Unchecked += OnSettingsControlChanged;
         ShowConfigAtRuntimeCheck.Checked += OnSettingsControlChanged;
         ShowConfigAtRuntimeCheck.Unchecked += OnSettingsControlChanged;
+        BarPositionBox.SelectionChanged += OnSettingsSelectionChanged;
+        BarDirectionBox.SelectionChanged += OnSettingsSelectionChanged;
+        AdvancedPositionCheck.Checked += OnSettingsControlChanged;
+        AdvancedPositionCheck.Unchecked += OnSettingsControlChanged;
+        AdvancedPositionCheck.Checked += OnAdvancedPositionChanged;
+        AdvancedPositionCheck.Unchecked += OnAdvancedPositionChanged;
 
         PreviewTrack.SizeChanged += (_, _) => UpdatePreview();
         StartDatePicker.SelectedDateChanged += (_, _) => UpdatePreview();
@@ -155,6 +161,11 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
             LoadBehaviors(s.ExpiredBehaviors, GlobalModeBox, GlobalNotifyCheck);
             AutostartCheck.IsChecked = s.Autostart;
             ShowConfigAtRuntimeCheck.IsChecked = s.ShowConfigAtRuntime;
+            SelectComboByTag(BarPositionBox, s.BarPosition);
+            AdvancedPositionCheck.IsChecked = s.AdvancedPosition;
+            TaskPositionRow.Visibility = s.AdvancedPosition ? Visibility.Visible : Visibility.Collapsed;
+            UpdateDirectionOptions(s.BarPosition);
+            SelectComboByTag(BarDirectionBox, s.BarDirection);
             _loadingSettings = false;
             DesktopLog.Info("ConfigWindow.OnSettingsReceived applied to UI");
             UpdatePreview();
@@ -196,11 +207,72 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
         _settings.ExpiredBehaviors = CollectBehaviors(GlobalModeBox, GlobalNotifyCheck);
         _settings.Autostart = AutostartCheck.IsChecked == true;
         _settings.ShowConfigAtRuntime = ShowConfigAtRuntimeCheck.IsChecked == true;
+        _settings.BarPosition = (BarPositionBox.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? "top";
+        _settings.BarDirection = (BarDirectionBox.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? "";
+        _settings.AdvancedPosition = AdvancedPositionCheck.IsChecked == true;
 
         _ipc.Send(new Command { Action = "updateSettings", Settings = _settings });
         _ipc.Send(new Command { Action = "getSettings" });
         ApplyAutostart(_settings.Autostart);
         SettingsStatus.Text = "";
+    }
+
+    private static void SelectComboByTag(ComboBox box, string? tag)
+    {
+        if (box == null) return;
+        foreach (ComboBoxItem? item in box.Items)
+        {
+            if (item == null) continue;
+            if (item.Tag?.ToString() == tag) { item.IsSelected = true; return; }
+        }
+    }
+
+    private void UpdateDirectionOptions(string position)
+    {
+        if (BarDirectionBox == null) return;
+        var selected = BarDirectionBox.SelectedItem as ComboBoxItem;
+        var selectedTag = selected?.Tag?.ToString() ?? "";
+
+        BarDirectionBox.Items.Clear();
+        BarDirectionBox.Items.Add(new ComboBoxItem { Content = "默认", Tag = "" });
+        switch (position)
+        {
+            case "left":
+            case "right":
+                BarDirectionBox.Items.Add(new ComboBoxItem { Content = "从上到下", Tag = "forward" });
+                BarDirectionBox.Items.Add(new ComboBoxItem { Content = "从下到上", Tag = "reverse" });
+                break;
+            case "allFour":
+                BarDirectionBox.Items.Add(new ComboBoxItem { Content = "顺时针", Tag = "clockwise" });
+                BarDirectionBox.Items.Add(new ComboBoxItem { Content = "逆时针", Tag = "counterClockwise" });
+                break;
+            default: // top / bottom
+                BarDirectionBox.Items.Add(new ComboBoxItem { Content = "从左到右", Tag = "forward" });
+                BarDirectionBox.Items.Add(new ComboBoxItem { Content = "从右到左", Tag = "reverse" });
+                break;
+        }
+
+        SelectComboByTag(BarDirectionBox, selectedTag);
+        if (BarDirectionBox.SelectedItem == null) SelectComboByTag(BarDirectionBox, "");
+    }
+
+    private void OnBarPositionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (e.AddedItems.Count == 0) return;
+        var pos = (BarPositionBox.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? "top";
+        UpdateDirectionOptions(pos);
+        CommitSettings();
+    }
+
+    private void OnBarDirectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (e.AddedItems.Count > 0) CommitSettings();
+    }
+
+    private void OnAdvancedPositionChanged(object sender, RoutedEventArgs e)
+    {
+        if (TaskPositionRow != null)
+            TaskPositionRow.Visibility = AdvancedPositionCheck.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
     }
 
     private void OnResetWindowHeight(object sender, RoutedEventArgs e)
@@ -269,7 +341,7 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
     private static void LoadBehaviors(List<string>? behaviors, ComboBox mode, CheckBox notify)
     {
         var set = behaviors ?? new List<string>();
-        string m = set.Contains("hide") ? "hide" : set.Contains("blink") ? "blink" : "keep";
+        string m = set.Contains("celebrate") ? "celebrate" : set.Contains("hide") ? "hide" : set.Contains("blink") ? "blink" : "keep";
         SelectMode(mode, m);
         notify.IsChecked = set.Contains("notify");
     }
@@ -306,7 +378,7 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
         }
         else
         {
-            string m = behaviors.Contains("hide") ? "hide" : behaviors.Contains("blink") ? "blink" : "keep";
+            string m = behaviors.Contains("celebrate") ? "celebrate" : behaviors.Contains("hide") ? "hide" : behaviors.Contains("blink") ? "blink" : "keep";
             SelectMode(TaskModeBox, m);
             TaskNotifyCheck.IsChecked = behaviors.Contains("notify");
         }
@@ -518,6 +590,7 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
         SetDateTime(EndDatePicker, EndHourBox, EndMinuteBox, row.EndAt.LocalDateTime);
         LoadTaskBehaviors(row.ExpiredBehaviors);
         LoadRecurrence(row.Recurrence);
+        SelectComboByTag(TaskPositionBox, row.Position);
         StatusText.Text = $"正在编辑：{row.Name}";
         UpdatePreview();
         MainTabs.SelectedItem = TaskTab; // 选中任务自动切到任务编辑 Tab（§5.3.3 新增 4）
@@ -537,6 +610,7 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
         SetDateTime(EndDatePicker, EndHourBox, EndMinuteBox, DateTime.Now.AddHours(1));
         LoadTaskBehaviors(null); // 新任务默认沿用全局
         LoadRecurrence(null);    // 新任务默认不循环
+        SelectComboByTag(TaskPositionBox, "");
         TaskGrid.SelectedItem = null;
         StatusText.Text = "新建任务";
         UpdatePreview();
@@ -547,7 +621,15 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
         var name = NameBox.Text.Trim();
         if (string.IsNullOrEmpty(name)) { StatusText.Text = "请填写任务名称"; return; }
         if (!TryParseColor(ColorBox.Text, out var color)) { StatusText.Text = "颜色格式应为 #RRGGBB"; return; }
-        if (IsColorTaken(color)) { StatusText.Text = "该颜色已被其他任务使用，请选择不同颜色"; return; }
+        if (IsColorTaken(color))
+        {
+            var result = System.Windows.MessageBox.Show(
+                "当前颜色已被其他任务使用，是否继续使用这个颜色？",
+                "颜色重复",
+                System.Windows.MessageBoxButton.YesNo,
+                System.Windows.MessageBoxImage.Question);
+            if (result != System.Windows.MessageBoxResult.Yes) return;
+        }
         if (!TryComposeDateTime(EndDatePicker, EndHourBox, EndMinuteBox, out var end))
         { StatusText.Text = "请选择截止日期与时间"; return; }
 
@@ -587,6 +669,7 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
         }
 
         var gif = GifBox.Text.Trim();
+        var position = (TaskPositionBox.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? "";
         var dto = new TaskDto
         {
             Id = _editingId ?? Guid.NewGuid().ToString(),
@@ -595,6 +678,7 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
             Color = color,
             Gif = string.IsNullOrEmpty(gif) ? null : gif,
             ImageMaxSize = (int)ImageMaxSizeBox.Value,
+            Position = position,
             StartAt = start,
             EndAt = end,
             ExpiredBehaviors = CollectTaskBehaviors(),
@@ -614,6 +698,24 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
         _ipc.Send(new Command { Action = "listTasks" });
         OnNew(sender, e);
         StatusText.Text = "已删除";
+    }
+
+    private void OnCompleteTask(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement el || el.Tag is not string id) return;
+        if (_rows.FirstOrDefault(r => r.Id == id) is not TaskRow row) return;
+        if (row.Completed) { StatusText.Text = "该任务已完成"; return; }
+
+        var result = System.Windows.MessageBox.Show(
+            $"确认完成任务「{row.Name}」？",
+            "完成任务",
+            System.Windows.MessageBoxButton.YesNo,
+            System.Windows.MessageBoxImage.Question);
+        if (result != System.Windows.MessageBoxResult.Yes) return;
+
+        _ipc.Send(new Command { Action = "completeTask", TaskId = row.Id });
+        _ipc.Send(new Command { Action = "listTasks" });
+        StatusText.Text = row.Recurrence != null ? "任务已完成并进入下一循环" : "任务已完成";
     }
 
     private void OnBrowseGif(object sender, RoutedEventArgs e)
@@ -931,11 +1033,15 @@ public sealed class TaskRow
     public DateTimeOffset? StartAt { get; init; }
     public DateTimeOffset EndAt { get; init; }
     public DateTimeOffset? CreatedAt { get; init; }
+    public bool Completed { get; init; }
+    public DateTimeOffset? CompletedAt { get; init; }
+    public string Position { get; init; } = "";
     public List<string>? ExpiredBehaviors { get; init; }
     public RecurrenceDto? Recurrence { get; init; }
 
     public string TypeLabel => Type == "instant" ? "即时" : "定时";
     public string EndLabel => EndAt.LocalDateTime.ToString("MM-dd HH:mm");
+    public string StatusLabel => Completed ? "已完成" : TypeLabel;
     public Brush ColorBrush
     {
         get
@@ -956,6 +1062,9 @@ public sealed class TaskRow
         StartAt = t.StartAt,
         EndAt = t.EndAt,
         CreatedAt = t.CreatedAt,
+        Completed = t.Completed,
+        CompletedAt = t.CompletedAt,
+        Position = t.Position,
         ExpiredBehaviors = t.ExpiredBehaviors,
         Recurrence = t.Recurrence,
     };

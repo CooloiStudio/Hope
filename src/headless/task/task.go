@@ -17,10 +17,11 @@ const (
 
 // 到期提醒行为（多选，自动互斥；全局为默认值，任务可单独覆盖）。
 const (
-	BehaviorKeep   = "keep"   // 保持显示：到期后该任务保留为满色段
-	BehaviorBlink  = "blink"  // 闪烁提醒：柔和 alpha 渐变，持续到用户查看
-	BehaviorNotify = "notify" // 系统通知：到期时一次性气球提示
-	BehaviorHide   = "hide"   // 自动隐藏：到期后移除该段
+	BehaviorKeep      = "keep"      // 保持显示：到期后该任务保留为满色段
+	BehaviorBlink     = "blink"     // 闪烁提醒：柔和 alpha 渐变，持续到用户查看
+	BehaviorNotify    = "notify"    // 系统通知：到期时一次性气球提示
+	BehaviorHide      = "hide"      // 自动隐藏：到期后移除该段
+	BehaviorCelebrate = "celebrate" // 庆祝模式：四边同步闪烁
 )
 
 // ContainsBehavior 报告行为集合是否含指定项。
@@ -34,11 +35,12 @@ func ContainsBehavior(bs []string, name string) bool {
 }
 
 // KeepsVisibleWhenExpired 报告到期任务是否仍应保留在顶栏。
-// 仅当显式 hide 且未叠加 keep/blink 时才隐藏；其余（含空集合）默认保留。
+// 仅当显式 hide 且未叠加 keep/blink/celebrate 时才隐藏；其余（含空集合）默认保留。
 func KeepsVisibleWhenExpired(bs []string) bool {
 	if ContainsBehavior(bs, BehaviorHide) &&
 		!ContainsBehavior(bs, BehaviorKeep) &&
-		!ContainsBehavior(bs, BehaviorBlink) {
+		!ContainsBehavior(bs, BehaviorBlink) &&
+		!ContainsBehavior(bs, BehaviorCelebrate) {
 		return false
 	}
 	return true
@@ -73,6 +75,13 @@ type Task struct {
 	StartAt   *time.Time `json:"startAt,omitempty"`
 	EndAt     time.Time  `json:"endAt"`
 	CreatedAt time.Time  `json:"createdAt"`
+	// Completed 为 true 时该任务被用户手动标记为完成，不再渲染。
+	Completed bool `json:"completed,omitempty"`
+	// CompletedAt 记录用户手动完成的时间（可选）。
+	CompletedAt *time.Time `json:"completedAt,omitempty"`
+	// Position 为任务级展示位置覆盖；空字符串表示沿用全局设置。
+	// 可选值：top / bottom / left / right。
+	Position string `json:"position,omitempty"`
 	// ExpiredBehaviors 为任务级到期提醒覆盖；为空表示沿用全局默认。
 	ExpiredBehaviors []string `json:"expiredBehaviors,omitempty"`
 	// Recurrence 为循环规则；nil / Mode 为空表示单次任务。
@@ -203,6 +212,39 @@ func (t *Task) EffectiveEnd(now time.Time) time.Time {
 	return end
 }
 
+// AdvanceIfRecurring 将循环任务推进到下一个发生窗口。
+// 返回 true 表示已推进（任务为循环任务且找到下一个窗口）；返回 false 表示非循环任务。
+func (t *Task) AdvanceIfRecurring(now time.Time) bool {
+	if !t.IsRecurring() {
+		return false
+	}
+	loc := t.StartAt.Location()
+	startTOD := todOf(*t.StartAt)
+	endTOD := todOf(t.EndAt)
+	anchor := dateOf(*t.StartAt, loc)
+	rec := t.Recurrence
+
+	// 从当前日期的下一天开始向前查找，避免重复选中当前窗口。
+	d0 := dateOf(now, loc).AddDate(0, 0, 1)
+	const maxForward = 400
+	for i := 0; i < maxForward; i++ {
+		d := d0.AddDate(0, 0, i)
+		if !isOccurrenceDay(rec, anchor, d) {
+			continue
+		}
+		ws := d.Add(startTOD)
+		we := d.Add(endTOD)
+		if endTOD <= startTOD { // 跨午夜（或等长）→ 次日截止
+			we = d.AddDate(0, 0, 1).Add(endTOD)
+		}
+		newStart := ws
+		t.StartAt = &newStart
+		t.EndAt = we
+		return true
+	}
+	return false
+}
+
 func clamp(v, lo, hi float64) float64 {
 	if v < lo {
 		return lo
@@ -227,6 +269,8 @@ type Segment struct {
 	EndAt     time.Time `json:"endAt"`              // 供 Overlay 悬停计算倒计时（§5.4 修改 1）
 	Expired   bool      `json:"expired,omitempty"`  // 该段对应已到期但保留显示的任务
 	Behaviors []string  `json:"behaviors,omitempty"` // 该任务生效的到期提醒（供 Overlay 闪烁判定）
+	// Position 为该段应渲染到的位置；空字符串表示沿用全局设置。
+	Position string `json:"position,omitempty"`
 }
 
 // Layout 为顶栏的整体布局结果。
@@ -245,7 +289,8 @@ type Layout struct {
 //   - percent 相同导致的零宽段直接跳过（不绘制）。
 //
 // behaviorsOf 返回某任务生效的到期提醒集合（任务级覆盖回退全局）；用于判定到期任务是否保留及标记闪烁。
-func BuildLayout(tasks []*Task, now time.Time, behaviorsOf func(*Task) []string) Layout {
+// position 为生成的段指定目标位置，供桌面端按边分组渲染。
+func BuildLayout(tasks []*Task, now time.Time, behaviorsOf func(*Task) []string, position string) Layout {
 	var out Layout
 	out.HadAny = len(tasks) > 0
 
@@ -258,6 +303,9 @@ func BuildLayout(tasks []*Task, now time.Time, behaviorsOf func(*Task) []string)
 	}
 	items := make([]item, 0, len(tasks))
 	for _, t := range tasks {
+		if t.Completed {
+			continue // 用户手动完成的任务不渲染
+		}
 		bs := behaviorsOf(t)
 		start, end, started := t.windowAt(now)
 		if started && !now.Before(end) { // 已过当前窗口截止
@@ -304,6 +352,7 @@ func BuildLayout(tasks []*Task, now time.Time, behaviorsOf func(*Task) []string)
 			EndAt:     e.endAt,
 			Expired:   e.expired,
 			Behaviors: e.behaviors,
+			Position:  position,
 		})
 		prev = p
 	}

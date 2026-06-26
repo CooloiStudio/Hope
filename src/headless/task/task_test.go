@@ -18,6 +18,8 @@ func noBehaviors(*Task) []string   { return nil }
 func hideBehaviors(*Task) []string { return []string{BehaviorHide} }
 func keepBehaviors(*Task) []string { return []string{BehaviorKeep} }
 
+const testPosition = "top"
+
 // 验证文档示例：08:00–18:00 任务，17:00 时进度应为 90%。
 func TestScheduledPercent90(t *testing.T) {
 	start := mustTime("2026-06-23T08:00:00+08:00")
@@ -73,7 +75,7 @@ func TestBuildLayoutV2Bands(t *testing.T) {
 		{ID: "a", Name: "A", Type: Scheduled, Color: "#E53935", StartAt: &sA, EndAt: mustTime("2026-06-23T11:00:00+08:00")}, // 54/180 = 30%
 	}
 
-	layout := BuildLayout(tasks, now, noBehaviors)
+	layout := BuildLayout(tasks, now, noBehaviors, testPosition)
 	if !layout.HasActive {
 		t.Fatal("expected active tasks")
 	}
@@ -117,7 +119,7 @@ func TestBuildLayoutSingleActive(t *testing.T) {
 	}
 	now := mustTime("2026-06-23T09:30:00+08:00") // a 过期，b 在 30min/60min = 50%
 	// hide：到期任务被移除，仅余活跃的 b。
-	layout := BuildLayout(tasks, now, hideBehaviors)
+	layout := BuildLayout(tasks, now, hideBehaviors, testPosition)
 	if len(layout.Segments) != 1 {
 		t.Fatalf("segments = %d, want 1 (only b active)", len(layout.Segments))
 	}
@@ -136,7 +138,7 @@ func TestBuildLayoutKeepsExpired(t *testing.T) {
 		{ID: "b", Name: "B", Type: Scheduled, Color: "#43A047", StartAt: &s2, EndAt: mustTime("2026-06-23T10:00:00+08:00")},
 	}
 	now := mustTime("2026-06-23T09:30:00+08:00") // a 过期；b 50%
-	layout := BuildLayout(tasks, now, keepBehaviors)
+	layout := BuildLayout(tasks, now, keepBehaviors, testPosition)
 	if len(layout.Segments) != 2 {
 		t.Fatalf("segments = %d, want 2 (b active + a kept)", len(layout.Segments))
 	}
@@ -242,7 +244,7 @@ func TestBuildLayoutSkipsZeroWidth(t *testing.T) {
 		{ID: "b", Name: "B", Type: Scheduled, Color: "#43A047", StartAt: &s, EndAt: mustTime("2026-06-23T09:00:00+08:00")},
 	}
 	now := mustTime("2026-06-23T08:30:00+08:00") // 两者均 50%
-	layout := BuildLayout(tasks, now, noBehaviors)
+	layout := BuildLayout(tasks, now, noBehaviors, testPosition)
 	if len(layout.Segments) != 1 {
 		t.Fatalf("segments = %d, want 1 (second is zero-width, skipped)", len(layout.Segments))
 	}

@@ -1,4 +1,6 @@
+using System.Collections.Generic;
 using System.Drawing;
+using System.Linq;
 using System.Windows;
 using System.Windows.Forms;
 using Hope.Desktop.Ipc;
@@ -17,7 +19,9 @@ namespace Hope.Desktop;
 public partial class App : Application
 {
     private IpcClient _ipc = null!;
-    private OverlayWindow _overlay = null!;
+    private readonly Dictionary<string, OverlayWindow> _overlays = new();
+    private string _currentBarPosition = OverlayWindow.PositionTop;
+    private string _currentBarDirection = "forward";
     private HeadlessSupervisor _supervisor = null!;
     private NotifyIcon? _tray;
     private ConfigWindow? _config;
@@ -51,7 +55,7 @@ public partial class App : Application
         _supervisor = new HeadlessSupervisor();
         _supervisor.Start();
 
-        _overlay = new OverlayWindow();
+        EnsureOverlays(_currentBarPosition, _currentBarDirection);
 
         _ipc = new IpcClient();
         _ipc.StateReceived += OnStateReceived;
@@ -73,10 +77,13 @@ public partial class App : Application
 
     private void OnSettingsReceived(SettingsDto s)
     {
-        DesktopLog.Info($"App.OnSettingsReceived barHeightPx={s.BarHeightPx} showConfigAtRuntime={s.ShowConfigAtRuntime}");
+        DesktopLog.Info($"App.OnSettingsReceived barHeightPx={s.BarHeightPx} showConfigAtRuntime={s.ShowConfigAtRuntime} barPosition={s.BarPosition}");
         Dispatcher.BeginInvoke(() =>
         {
             _barHeightPx = Math.Clamp(s.BarHeightPx, 1, 10);
+            _currentBarPosition = string.IsNullOrWhiteSpace(s.BarPosition) ? OverlayWindow.PositionTop : s.BarPosition;
+            _currentBarDirection = s.BarDirection ?? "";
+            EnsureOverlays(_currentBarPosition, _currentBarDirection);
             if (!_startupConfigHandled)
             {
                 _startupConfigHandled = true;
@@ -89,10 +96,131 @@ public partial class App : Application
     {
         Dispatcher.BeginInvoke(() =>
         {
-            _overlay.UpdateState(msg, _barHeightPx);
+            var all = msg.Segments ?? new List<Segment>();
+            bool celebrate = IsCelebrateActive(all);
+            string effectivePosition = celebrate ? "allFour" : _currentBarPosition;
+            string effectiveDirection = celebrate ? "clockwise" : _currentBarDirection;
+            EnsureOverlays(effectivePosition, effectiveDirection);
+            DispatchState(msg);
             if (msg.Expired != null)
                 foreach (var ev in msg.Expired) HandleExpired(ev);
         });
+    }
+
+    private static bool IsCelebrateActive(List<Segment> segments) =>
+        segments.Any(s => s.Expired && s.Behaviors != null && s.Behaviors.Contains("celebrate"));
+
+    /// <summary>根据当前全局位置/方向确保创建或销毁对应 OverlayWindow；庆祝模式临时需要四边窗口。</summary>
+    private void EnsureOverlays(string position, string direction)
+    {
+        var wanted = new HashSet<string>();
+        if (position == "allFour")
+        {
+            wanted.Add(OverlayWindow.PositionTop);
+            wanted.Add(OverlayWindow.PositionRight);
+            wanted.Add(OverlayWindow.PositionBottom);
+            wanted.Add(OverlayWindow.PositionLeft);
+        }
+        else
+        {
+            wanted.Add(position);
+        }
+
+        bool isAllFour = wanted.Count == 4;
+        string resolvedDirection = string.IsNullOrWhiteSpace(direction)
+            ? (isAllFour ? "clockwise" : "forward")
+            : direction;
+
+        foreach (var pos in _overlays.Keys.ToList())
+        {
+            if (!wanted.Contains(pos))
+            {
+                _overlays[pos].ForceClose();
+                _overlays.Remove(pos);
+            }
+        }
+
+        foreach (var pos in wanted)
+        {
+            if (!_overlays.ContainsKey(pos))
+            {
+                _overlays[pos] = new OverlayWindow
+                {
+                    Position = pos,
+                    Direction = LocalDirectionFor(pos, resolvedDirection),
+                };
+            }
+        }
+    }
+
+    private static string LocalDirectionFor(string position, string globalDirection) => globalDirection switch
+    {
+        "clockwise" => position switch
+        {
+            "top" => "forward",
+            "right" => "forward",
+            "bottom" => "reverse",
+            "left" => "reverse",
+            _ => "forward",
+        },
+        "counterClockwise" => position switch
+        {
+            "top" => "reverse",
+            "left" => "forward",
+            "bottom" => "forward",
+            "right" => "reverse",
+            _ => "forward",
+        },
+        _ => globalDirection,
+    };
+
+    private void DispatchState(StateMessage msg)
+    {
+        var all = ExpandForCelebrate(msg.Segments ?? new List<Segment>());
+        var groups = all.GroupBy(s => string.IsNullOrWhiteSpace(s.Position) ? _currentBarPosition : s.Position)
+                        .ToDictionary(g => g.Key, g => g.ToList());
+
+        foreach (var (pos, overlay) in _overlays)
+        {
+            bool hasSegments = groups.TryGetValue(pos, out var segs) && segs.Count > 0;
+            var windowMsg = new StateMessage
+            {
+                Version = msg.Version,
+                Visible = msg.Visible && hasSegments,
+                State = msg.State,
+                Segments = segs ?? new List<Segment>(),
+            };
+            overlay.UpdateState(windowMsg, _barHeightPx);
+        }
+    }
+
+    private static List<Segment> ExpandForCelebrate(List<Segment> segments)
+    {
+        if (!IsCelebrateActive(segments)) return segments;
+        var expanded = new List<Segment>(segments.Count * 4);
+        foreach (var s in segments)
+        {
+            foreach (var side in new[] { OverlayWindow.PositionTop, OverlayWindow.PositionRight, OverlayWindow.PositionBottom, OverlayWindow.PositionLeft })
+            {
+                expanded.Add(new Segment
+                {
+                    TaskId = s.TaskId,
+                    Name = s.Name,
+                    Color = s.Color,
+                    Gif = s.Gif,
+                    ImageMaxSize = s.ImageMaxSize,
+                    BarStart = s.BarStart,
+                    BarEnd = s.BarEnd,
+                    Percent = s.Percent,
+                    FillEnd = s.FillEnd,
+                    EndAt = s.EndAt,
+                    Expired = s.Expired,
+                    Behaviors = s.Behaviors,
+                    Position = side,
+                });
+            }
+        }
+        return expanded;
     }
 
     private void HandleExpired(ExpiredEvent ev)
@@ -173,7 +301,7 @@ public partial class App : Application
     {
         DesktopLog.Info("ShowConfig: menu click, scheduling deferred open");
         // 打开设置即视为用户已查看到期提醒：停止当前闪烁脉冲。
-        _overlay.AcknowledgeBlink();
+        foreach (var overlay in _overlays.Values) overlay.AcknowledgeBlink();
         // 托盘菜单为模态循环；延迟到菜单关闭后再创建/显示 FluentWindow，避免与 Win10 背景渲染争用 UI 线程。
         var timer = new System.Windows.Forms.Timer { Interval = 10 };
         timer.Tick += (_, _) =>
@@ -267,7 +395,8 @@ public partial class App : Application
             trayIcon?.Dispose();
             tray.Dispose();
         }
-        _overlay.ForceClose();
+        foreach (var overlay in _overlays.Values) overlay.ForceClose();
+        _overlays.Clear();
         _ipc.Dispose();
         _supervisor.Dispose();
         _instanceMutex?.ReleaseMutex();

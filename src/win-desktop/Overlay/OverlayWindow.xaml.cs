@@ -16,11 +16,16 @@ using Canvas = System.Windows.Controls.Canvas;
 namespace Hope.Desktop.Overlay;
 
 /// <summary>
-/// 屏幕顶端分段彩色进度条。点击穿透、不可聚焦、不参与 Alt+Tab；
+/// 屏幕四边分段彩色进度条。点击穿透、不可聚焦、不参与 Alt+Tab；
 /// 唯一交互为悬停展示任务名（通过全局光标轮询实现，文档 §5.4）。
 /// </summary>
 public partial class OverlayWindow : Window
 {
+    public const string PositionTop = "top";
+    public const string PositionBottom = "bottom";
+    public const string PositionLeft = "left";
+    public const string PositionRight = "right";
+
     // 闪烁脉冲参数：柔和正弦渐变（淡出至近透明再淡入），单程时长 → 全周期约 2×。
     private const double BlinkHalfPeriodSec = 0.8;
     private const double BlinkMinAlpha = 0.05;
@@ -30,7 +35,13 @@ public partial class OverlayWindow : Window
     private readonly Dictionary<string, ImageSprite> _sprites = new();
     private List<Segment> _segments = new();
     private int _barHeightPx = 4;
-    private double _imageMaxHeight;
+    private double _imageMaxThickness;
+
+    public string Position { get; set; } = PositionTop;
+    public string Direction { get; set; } = "forward";
+
+    private bool IsVertical => Position is PositionLeft or PositionRight;
+    private bool IsReverse => Direction == "reverse";
 
     // 闪烁状态：当前正在脉冲的色段矩形、已查看（停止脉冲）的任务、本帧应闪烁的任务集合。
     private readonly List<Rectangle> _blinkRects = new();
@@ -79,38 +90,34 @@ public partial class OverlayWindow : Window
         return IntPtr.Zero;
     }
 
-    /// <summary>根据广播状态更新顶栏：尺寸、位置与分段填充。</summary>
+    /// <summary>根据广播状态更新本窗口：尺寸、位置与分段填充。</summary>
     public void UpdateState(StateMessage msg, int barHeightPx)
     {
         // Headless 在无活跃任务时广播 "segments": null（Go nil 切片），需规整为空集合，避免空引用。
-        _segments = msg.Segments ?? new List<Segment>();
+        var all = msg.Segments ?? new List<Segment>();
+        _segments = all.Where(s => string.IsNullOrEmpty(s.Position) || s.Position == Position).ToList();
         _barHeightPx = Math.Clamp(barHeightPx, 1, 10);
 
-        // 重算本帧应闪烁的任务（到期 + 行为含 blink）；已查看集合裁剪到仍在闪烁的任务，
+        // 重算本帧应闪烁的任务（到期 + 行为含 blink/celebrate）；已查看集合裁剪到仍在闪烁的任务，
         // 以便任务被重新设定时间后再次到期可重新闪烁。
         _blinkingIds.Clear();
         foreach (var s in _segments)
-            if (s.Expired && s.Behaviors != null && s.Behaviors.Contains("blink"))
+            if (s.Expired && IsBlinkBehavior(s))
                 _blinkingIds.Add(s.TaskId);
         _acknowledgedBlink.IntersectWith(_blinkingIds);
 
         bool show = msg.Visible && _segments.Count > 0;
-        _imageMaxHeight = 0;
+        _imageMaxThickness = 0;
         foreach (var s in _segments)
         {
             if (ImageSprite.IsUsable(s.Gif))
             {
-                var h = s.ImageMaxSize > 0 ? s.ImageMaxSize : 15;
-                if (h > _imageMaxHeight) _imageMaxHeight = h;
+                var sz = s.ImageMaxSize > 0 ? s.ImageMaxSize : 15;
+                if (sz > _imageMaxThickness) _imageMaxThickness = sz;
             }
         }
 
-        // 进度条本身恒为 barHeightPx；带图片时窗口向下扩展出图片区，但进度条粗细不变。
-        Width = SystemParameters.PrimaryScreenWidth;
-        Height = _barHeightPx + _imageMaxHeight;
-        Left = 0;
-        Top = 0;
-
+        UpdateWindowBounds();
         Render();
         UpdateSprites(show);
 
@@ -122,6 +129,25 @@ public partial class OverlayWindow : Window
         {
             HoverPopup.IsOpen = false;
             if (IsVisible) Hide();
+        }
+    }
+
+    private void UpdateWindowBounds()
+    {
+        var screen = SystemParameters.WorkArea;
+        if (IsVertical)
+        {
+            Width = _barHeightPx + _imageMaxThickness;
+            Height = screen.Height;
+            Top = screen.Top;
+            Left = Position == PositionLeft ? screen.Left : screen.Right - Width;
+        }
+        else
+        {
+            Width = screen.Width;
+            Height = _barHeightPx + _imageMaxThickness;
+            Left = screen.Left;
+            Top = Position == PositionTop ? screen.Top : screen.Bottom - Height;
         }
     }
 
@@ -163,11 +189,12 @@ public partial class OverlayWindow : Window
 
         var wanted = _segments.Where(s => ImageSprite.IsUsable(s.Gif)).ToList();
 
-        // 移除已不需要、路径变更或最大尺寸变更的精灵
+        // 移除已不需要、路径变更、最大尺寸变更或方向变更（限制宽度/高度）的精灵
         foreach (var id in _sprites.Keys.ToList())
         {
             var seg = wanted.FirstOrDefault(s => s.TaskId == id);
-            if (seg == null || seg.Gif != _sprites[id].Path || seg.ImageMaxSize != _sprites[id].MaxHeight)
+            bool needLimitWidth = IsVertical;
+            if (seg == null || seg.Gif != _sprites[id].Path || seg.ImageMaxSize != _sprites[id].MaxHeight || needLimitWidth != _sprites[id].LimitWidth)
             {
                 GifCanvas.Children.Remove(_sprites[id].Element);
                 _sprites[id].Dispose();
@@ -176,14 +203,15 @@ public partial class OverlayWindow : Window
         }
 
         double w = Width;
+        double h = Height;
         foreach (var seg in wanted)
         {
             if (!_sprites.TryGetValue(seg.TaskId, out var sprite))
             {
                 try
                 {
-                    var maxH = seg.ImageMaxSize > 0 ? seg.ImageMaxSize : 15;
-                    sprite = new ImageSprite(seg.Gif!, maxH);
+                    var maxSize = seg.ImageMaxSize > 0 ? seg.ImageMaxSize : 15;
+                    sprite = new ImageSprite(seg.Gif!, maxSize, IsVertical);
                 }
                 catch
                 {
@@ -193,13 +221,29 @@ public partial class OverlayWindow : Window
                 GifCanvas.Children.Add(sprite.Element);
             }
 
-            // 图片中心对齐进度前沿；到右边界时停止跟随，避免图片超出屏幕。
-            double frontX = seg.FillEnd / 100.0 * w;
-            double left = frontX - sprite.Width / 2.0;
-            double maxLeft = w - sprite.Width;
-            if (left > maxLeft) left = maxLeft;
-            Canvas.SetLeft(sprite.Element, left);
-            Canvas.SetTop(sprite.Element, _barHeightPx);
+            double localFill = IsReverse ? 100.0 - seg.FillEnd : seg.FillEnd;
+            double front = localFill / 100.0 * (IsVertical ? h : w);
+
+            if (IsVertical)
+            {
+                // 进度条在左/右边缘，图片在进度条内侧（朝屏幕中心）。
+                double top = front - sprite.Height / 2.0;
+                double maxTop = h - sprite.Height;
+                if (top > maxTop) top = maxTop;
+                double left = Position == PositionLeft ? _barHeightPx : 0;
+                Canvas.SetLeft(sprite.Element, left);
+                Canvas.SetTop(sprite.Element, top);
+            }
+            else
+            {
+                // 进度条在顶/底边缘，图片在进度条内侧（朝屏幕中心）。
+                double left = front - sprite.Width / 2.0;
+                double maxLeft = w - sprite.Width;
+                if (left > maxLeft) left = maxLeft;
+                double top = Position == PositionTop ? _barHeightPx : 0;
+                Canvas.SetLeft(sprite.Element, left);
+                Canvas.SetTop(sprite.Element, top);
+            }
         }
     }
 
@@ -222,10 +266,11 @@ public partial class OverlayWindow : Window
     private void Render()
     {
         double w = Width;
-        if (w <= 0) return;
+        double h = Height;
+        if (w <= 0 || h <= 0) return;
 
         // 分段几何/颜色/到期态未变化时跳过重建，让已挂载的闪烁动画连续运行（避免每秒重置）。
-        string sig = BuildRenderSignature(w);
+        string sig = BuildRenderSignature(w, h);
         if (sig == _lastRenderSig && BarCanvas.Children.Count > 0) return;
         _lastRenderSig = sig;
 
@@ -233,39 +278,71 @@ public partial class OverlayWindow : Window
         _blinkRects.Clear();
 
         // 仅绘制已填充部分（barStart → fillEnd），未完成部分不画任何底色（保持透明、不可点击）。
-        // 进度条高度恒为 _barHeightPx，不随图片区扩展而变粗。
         foreach (var seg in _segments)
         {
-            double x0 = seg.BarStart / 100.0 * w;
-            double xFill = seg.FillEnd / 100.0 * w;
-            double fillWidth = xFill - x0;
-            if (fillWidth <= 0) continue;
+            double localStart = IsReverse ? 100.0 - seg.BarEnd : seg.BarStart;
+            double localEnd = IsReverse ? 100.0 - seg.BarStart : seg.BarEnd;
+            double localFill = IsReverse ? 100.0 - seg.FillEnd : seg.FillEnd;
 
-            var fill = new Rectangle
+            if (IsVertical)
             {
-                Width = fillWidth,
-                Height = _barHeightPx,
-                Fill = new SolidColorBrush(ParseColor(seg.Color)),
-            };
-            Canvas.SetLeft(fill, x0);
-            Canvas.SetTop(fill, 0);
-            BarCanvas.Children.Add(fill);
+                double y0 = localStart / 100.0 * h;
+                double yFill = localFill / 100.0 * h;
+                double fillHeight = yFill - y0;
+                if (fillHeight <= 0) continue;
 
-            // 到期且行为含 blink、且用户尚未查看 → 挂柔和渐变动画。
-            if (seg.Expired && !_acknowledgedBlink.Contains(seg.TaskId) &&
-                seg.Behaviors != null && seg.Behaviors.Contains("blink"))
+                var fill = new Rectangle
+                {
+                    Width = _barHeightPx,
+                    Height = fillHeight,
+                    Fill = new SolidColorBrush(ParseColor(seg.Color)),
+                };
+                double left = Position == PositionLeft ? 0 : _imageMaxThickness;
+                Canvas.SetLeft(fill, left);
+                Canvas.SetTop(fill, y0);
+                BarCanvas.Children.Add(fill);
+                MaybeStartBlink(fill, seg);
+            }
+            else
             {
-                _blinkRects.Add(fill);
-                StartBlink(fill);
+                double x0 = localStart / 100.0 * w;
+                double xFill = localFill / 100.0 * w;
+                double fillWidth = xFill - x0;
+                if (fillWidth <= 0) continue;
+
+                var fill = new Rectangle
+                {
+                    Width = fillWidth,
+                    Height = _barHeightPx,
+                    Fill = new SolidColorBrush(ParseColor(seg.Color)),
+                };
+                double top = Position == PositionTop ? 0 : _imageMaxThickness;
+                Canvas.SetLeft(fill, x0);
+                Canvas.SetTop(fill, top);
+                BarCanvas.Children.Add(fill);
+                MaybeStartBlink(fill, seg);
             }
         }
     }
 
+    private void MaybeStartBlink(Rectangle fill, Segment seg)
+    {
+        if (seg.Expired && !_acknowledgedBlink.Contains(seg.TaskId) && IsBlinkBehavior(seg))
+        {
+            _blinkRects.Add(fill);
+            StartBlink(fill);
+        }
+    }
+
+    private static bool IsBlinkBehavior(Segment seg) =>
+        seg.Behaviors != null && (seg.Behaviors.Contains("blink") || seg.Behaviors.Contains("celebrate"));
+
     // 渲染签名：涵盖所有影响绘制与闪烁判定的输入；据此决定是否需要重建。
-    private string BuildRenderSignature(double w)
+    private string BuildRenderSignature(double w, double h)
     {
         var sb = new System.Text.StringBuilder();
-        sb.Append(w).Append('|').Append(_barHeightPx).Append('|');
+        sb.Append(Position).Append('|').Append(Direction).Append('|')
+          .Append(w).Append('|').Append(h).Append('|').Append(_barHeightPx).Append('|');
         foreach (var s in _segments)
         {
             bool blink = s.Behaviors != null && s.Behaviors.Contains("blink");
@@ -290,16 +367,28 @@ public partial class OverlayWindow : Window
         if (src?.CompositionTarget == null) return;
         var dip = src.CompositionTarget.TransformFromDevice.Transform(new Point(p.X, p.Y));
 
-        // 悬停仅作用于进度条本身的高度带（不含下方图片区）。
-        bool inBarBand = dip.Y >= Top && dip.Y <= Top + _barHeightPx && dip.X >= Left && dip.X <= Left + Width;
+        // 悬停仅作用于进度条本身的厚度带（不含内侧图片区）。
+        bool inBarBand;
+        double pct;
+        if (IsVertical)
+        {
+            inBarBand = dip.Y >= Top && dip.Y <= Top + Height && dip.X >= Left && dip.X <= Left + _barHeightPx;
+            pct = (dip.Y - Top) / Height * 100.0;
+        }
+        else
+        {
+            inBarBand = dip.Y >= Top && dip.Y <= Top + _barHeightPx && dip.X >= Left && dip.X <= Left + Width;
+            pct = (dip.X - Left) / Width * 100.0;
+        }
         if (!inBarBand)
         {
             HoverPopup.IsOpen = false;
             return;
         }
 
+        if (IsReverse) pct = 100.0 - pct;
+
         // 仅已填充（彩色）部分响应悬停；未完成部分透明、不交互。
-        double pct = (dip.X - Left) / Width * 100.0;
         var hit = _segments.FirstOrDefault(s => pct >= s.BarStart && pct <= s.FillEnd);
         if (hit == null)
         {
@@ -308,8 +397,20 @@ public partial class OverlayWindow : Window
         }
 
         HoverText.Text = $"{hit.Name}　{FormatCountdown(hit.EndAt)}";
-        HoverPopup.HorizontalOffset = dip.X + 8;
-        HoverPopup.VerticalOffset = Top + _barHeightPx + 2;
+        if (IsVertical)
+        {
+            HoverPopup.HorizontalOffset = Position == PositionLeft
+                ? Left + Width + 8
+                : Left - 8 - HoverText.ActualWidth;
+            HoverPopup.VerticalOffset = dip.Y + 8;
+        }
+        else
+        {
+            HoverPopup.HorizontalOffset = dip.X + 8;
+            HoverPopup.VerticalOffset = Position == PositionTop
+                ? Top + Height + 2
+                : Top - HoverText.ActualHeight - 2;
+        }
         HoverPopup.IsOpen = true;
     }
 

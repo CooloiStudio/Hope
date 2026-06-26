@@ -21,6 +21,7 @@ public sealed class ImageSprite : IDisposable
     public double Width { get; }
     public double Height { get; }
     public double MaxHeight { get; }
+    public bool LimitWidth { get; }
 
     private readonly Bitmap _bitmap;
     private readonly MemoryStream _stream;
@@ -28,19 +29,24 @@ public sealed class ImageSprite : IDisposable
     private readonly bool _animating;
     private bool _disposed;
 
-    public ImageSprite(string path, double maxHeight)
+    public ImageSprite(string path, double maxSize, bool limitWidth = false)
     {
         Path = path;
-        MaxHeight = maxHeight;
+        LimitWidth = limitWidth;
+        MaxHeight = limitWidth ? 0 : maxSize;
         // 将图片完整读入内存后再交给 GDI+：避免锁定原文件，防止更换图片时因句柄占用导致加载失败。
         var bytes = File.ReadAllBytes(path);
         _stream = new MemoryStream(bytes);
         _bitmap = (Bitmap)DrawingImage.FromStream(_stream);
 
-        // 仅当高度超过 maxHeight 时等比缩小；否则保持原始尺寸。
-        double scale = (_bitmap.Height > maxHeight && _bitmap.Height > 0)
-            ? maxHeight / _bitmap.Height
-            : 1.0;
+        // 仅当尺寸超过上限时等比缩小；否则保持原始尺寸。
+        // 水平边限制高度，垂直边限制宽度。
+        double scale = 1.0;
+        if (limitWidth && _bitmap.Width > maxSize && _bitmap.Width > 0)
+            scale = maxSize / _bitmap.Width;
+        else if (!limitWidth && _bitmap.Height > maxSize && _bitmap.Height > 0)
+            scale = maxSize / _bitmap.Height;
+
         Height = Math.Max(1, _bitmap.Height * scale);
         Width = Math.Max(1, _bitmap.Width * scale);
 

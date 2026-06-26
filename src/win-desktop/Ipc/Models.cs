@@ -27,6 +27,7 @@ public sealed class Segment
     [JsonPropertyName("endAt")] public DateTimeOffset EndAt { get; set; }
     [JsonPropertyName("expired")] public bool Expired { get; set; }
     [JsonPropertyName("behaviors")] public List<string>? Behaviors { get; set; }
+    [JsonPropertyName("position")] public string Position { get; set; } = "";
 }
 
 /// <summary>任务到期一次性事件（供 notify 等一次性提醒；keep/blink/hide 由 Segment 持续驱动）。</summary>
@@ -58,6 +59,10 @@ public sealed class TaskDto
     [JsonPropertyName("startAt")] public DateTimeOffset? StartAt { get; set; }
     [JsonPropertyName("endAt")] public DateTimeOffset EndAt { get; set; }
     [JsonPropertyName("createdAt")] public DateTimeOffset? CreatedAt { get; set; }
+    [JsonPropertyName("completed")] public bool Completed { get; set; }
+    [JsonPropertyName("completedAt")] public DateTimeOffset? CompletedAt { get; set; }
+    // 任务级展示位置覆盖；空字符串表示沿用全局设置。
+    [JsonPropertyName("position")] public string Position { get; set; } = "";
     // 任务级到期提醒覆盖；null/空 表示沿用全局默认。
     [JsonPropertyName("expiredBehaviors")] public List<string>? ExpiredBehaviors { get; set; }
     // 循环规则；null 表示单次任务（仅定时任务可用）。
@@ -83,4 +88,7 @@ public sealed class SettingsDto
     [JsonPropertyName("autostart")] public bool Autostart { get; set; }
     [JsonPropertyName("showConfigAtRuntime")] public bool ShowConfigAtRuntime { get; set; }
     [JsonPropertyName("language")] public string Language { get; set; } = "zh-CN";
+    [JsonPropertyName("barPosition")] public string BarPosition { get; set; } = "top";
+    [JsonPropertyName("barDirection")] public string BarDirection { get; set; } = "forward";
+    [JsonPropertyName("advancedPosition")] public bool AdvancedPosition { get; set; }
 }

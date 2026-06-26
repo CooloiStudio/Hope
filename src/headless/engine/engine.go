@@ -4,6 +4,7 @@ package engine
 import (
 	"encoding/json"
 	"log/slog"
+	"math"
 	"sync"
 	"time"
 
@@ -36,7 +37,19 @@ func (e *Engine) ComputeState() ipc.State {
 	now := time.Now()
 	settings, tasks := e.store.Snapshot()
 	behaviorsOf := func(t *task.Task) []string { return effectiveBehaviors(t, settings) }
-	layout := task.BuildLayout(tasks, now, behaviorsOf)
+
+	var segments []task.Segment
+	switch settings.BarPosition {
+	case "allFour":
+		segments = buildAllFourLayout(tasks, now, behaviorsOf, settings.BarDirection)
+	default:
+		positions := collectPositions(tasks, settings)
+		for _, pos := range positions {
+			group := filterTasksByPosition(tasks, pos, settings.BarPosition, settings.AdvancedPosition)
+			layout := task.BuildLayout(group, now, behaviorsOf, pos)
+			segments = append(segments, layout.Segments...)
+		}
+	}
 
 	e.mu.Lock()
 	paused, hidden := e.paused, e.hidden
@@ -45,23 +58,30 @@ func (e *Engine) ComputeState() ipc.State {
 
 	st := ipc.State{
 		Version:  1,
-		Segments: layout.Segments,
+		Segments: segments,
 		Expired:  events,
 	}
+
+	hadAny, hasActive := computeActivity(tasks, now)
 	switch {
 	case paused:
 		st.State = "paused"
 		st.Visible = false
-	case len(layout.Segments) > 0:
+	case len(segments) > 0:
 		// 含未过期段或「保持显示」的到期段时顶栏可见。
 		st.State = "running"
 		st.Visible = !hidden
-	case layout.HadAny:
+	case hadAny:
 		st.State = "expired"
 		st.Visible = false
 	default:
 		st.State = "idle"
 		st.Visible = false
+	}
+
+	// 任意未过期任务存在时保持 running（即使当前没有可见段，如全被 hide）。
+	if hasActive && !paused {
+		st.State = "running"
 	}
 	return st
 }
@@ -73,6 +93,119 @@ func effectiveBehaviors(t *task.Task, s config.Settings) []string {
 	}
 	return s.ExpiredBehaviors
 }
+
+// computeActivity 返回是否存在未手动完成的任务，以及是否存在未过期任务。
+func computeActivity(tasks []*task.Task, now time.Time) (hadAny, hasActive bool) {
+	for _, t := range tasks {
+		if t.Completed {
+			continue
+		}
+		hadAny = true
+		if !t.IsExpired(now) {
+			hasActive = true
+		}
+	}
+	return
+}
+
+// collectPositions 返回在单位置模式下需要渲染的所有位置（含全局位置与任务级覆盖）。
+func collectPositions(tasks []*task.Task, settings config.Settings) []string {
+	positions := map[string]bool{settings.BarPosition: true}
+	if settings.AdvancedPosition {
+		for _, t := range tasks {
+			if t.Position != "" {
+				positions[t.Position] = true
+			}
+		}
+	}
+	order := []string{"top", "right", "bottom", "left"}
+	var out []string
+	for _, p := range order {
+		if positions[p] {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// filterTasksByPosition 收集应渲染到指定位置的任务。
+// 在高级位置开启时，任务按自身 Position 覆盖分组；否则全部使用全局位置。
+func filterTasksByPosition(tasks []*task.Task, position, globalPosition string, advanced bool) []*task.Task {
+	var out []*task.Task
+	for _, t := range tasks {
+		if t.Completed {
+			continue
+		}
+		taskPos := t.Position
+		if taskPos == "" {
+			taskPos = globalPosition
+		}
+		if advanced {
+			if taskPos == position {
+				out = append(out, t)
+			}
+		} else if globalPosition == position {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+// buildAllFourLayout 将单条 0-100% 布局按顺时针 / 逆时针映射到屏幕四边。
+func buildAllFourLayout(tasks []*task.Task, now time.Time, behaviorsOf func(*task.Task) []string, direction string) []task.Segment {
+	layout := task.BuildLayout(tasks, now, behaviorsOf, "allFour")
+	if len(layout.Segments) == 0 {
+		return nil
+	}
+
+	sides := []string{"top", "right", "bottom", "left"}
+	if direction == "counterClockwise" {
+		sides = []string{"top", "left", "bottom", "right"}
+	}
+
+	const sideSpan = 25.0
+	var out []task.Segment
+	for _, seg := range layout.Segments {
+		for i, side := range sides {
+			sideStart := float64(i) * sideSpan
+			sideEnd := sideStart + sideSpan
+
+			is := math.Max(seg.BarStart, sideStart)
+			ie := math.Min(seg.BarEnd, sideEnd)
+			if ie <= is {
+				continue
+			}
+
+			localStart := (is - sideStart) / sideSpan * 100.0
+			localEnd := (ie - sideStart) / sideSpan * 100.0
+			localFill := localEnd
+			if seg.FillEnd < sideStart {
+				localFill = localStart
+			} else if seg.FillEnd < sideEnd {
+				localFill = (seg.FillEnd - sideStart) / sideSpan * 100.0
+			}
+
+			out = append(out, task.Segment{
+				TaskID:       seg.TaskID,
+				Name:         seg.Name,
+				Color:        seg.Color,
+				Gif:          seg.Gif,
+				ImageMaxSize: seg.ImageMaxSize,
+				BarStart:     round1(localStart),
+				BarEnd:       round1(localEnd),
+				Percent:      round1(localEnd),
+				FillEnd:      round1(localFill),
+				EndAt:        seg.EndAt,
+				Expired:      seg.Expired,
+				Behaviors:    seg.Behaviors,
+				Position:     side,
+			})
+		}
+	}
+	return out
+}
+
+func round1(v float64) float64 { return math.Round(v*10) / 10 }
 
 // collectExpiredLocked 返回自上次以来新到期的任务事件（一次性，供一次性提醒如 notify）。调用方需持有锁。
 func (e *Engine) collectExpiredLocked(tasks []*task.Task, now time.Time, behaviorsOf func(*task.Task) []string) []ipc.ExpiredEvent {
@@ -110,6 +243,25 @@ func (e *Engine) HandleCommand(cmd ipc.Command) any {
 		if cmd.TaskID != "" {
 			e.store.DeleteTask(cmd.TaskID)
 			e.clearSignal(cmd.TaskID)
+		}
+	case "completeTask":
+		if cmd.TaskID != "" {
+			_, tasks := e.store.Snapshot()
+			for _, t := range tasks {
+				if t.ID == cmd.TaskID {
+					now := time.Now()
+					advanced := t.AdvanceIfRecurring(now)
+					if !advanced {
+						// 非循环任务：标记为完成，不再渲染。
+						t.Completed = true
+						completedAt := now
+						t.CompletedAt = &completedAt
+					}
+					e.store.UpsertTask(t)
+					e.clearSignal(cmd.TaskID)
+					break
+				}
+			}
 		}
 	case "listTasks":
 		_, tasks := e.store.Snapshot()
