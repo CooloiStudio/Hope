@@ -166,8 +166,8 @@ func TestDeriveSurroundDir(t *testing.T) {
 		{"bottom", "reverse", "cw"},
 		{"left", "forward", "ccw"},
 		{"left", "reverse", "cw"},
-		{"right", "forward", "ccw"},
-		{"right", "reverse", "cw"},
+		{"right", "forward", "cw"},
+		{"right", "reverse", "ccw"},
 	}
 	for _, tc := range tests {
 		got := deriveSurroundDir(tc.startPos, tc.fillDir)
@@ -206,12 +206,12 @@ func TestDeriveAllFourOrders(t *testing.T) {
 		// left+reverse = 顺时针；顺时针基准旋转使 left 在前
 		// 基准 top→right→bottom→left，left 在 [3]，旋转后 = left→top→right→bottom
 		{"left", "reverse", []string{"left", "top", "right", "bottom"}},
-		// right+forward = 逆时针；逆时针基准旋转使 right 在前
-		// 基准 top→left→bottom→right，right 在 [3]，旋转后 = right→top→left→bottom
-		{"right", "forward", []string{"right", "top", "left", "bottom"}},
-		// right+reverse = 顺时针；顺时针基准旋转使 right 在前
+		// right+forward = 顺时针；顺时针基准旋转使 right 在前
 		// 基准 top→right→bottom→left，right 在 [1]，旋转后 = right→bottom→left→top
-		{"right", "reverse", []string{"right", "bottom", "left", "top"}},
+		{"right", "forward", []string{"right", "bottom", "left", "top"}},
+		// right+reverse = 逆时针；逆时针基准旋转使 right 在前
+		// 基准 top→left→bottom→right，right 在 [3]，旋转后 = right→top→left→bottom
+		{"right", "reverse", []string{"right", "top", "left", "bottom"}},
 	}
 	for _, tc := range tests {
 		got := deriveAllFourOrders(tc.startPos, tc.baseDir)

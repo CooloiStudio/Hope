@@ -302,8 +302,18 @@ func deriveAllFourOrders(startPos, baseDir string) []string {
 	return rotated
 }
 
-// deriveSurroundDir 根据起点和填充方向判断环绕方向。
+// deriveSurroundDir 根据起点位置和填充方向判断环绕方向。
 // 返回 "cw"（顺时针）或 "ccw"（逆时针）。
+//
+// 判断规则：看填充方向的"溢出端点"后，进度条自然继续走向哪条边。
+//   - top, forward（左→右，溢出右端点）→ 继续沿右边向下 = 顺时针
+//   - top, reverse（右→左，溢出左端点）→ 继续沿左边向下 = 逆时针
+//   - bottom, forward（左→右，溢出右端点）→ 继续沿右边向上 = 逆时针
+//   - bottom, reverse（右→左，溢出左端点）→ 继续沿左边向上 = 顺时针
+//   - left, forward（上→下，溢出下端点）→ 继续沿底边向右 = 逆时针
+//   - left, reverse（下→上，溢出上端点）→ 继续沿顶边向右 = 顺时针
+//   - right, forward（上→下，溢出下端点）→ 继续沿底边向左 = 顺时针
+//   - right, reverse（下→上，溢出上端点）→ 继续沿顶边向左 = 逆时针
 func deriveSurroundDir(startPos, fillDir string) string {
 	switch startPos {
 	case "top":
@@ -323,9 +333,9 @@ func deriveSurroundDir(startPos, fillDir string) string {
 		return "cw"
 	case "right":
 		if fillDir == "forward" {
-			return "ccw"
+			return "cw"
 		}
-		return "cw"
+		return "ccw"
 	default:
 		return "cw"
 	}
