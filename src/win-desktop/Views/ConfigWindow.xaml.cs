@@ -66,6 +66,7 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
 
         RefreshBox.ValueChanged += OnSliderValueChanged;
         BarHeightBox.ValueChanged += OnSliderValueChanged;
+        ImageMaxSizeBox.ValueChanged += OnSliderValueChanged;
         GlobalModeBox.SelectionChanged += OnSettingsSelectionChanged;
         GlobalNotifyCheck.Checked += OnSettingsControlChanged;
         GlobalNotifyCheck.Unchecked += OnSettingsControlChanged;
@@ -162,6 +163,12 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
     {
         if (sender == RefreshBox) RefreshValueText.Text = ((int)RefreshBox.Value).ToString();
         if (sender == BarHeightBox) BarHeightValueText.Text = ((int)BarHeightBox.Value).ToString();
+        if (sender == ImageMaxSizeBox)
+        {
+            ImageMaxSizeValueText.Text = ((int)ImageMaxSizeBox.Value).ToString();
+            UpdatePreview();
+            return;
+        }
         UpdatePreview();
         CommitSettings();
     }
@@ -496,6 +503,8 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
         NameBox.Text = row.Name;
         ColorBox.Text = row.Color;
         GifBox.Text = row.Gif ?? "";
+        ImageMaxSizeBox.Value = row.ImageMaxSize > 0 ? row.ImageMaxSize : 15;
+        ImageMaxSizeValueText.Text = ((int)ImageMaxSizeBox.Value).ToString();
         SelectType(row.Type);
         SetDateTime(StartDatePicker, StartHourBox, StartMinuteBox,
             row.StartAt?.LocalDateTime ?? DateTime.Now);
@@ -514,6 +523,8 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
         NameBox.Text = "";
         ColorBox.Text = SuggestUnusedColor();
         GifBox.Text = "";
+        ImageMaxSizeBox.Value = 15;
+        ImageMaxSizeValueText.Text = "15";
         SelectType("scheduled");
         SetDateTime(StartDatePicker, StartHourBox, StartMinuteBox, DateTime.Now);
         SetDateTime(EndDatePicker, EndHourBox, EndMinuteBox, DateTime.Now.AddHours(1));
@@ -576,6 +587,7 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
             Type = type,
             Color = color,
             Gif = string.IsNullOrEmpty(gif) ? null : gif,
+            ImageMaxSize = (int)ImageMaxSizeBox.Value,
             StartAt = start,
             EndAt = end,
             ExpiredBehaviors = CollectTaskBehaviors(),
@@ -639,7 +651,7 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
         UpdatePreview();
     }
 
-    // 实时预览：条高 = barHeightPx，[0,percent] 满涂任务色，图片对齐 percent（§5.3.3 新增 2）。
+    // 实时预览：条高 = barHeightPx，[0,percent] 满涂任务色，图片右边缘对齐 percent 前沿。
     private void UpdatePreview()
     {
         // InitializeComponent 设置 ColorBox.Text 时会触发 TextChanged，此时预览控件尚未创建。
@@ -656,6 +668,10 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
         double trackW = PreviewTrack.ActualWidth;
         if (trackW > 0)
             PreviewFill.Width = Math.Max(0, trackW * percent / 100.0);
+
+        int maxSize = (int)ImageMaxSizeBox.Value;
+        PreviewImageCanvas.Height = maxSize;
+        _previewImage.MaxHeight = maxSize;
 
         var path = GifBox.Text.Trim();
         if (!string.IsNullOrEmpty(path) && File.Exists(path))
@@ -679,10 +695,13 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
 
         if (trackW > 0 && _previewImage.Source != null)
         {
-            _previewImage.Measure(new System.Windows.Size(double.PositiveInfinity, 15));
+            _previewImage.Measure(new System.Windows.Size(double.PositiveInfinity, maxSize));
             double imgW = _previewImage.DesiredSize.Width;
             double frontX = trackW * percent / 100.0;
-            double left = Math.Clamp(frontX - imgW / 2, 0, Math.Max(0, trackW - imgW));
+            // 图片右边缘对齐进度前沿；允许左侧超出画布，到右边界时停止跟随。
+            double left = frontX - imgW;
+            double maxLeft = trackW - imgW;
+            if (left > maxLeft) left = maxLeft;
             Canvas.SetLeft(_previewImage, left);
             Canvas.SetTop(_previewImage, 0);
         }
@@ -897,6 +916,7 @@ public sealed class TaskRow
     public string Type { get; init; } = "scheduled";
     public string Color { get; init; } = "#FF6B35";
     public string? Gif { get; init; }
+    public int ImageMaxSize { get; init; }
     public DateTimeOffset? StartAt { get; init; }
     public DateTimeOffset EndAt { get; init; }
     public DateTimeOffset? CreatedAt { get; init; }
@@ -921,6 +941,7 @@ public sealed class TaskRow
         Type = t.Type,
         Color = t.Color,
         Gif = t.Gif,
+        ImageMaxSize = t.ImageMaxSize,
         StartAt = t.StartAt,
         EndAt = t.EndAt,
         CreatedAt = t.CreatedAt,

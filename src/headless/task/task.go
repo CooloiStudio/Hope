@@ -69,6 +69,7 @@ type Task struct {
 	Type      Type       `json:"type"`
 	Color     string     `json:"color"`         // #RRGGBB
 	Gif       string     `json:"gif,omitempty"` // 可选：本地 GIF 路径，挂在进度条下方跟随进度前沿播放
+	ImageMaxSize int     `json:"imageMaxSize,omitempty"` // 图片最大高度（px），默认 15，范围 15~30
 	StartAt   *time.Time `json:"startAt,omitempty"`
 	EndAt     time.Time  `json:"endAt"`
 	CreatedAt time.Time  `json:"createdAt"`
@@ -218,6 +219,7 @@ type Segment struct {
 	Name      string    `json:"name"`
 	Color     string    `json:"color"`
 	Gif       string    `json:"gif,omitempty"`
+	ImageMaxSize int    `json:"imageMaxSize,omitempty"`
 	BarStart  float64   `json:"barStart"`
 	BarEnd    float64   `json:"barEnd"`
 	Percent   float64   `json:"percent"`
@@ -294,6 +296,7 @@ func BuildLayout(tasks []*Task, now time.Time, behaviorsOf func(*Task) []string)
 			Name:      e.t.Name,
 			Color:     e.t.Color,
 			Gif:       e.t.Gif,
+			ImageMaxSize: e.t.ImageMaxSize,
 			BarStart:  round1(prev),
 			BarEnd:    round1(p),
 			Percent:   round1(p),

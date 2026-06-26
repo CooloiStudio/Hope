@@ -198,6 +198,15 @@
                                             ToolTip="支持任意图片格式；可直接拖放图片文件到此。图片挂在进度条下方，跟随该任务进度前沿移动，动图循环播放（超过 15px 自动缩放）" />
                             </DockPanel>
 
+                            <!-- 图片最大尺寸 -->
+                            <DockPanel Margin="0,6,0,0">
+                                <TextBlock Style="{StaticResource FieldLabel}" Text="最大尺寸" />
+                                <TextBlock x:Name="ImageMaxSizeValueText" DockPanel.Dock="Right" Width="24"
+                                           TextAlignment="Center" VerticalAlignment="Center" Margin="8,0,0,0" />
+                                <Slider x:Name="ImageMaxSizeBox" Minimum="15" Maximum="30" TickFrequency="1"
+                                        IsSnapToTickEnabled="True" VerticalAlignment="Center" Value="15" />
+                            </DockPanel>
+
                             <!-- 实时预览（标签在左，预览块在右；§5.3.3 新增 2） -->
                             <DockPanel Margin="0,8,0,0">
                                 <TextBlock Style="{StaticResource QuickFillLabel}" Text="预览" VerticalAlignment="Top" />

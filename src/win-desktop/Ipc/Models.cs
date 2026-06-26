@@ -19,6 +19,7 @@ public sealed class Segment
     [JsonPropertyName("name")] public string Name { get; set; } = "";
     [JsonPropertyName("color")] public string Color { get; set; } = "#FF6B35";
     [JsonPropertyName("gif")] public string? Gif { get; set; }
+    [JsonPropertyName("imageMaxSize")] public int ImageMaxSize { get; set; }
     [JsonPropertyName("barStart")] public double BarStart { get; set; }
     [JsonPropertyName("barEnd")] public double BarEnd { get; set; }
     [JsonPropertyName("percent")] public double Percent { get; set; }
@@ -53,6 +54,7 @@ public sealed class TaskDto
     [JsonPropertyName("type")] public string Type { get; set; } = "scheduled"; // scheduled / instant
     [JsonPropertyName("color")] public string Color { get; set; } = "#FF6B35";
     [JsonPropertyName("gif")] public string? Gif { get; set; }
+    [JsonPropertyName("imageMaxSize")] public int ImageMaxSize { get; set; }
     [JsonPropertyName("startAt")] public DateTimeOffset? StartAt { get; set; }
     [JsonPropertyName("endAt")] public DateTimeOffset EndAt { get; set; }
     [JsonPropertyName("createdAt")] public DateTimeOffset? CreatedAt { get; set; }

@@ -21,9 +21,6 @@ namespace Hope.Desktop.Overlay;
 /// </summary>
 public partial class OverlayWindow : Window
 {
-    // 图片精灵最大高度（进度条下方），单位 DIP。超过则等比缩小到此高度。
-    private const double ImageMaxHeight = 15;
-
     // 闪烁脉冲参数：柔和正弦渐变（淡出至近透明再淡入），单程时长 → 全周期约 2×。
     private const double BlinkHalfPeriodSec = 0.8;
     private const double BlinkMinAlpha = 0.05;
@@ -33,6 +30,7 @@ public partial class OverlayWindow : Window
     private readonly Dictionary<string, ImageSprite> _sprites = new();
     private List<Segment> _segments = new();
     private int _barHeightPx = 4;
+    private double _imageMaxHeight;
 
     // 闪烁状态：当前正在脉冲的色段矩形、已查看（停止脉冲）的任务、本帧应闪烁的任务集合。
     private readonly List<Rectangle> _blinkRects = new();
@@ -97,11 +95,19 @@ public partial class OverlayWindow : Window
         _acknowledgedBlink.IntersectWith(_blinkingIds);
 
         bool show = msg.Visible && _segments.Count > 0;
-        bool hasImage = show && _segments.Any(s => ImageSprite.IsUsable(s.Gif));
+        _imageMaxHeight = 0;
+        foreach (var s in _segments)
+        {
+            if (ImageSprite.IsUsable(s.Gif))
+            {
+                var h = s.ImageMaxSize > 0 ? s.ImageMaxSize : 15;
+                if (h > _imageMaxHeight) _imageMaxHeight = h;
+            }
+        }
 
         // 进度条本身恒为 barHeightPx；带图片时窗口向下扩展出图片区，但进度条粗细不变。
         Width = SystemParameters.PrimaryScreenWidth;
-        Height = _barHeightPx + (hasImage ? ImageMaxHeight : 0);
+        Height = _barHeightPx + _imageMaxHeight;
         Left = 0;
         Top = 0;
 
@@ -176,7 +182,8 @@ public partial class OverlayWindow : Window
             {
                 try
                 {
-                    sprite = new ImageSprite(seg.Gif!, ImageMaxHeight);
+                    var maxH = seg.ImageMaxSize > 0 ? seg.ImageMaxSize : 15;
+                    sprite = new ImageSprite(seg.Gif!, maxH);
                 }
                 catch
                 {
@@ -186,9 +193,11 @@ public partial class OverlayWindow : Window
                 GifCanvas.Children.Add(sprite.Element);
             }
 
-            // 水平中心对齐进度前沿；垂直挂在进度条下方。
+            // 图片右边缘对齐进度前沿；允许左侧超出屏幕，到右边界时停止跟随。
             double frontX = seg.FillEnd / 100.0 * w;
-            double left = Math.Clamp(frontX - sprite.Width / 2, 0, Math.Max(0, w - sprite.Width));
+            double left = frontX - sprite.Width;
+            double maxLeft = w - sprite.Width;
+            if (left > maxLeft) left = maxLeft;
             Canvas.SetLeft(sprite.Element, left);
             Canvas.SetTop(sprite.Element, _barHeightPx);
         }

@@ -22,6 +22,7 @@ public sealed class ImageSprite : IDisposable
     public double Height { get; }
 
     private readonly Bitmap _bitmap;
+    private readonly MemoryStream _stream;
     private readonly EventHandler _onFrame = (_, _) => { };
     private readonly bool _animating;
     private bool _disposed;
@@ -29,7 +30,10 @@ public sealed class ImageSprite : IDisposable
     public ImageSprite(string path, double maxHeight)
     {
         Path = path;
-        _bitmap = (Bitmap)DrawingImage.FromFile(path);
+        // 将图片完整读入内存后再交给 GDI+：避免锁定原文件，防止更换图片时因句柄占用导致加载失败。
+        var bytes = File.ReadAllBytes(path);
+        _stream = new MemoryStream(bytes);
+        _bitmap = (Bitmap)DrawingImage.FromStream(_stream);
 
         // 仅当高度超过 maxHeight 时等比缩小；否则保持原始尺寸。
         double scale = (_bitmap.Height > maxHeight && _bitmap.Height > 0)
@@ -90,6 +94,7 @@ public sealed class ImageSprite : IDisposable
         _disposed = true;
         if (_animating) ImageAnimator.StopAnimate(_bitmap, _onFrame);
         _bitmap.Dispose();
+        _stream.Dispose();
     }
 
     /// <summary>路径有效且文件存在时返回 true。</summary>
