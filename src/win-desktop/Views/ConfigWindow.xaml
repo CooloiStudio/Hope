@@ -217,8 +217,7 @@
                                             <Border x:Name="PreviewFill" HorizontalAlignment="Left" VerticalAlignment="Stretch"
                                                     CornerRadius="1" Background="#FF6B35" Width="0" />
                                         </Grid>
-                                        <Canvas x:Name="PreviewImageCanvas" Height="15" Margin="0,4,0,0"
-                                                HorizontalAlignment="Stretch" />
+                                        <Canvas x:Name="PreviewImageCanvas" Height="15" HorizontalAlignment="Stretch" />
                                     </StackPanel>
                                 </Border>
                             </DockPanel>

@@ -10,6 +10,7 @@ using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using Hope.Desktop;
 using Hope.Desktop.Ipc;
+using Hope.Desktop.Overlay;
 using ComboBox = System.Windows.Controls.ComboBox;
 using CheckBox = System.Windows.Controls.CheckBox;
 using Color = System.Windows.Media.Color;
@@ -35,7 +36,10 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
     private bool _loadingSettings;
     private DateTimeOffset _taskCreatedAt = DateTimeOffset.Now;
     private readonly DispatcherTimer _previewTimer;
-    private readonly System.Windows.Controls.Image _previewImage;
+    private ImageSprite? _previewSprite;
+    private string? _previewSpritePath;
+    private int _previewSpriteMaxSize;
+    private readonly DispatcherTimer _previewGifTimer;
     private bool _previewReady;
     private bool _layoutReady;
 
@@ -52,8 +56,6 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
         _ipc.TasksReceived += OnTasksReceived;
         _ipc.SettingsReceived += OnSettingsReceived;
 
-        _previewImage = new System.Windows.Controls.Image { MaxHeight = 15, Stretch = Stretch.Uniform };
-        PreviewImageCanvas.Children.Add(_previewImage);
         _previewReady = true;
 
         PopulateTimeBoxes(StartHourBox, StartMinuteBox);
@@ -86,6 +88,10 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
         _previewTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
         _previewTimer.Tick += (_, _) => UpdatePreview();
         _previewTimer.Start();
+
+        _previewGifTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(100) };
+        _previewGifTimer.Tick += (_, _) => _previewSprite?.Advance();
+        _previewGifTimer.Start();
 
         StatusText.SizeChanged += (_, _) => ScheduleFitHeightToTaskEditor();
         Loaded += (_, _) =>
@@ -129,6 +135,7 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
     {
         DesktopLog.Info("ConfigWindow RequestRefresh");
         if (!_previewTimer.IsEnabled) _previewTimer.Start();
+        if (!_previewGifTimer.IsEnabled) _previewGifTimer.Start();
         _ipc.Send(new Command { Action = "listTasks" });
         _ipc.Send(new Command { Action = "getSettings" });
         UpdatePreview();
@@ -671,39 +678,42 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
 
         int maxSize = (int)ImageMaxSizeBox.Value;
         PreviewImageCanvas.Height = maxSize;
-        _previewImage.MaxHeight = maxSize;
 
         var path = GifBox.Text.Trim();
-        if (!string.IsNullOrEmpty(path) && File.Exists(path))
+        bool pathUsable = !string.IsNullOrEmpty(path) && File.Exists(path);
+
+        // 路径/尺寸变化时释放旧的图片精灵，避免资源泄漏或旧尺寸残留。
+        if (_previewSprite != null &&
+            (_previewSpritePath != path || _previewSpriteMaxSize != maxSize || !pathUsable))
+        {
+            PreviewImageCanvas.Children.Remove(_previewSprite.Element);
+            _previewSprite.Dispose();
+            _previewSprite = null;
+            _previewSpritePath = null;
+        }
+
+        if (pathUsable && _previewSprite == null)
         {
             try
             {
-                var bmp = new BitmapImage();
-                bmp.BeginInit();
-                bmp.CacheOption = BitmapCacheOption.OnLoad;
-                bmp.UriSource = new Uri(path);
-                bmp.EndInit();
-                bmp.Freeze();
-                _previewImage.Source = bmp;
+                _previewSprite = new ImageSprite(path, maxSize);
+                _previewSpritePath = path;
+                _previewSpriteMaxSize = maxSize;
+                PreviewImageCanvas.Children.Add(_previewSprite.Element);
             }
-            catch { _previewImage.Source = null; }
-        }
-        else
-        {
-            _previewImage.Source = null;
+            catch { _previewSprite = null; _previewSpritePath = null; }
         }
 
-        if (trackW > 0 && _previewImage.Source != null)
+        if (trackW > 0 && _previewSprite != null)
         {
-            _previewImage.Measure(new System.Windows.Size(double.PositiveInfinity, maxSize));
-            double imgW = _previewImage.DesiredSize.Width;
+            double imgW = _previewSprite.Width;
             double frontX = trackW * percent / 100.0;
             // 图片右边缘对齐进度前沿；允许左侧超出画布，到右边界时停止跟随。
             double left = frontX - imgW;
             double maxLeft = trackW - imgW;
             if (left > maxLeft) left = maxLeft;
-            Canvas.SetLeft(_previewImage, left);
-            Canvas.SetTop(_previewImage, 0);
+            Canvas.SetLeft(_previewSprite.Element, left);
+            Canvas.SetTop(_previewSprite.Element, 0);
         }
 
         if (!timeValid)
@@ -901,6 +911,7 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
     {
         DesktopLog.Info("ConfigWindow OnClosing: hide to tray");
         _previewTimer.Stop();
+        _previewGifTimer.Stop();
         Wpf.Ui.Appearance.SystemThemeWatcher.UnWatch(this);
         // 关闭窗口仅隐藏到托盘，不退出进程（文档 §5.3）。
         e.Cancel = true;

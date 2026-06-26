@@ -163,11 +163,11 @@ public partial class OverlayWindow : Window
 
         var wanted = _segments.Where(s => ImageSprite.IsUsable(s.Gif)).ToList();
 
-        // 移除已不需要或路径变更的精灵
+        // 移除已不需要、路径变更或最大尺寸变更的精灵
         foreach (var id in _sprites.Keys.ToList())
         {
             var seg = wanted.FirstOrDefault(s => s.TaskId == id);
-            if (seg == null || seg.Gif != _sprites[id].Path)
+            if (seg == null || seg.Gif != _sprites[id].Path || seg.ImageMaxSize != _sprites[id].MaxHeight)
             {
                 GifCanvas.Children.Remove(_sprites[id].Element);
                 _sprites[id].Dispose();

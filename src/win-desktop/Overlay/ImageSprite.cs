@@ -20,6 +20,7 @@ public sealed class ImageSprite : IDisposable
     public string Path { get; }
     public double Width { get; }
     public double Height { get; }
+    public double MaxHeight { get; }
 
     private readonly Bitmap _bitmap;
     private readonly MemoryStream _stream;
@@ -30,6 +31,7 @@ public sealed class ImageSprite : IDisposable
     public ImageSprite(string path, double maxHeight)
     {
         Path = path;
+        MaxHeight = maxHeight;
         // 将图片完整读入内存后再交给 GDI+：避免锁定原文件，防止更换图片时因句柄占用导致加载失败。
         var bytes = File.ReadAllBytes(path);
         _stream = new MemoryStream(bytes);
