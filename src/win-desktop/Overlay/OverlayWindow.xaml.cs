@@ -247,7 +247,22 @@ public partial class OverlayWindow : Window
             double left, top;
             if (IsVertical)
             {
-                left = Position == PositionLeft ? _barHeightPx : 0;
+                // 垂直模式（left/right）：图片与进度条边距=0，直接紧贴
+                // 旋转中心已设为吸附边中点，图片绕该点旋转后自然紧贴进度条
+                if (Position == PositionLeft)
+                {
+                    // 进度条在左，图片在右：图片左边缘 = 进度条右边缘
+                    left = _barHeightPx;
+                }
+                else // PositionRight
+                {
+                    // 进度条在右，图片在左：图片右边缘 = 进度条左边缘
+                    // 进度条 Canvas.Left = _imageMaxThickness，图片右边缘应对齐该位置
+                    // 未旋转时图片右边缘 = left + sprite.Width
+                    // 旋转后视觉宽度可能变化，但 RenderTransform 不影响布局
+                    // 旋转中心 cx=1 表示右边缘，旋转后右边缘位置不变
+                    left = _imageMaxThickness - sprite.Width;
+                }
                 top = front - sprite.Height * cy;
                 if (top < 0) top = 0;
                 if (top > h - sprite.Height) top = h - sprite.Height;

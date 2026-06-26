@@ -276,27 +276,6 @@
                                         IsSnapToTickEnabled="True" VerticalAlignment="Center" Value="15" />
                             </DockPanel>
 
-                            <!-- 实时预览（标签在左，预览块在右；§5.3.3 新增 2） -->
-                            <DockPanel Margin="0,8,0,0">
-                                <TextBlock Style="{StaticResource QuickFillLabel}" Text="预览" VerticalAlignment="Top" />
-                                <Border BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" BorderThickness="1"
-                                        CornerRadius="6" Padding="10" Background="{DynamicResource CardBackgroundFillColorDefaultBrush}">
-                                    <StackPanel>
-                                        <Grid x:Name="PreviewTrack" ClipToBounds="True" HorizontalAlignment="Stretch">
-                                            <Border x:Name="PreviewFill" HorizontalAlignment="Left" VerticalAlignment="Stretch"
-                                                    CornerRadius="1" Background="#FF6B35" Width="0" />
-                                        </Grid>
-                                        <Canvas x:Name="PreviewImageCanvas" Height="15" HorizontalAlignment="Stretch" />
-                                    </StackPanel>
-                                </Border>
-                            </DockPanel>
-                            <!-- 百分比 + 倒计时：移至预览下方一行 -->
-                            <DockPanel Margin="0,4,0,0">
-                                <TextBlock Style="{StaticResource QuickFillLabel}" Text="" />
-                                <TextBlock x:Name="PreviewStatus" FontSize="12" VerticalAlignment="Center"
-                                           Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
-                            </DockPanel>
-
                             <Separator Style="{StaticResource TaskEditSeparator}" />
 
                             <!-- 类型 -->
@@ -440,10 +419,8 @@
                                 </WrapPanel>
                             </DockPanel>
 
-                            <ui:Button x:Name="SaveButton" Content="保存任务" Appearance="Primary"
-                                       HorizontalAlignment="Stretch" Height="34" Margin="0,14,0,0" Click="OnSave" />
                             <ui:Button x:Name="NewButton" Content="清空（新建）"
-                                       HorizontalAlignment="Stretch" Height="30" Margin="0,6,0,0" Click="OnNew" />
+                                       HorizontalAlignment="Stretch" Height="30" Margin="0,14,0,0" Click="OnNew" />
                         </StackPanel>
                 </TabItem>
 

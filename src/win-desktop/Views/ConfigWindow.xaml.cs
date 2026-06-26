@@ -35,13 +35,8 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
     private SettingsDto _settings = new();
     private bool _loadingSettings;
     private DateTimeOffset _taskCreatedAt = DateTimeOffset.Now;
-    private readonly DispatcherTimer _previewTimer;
-    private ImageSprite? _previewSprite;
-    private string? _previewSpritePath;
-    private int _previewSpriteMaxSize;
-    private readonly DispatcherTimer _previewGifTimer;
-    private bool _previewReady;
     private bool _layoutReady;
+    private readonly DispatcherTimer _autoSaveTimer;
 
     public ConfigWindow(IpcClient ipc)
     {
@@ -56,15 +51,8 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
         _ipc.TasksReceived += OnTasksReceived;
         _ipc.SettingsReceived += OnSettingsReceived;
 
-        _previewReady = true;
-
         PopulateTimeBoxes(StartHourBox, StartMinuteBox);
         PopulateTimeBoxes(EndHourBox, EndMinuteBox);
-        foreach (var chk in WeekdayChecks())
-        {
-            chk.Checked += (_, _) => UpdatePreview();
-            chk.Unchecked += (_, _) => UpdatePreview();
-        }
 
         RefreshBox.ValueChanged += OnSliderValueChanged;
         BarHeightBox.ValueChanged += OnSliderValueChanged;
@@ -85,22 +73,6 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
         AdvancedPositionCheck.Checked += OnAdvancedPositionChanged;
         AdvancedPositionCheck.Unchecked += OnAdvancedPositionChanged;
 
-        PreviewTrack.SizeChanged += (_, _) => UpdatePreview();
-        StartDatePicker.SelectedDateChanged += (_, _) => UpdatePreview();
-        EndDatePicker.SelectedDateChanged += (_, _) => UpdatePreview();
-        StartHourBox.SelectionChanged += (_, _) => UpdatePreview();
-        StartMinuteBox.SelectionChanged += (_, _) => UpdatePreview();
-        EndHourBox.SelectionChanged += (_, _) => UpdatePreview();
-        EndMinuteBox.SelectionChanged += (_, _) => UpdatePreview();
-
-        _previewTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
-        _previewTimer.Tick += (_, _) => UpdatePreview();
-        _previewTimer.Start();
-
-        _previewGifTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(100) };
-        _previewGifTimer.Tick += (_, _) => _previewSprite?.Advance();
-        _previewGifTimer.Start();
-
         StatusText.SizeChanged += (_, _) => ScheduleFitHeightToTaskEditor();
         Loaded += (_, _) =>
         {
@@ -112,6 +84,9 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
         AboutVersionText.Text = v != null ? $"v{v.Major}.{v.Minor}.{v.Build}" : "v0.0.0";
 
         ContentRendered += (_, _) => EnsureFluentBackdrop();
+        _autoSaveTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
+        _autoSaveTimer.Tick += (_, _) => AutoSaveTask();
+        HookTaskFieldEvents();
         OnNew(this, new RoutedEventArgs());
         DesktopLog.Info("ConfigWindow ctor: done");
     }
@@ -142,11 +117,8 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
     public void RequestRefresh()
     {
         DesktopLog.Info("ConfigWindow RequestRefresh");
-        if (!_previewTimer.IsEnabled) _previewTimer.Start();
-        if (!_previewGifTimer.IsEnabled) _previewGifTimer.Start();
         _ipc.Send(new Command { Action = "listTasks" });
         _ipc.Send(new Command { Action = "getSettings" });
-        UpdatePreview();
     }
 
     private void OnSettingsReceived(SettingsDto s)
@@ -171,7 +143,6 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
             AllFourCheck.IsChecked = s.AllFour;
             _loadingSettings = false;
             DesktopLog.Info("ConfigWindow.OnSettingsReceived applied to UI");
-            UpdatePreview();
         });
     }
 
@@ -187,11 +158,9 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
         if (sender == ImageMaxSizeBox)
         {
             ImageMaxSizeValueText.Text = ((int)ImageMaxSizeBox.Value).ToString();
-            UpdatePreview();
-            return;
         }
-        UpdatePreview();
         CommitSettings();
+        TryAutoSaveTask();
     }
 
     private void OnSettingsControlChanged(object sender, RoutedEventArgs e) => CommitSettings();
@@ -408,7 +377,7 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
     private void OnRecurModeChanged(object sender, SelectionChangedEventArgs e)
     {
         UpdateRecurVisibility();
-        UpdatePreview();
+        TryAutoSaveTask();
         ScheduleFitHeightToTaskEditor();
     }
 
@@ -424,7 +393,7 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
             box.CaretIndex = Math.Min(caret, digits.Length);
             return; // 赋值会再次触发，落到下面分支
         }
-        UpdatePreview();
+        TryAutoSaveTask();
     }
 
     private void UpdateRecurVisibility()
@@ -522,7 +491,7 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
             _ => today,
         };
         picker.SelectedDate = date;
-        UpdatePreview();
+        TryAutoSaveTask();
         ScheduleFitHeightToTaskEditor();
     }
 
@@ -561,7 +530,7 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
         };
 
         SetDateTime(datePicker, hourBox, minuteBox, when);
-        UpdatePreview();
+        TryAutoSaveTask();
         ScheduleFitHeightToTaskEditor();
     }
 
@@ -600,8 +569,7 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
         LoadRecurrence(row.Recurrence);
         SelectComboByTag(TaskPositionBox, row.Position);
         StatusText.Text = $"正在编辑：{row.Name}";
-        UpdatePreview();
-        MainTabs.SelectedItem = TaskTab; // 选中任务自动切到任务编辑 Tab（§5.3.3 新增 4）
+        MainTabs.SelectedItem = TaskTab;
     }
 
     private void OnNew(object sender, RoutedEventArgs e)
@@ -621,82 +589,6 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
         SelectComboByTag(TaskPositionBox, "");
         TaskGrid.SelectedItem = null;
         StatusText.Text = "新建任务";
-        UpdatePreview();
-    }
-
-    private void OnSave(object sender, RoutedEventArgs e)
-    {
-        var name = NameBox.Text.Trim();
-        if (string.IsNullOrEmpty(name)) { StatusText.Text = "请填写任务名称"; return; }
-        if (!TryParseColor(ColorBox.Text, out var color)) { StatusText.Text = "颜色格式应为 #RRGGBB"; return; }
-        if (IsColorTaken(color))
-        {
-            var result = System.Windows.MessageBox.Show(
-                "当前颜色已被其他任务使用，是否继续使用这个颜色？",
-                "颜色重复",
-                System.Windows.MessageBoxButton.YesNo,
-                System.Windows.MessageBoxImage.Question);
-            if (result != System.Windows.MessageBoxResult.Yes) return;
-        }
-        if (!TryComposeDateTime(EndDatePicker, EndHourBox, EndMinuteBox, out var end))
-        { StatusText.Text = "请选择截止日期与时间"; return; }
-
-        var type = SelectedType();
-        DateTimeOffset? start = null;
-        RecurrenceDto? recurrence = null;
-        if (type == "scheduled")
-        {
-            if (!TryComposeDateTime(StartDatePicker, StartHourBox, StartMinuteBox, out var s))
-            { StatusText.Text = "请选择开始日期与时间"; return; }
-            recurrence = CollectRecurrence();
-            if (recurrence == null)
-            {
-                // 单次任务：开始须早于截止。
-                if (s >= end) { StatusText.Text = "开始时间须早于截止时间"; return; }
-            }
-            else if (recurrence.Mode == "weekly" &&
-                     (recurrence.Weekdays == null || recurrence.Weekdays.Count == 0))
-            {
-                StatusText.Text = "循环「按星期」：请至少选择一天";
-                return;
-            }
-            else if (recurrence.Mode == "everyN" &&
-                     (recurrence.Interval < 2 || recurrence.Interval > 800))
-            {
-                StatusText.Text = "循环间隔需为 2~800（含端点）的整数";
-                return;
-            }
-            // 循环任务仅取时分窗口（支持跨午夜），不校验整体先后。
-            start = s;
-        }
-
-        if (!_ipc.IsConnected)
-        {
-            StatusText.Text = "未连接到核心进程（hope-headless），无法保存；请确认核心已启动";
-            return;
-        }
-
-        var gif = GifBox.Text.Trim();
-        var position = (TaskPositionBox.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? "";
-        var dto = new TaskDto
-        {
-            Id = _editingId ?? Guid.NewGuid().ToString(),
-            Name = name,
-            Type = type,
-            Color = color,
-            Gif = string.IsNullOrEmpty(gif) ? null : gif,
-            ImageMaxSize = (int)ImageMaxSizeBox.Value,
-            Position = position,
-            StartAt = start,
-            EndAt = end,
-            ExpiredBehaviors = CollectTaskBehaviors(),
-            Recurrence = recurrence,
-        };
-
-        _ipc.Send(new Command { Action = _editingId == null ? "createTask" : "updateTask", Task = dto });
-        _ipc.Send(new Command { Action = "listTasks" });
-        StatusText.Text = _editingId == null ? "已创建" : "已更新";
-        _editingId = dto.Id;
     }
 
     private void OnDelete(object sender, RoutedEventArgs e)
@@ -735,10 +627,10 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
                      "|*.gif;*.png;*.jpg;*.jpeg;*.bmp;*.webp;*.tif;*.tiff|所有文件 (*.*)|*.*",
             CheckFileExists = true,
         };
-        if (dlg.ShowDialog() == true) { GifBox.Text = dlg.FileName; UpdatePreview(); }
+        if (dlg.ShowDialog() == true) { GifBox.Text = dlg.FileName; TryAutoSaveTask(); }
     }
 
-    private void OnClearGif(object sender, RoutedEventArgs e) { GifBox.Text = ""; UpdatePreview(); }
+    private void OnClearGif(object sender, RoutedEventArgs e) { GifBox.Text = ""; TryAutoSaveTask(); }
 
     private void OnGifDragOver(object sender, System.Windows.DragEventArgs e)
     {
@@ -754,7 +646,7 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
             e.Data.GetData(System.Windows.DataFormats.FileDrop) is string[] files && files.Length > 0)
         {
             GifBox.Text = files[0];
-            UpdatePreview();
+            TryAutoSaveTask();
         }
         e.Handled = true;
     }
@@ -765,154 +657,89 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
     {
         if (TryParseColor(ColorBox.Text, out var hex) && ColorPreview != null)
             ColorPreview.Background = new SolidColorBrush(HexToColor(hex));
-        UpdatePreview();
+        TryAutoSaveTask();
     }
 
-    // 实时预览：条高 = barHeightPx，[0,percent] 满涂任务色，图片中心对齐进度前沿。
-    private void UpdatePreview()
+    // ---- 自动保存逻辑 ----
+    // 所有任务字段变更后调用 TryAutoSaveTask()；用 500ms 防抖避免每次击键都触发 IPC。
+    private void HookTaskFieldEvents()
     {
-        // InitializeComponent 设置 ColorBox.Text 时会触发 TextChanged，此时预览控件尚未创建。
-        if (!_previewReady || PreviewTrack == null || PreviewFill == null || PreviewStatus == null)
+        NameBox.TextChanged += (_, _) => TryAutoSaveTask();
+        ColorBox.TextChanged += (_, _) => TryAutoSaveTask();
+        GifBox.TextChanged += (_, _) => TryAutoSaveTask();
+        ImageMaxSizeBox.ValueChanged += (_, _) => TryAutoSaveTask();
+        TypeBox.SelectionChanged += (_, _) => { UpdateStartVisibility(); TryAutoSaveTask(); };
+        StartDatePicker.SelectedDateChanged += (_, _) => TryAutoSaveTask();
+        StartHourBox.SelectionChanged += (_, _) => TryAutoSaveTask();
+        StartMinuteBox.SelectionChanged += (_, _) => TryAutoSaveTask();
+        EndDatePicker.SelectedDateChanged += (_, _) => TryAutoSaveTask();
+        EndHourBox.SelectionChanged += (_, _) => TryAutoSaveTask();
+        EndMinuteBox.SelectionChanged += (_, _) => TryAutoSaveTask();
+        RecurModeBox.SelectionChanged += (_, _) => { UpdateRecurVisibility(); TryAutoSaveTask(); };
+        RecurIntervalBox.TextChanged += (_, _) => TryAutoSaveTask();
+        foreach (var chk in WeekdayChecks())
+        {
+            chk.Checked += (_, _) => TryAutoSaveTask();
+            chk.Unchecked += (_, _) => TryAutoSaveTask();
+        }
+        TaskPositionBox.SelectionChanged += (_, _) => TryAutoSaveTask();
+    }
+
+    private void TryAutoSaveTask()
+    {
+        if (_loadingSettings) return;
+        _autoSaveTimer.Stop();
+        _autoSaveTimer.Start();
+    }
+
+    private void AutoSaveTask()
+    {
+        if (_loadingSettings) return;
+        var name = NameBox.Text.Trim();
+        if (string.IsNullOrEmpty(name)) return;
+        if (!TryParseColor(ColorBox.Text, out var color)) return;
+        if (!TryComposeDateTime(EndDatePicker, EndHourBox, EndMinuteBox, out _)) return;
+
+        var gif = GifBox.Text.Trim();
+        var position = (TaskPositionBox.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? "";
+        var type = SelectedType();
+        DateTimeOffset? start = null;
+        RecurrenceDto? recurrence = null;
+        if (type == "scheduled")
+        {
+            if (TryComposeDateTime(StartDatePicker, StartHourBox, StartMinuteBox, out var s))
+            {
+                recurrence = CollectRecurrence();
+                start = s;
+            }
+        }
+
+        var dto = new TaskDto
+        {
+            Id = _editingId ?? Guid.NewGuid().ToString(),
+            Name = name,
+            Type = type,
+            Color = color,
+            Gif = string.IsNullOrEmpty(gif) ? null : gif,
+            ImageMaxSize = (int)ImageMaxSizeBox.Value,
+            Position = position,
+            StartAt = start,
+            EndAt = TryComposeDateTime(EndDatePicker, EndHourBox, EndMinuteBox, out var end) ? end : default,
+            ExpiredBehaviors = CollectTaskBehaviors(),
+            Recurrence = recurrence,
+        };
+
+        if (!_ipc.IsConnected)
+        {
+            StatusText.Text = "未连接到核心进程，无法保存";
             return;
-        int barH = (int)BarHeightBox.Value;
-        PreviewTrack.Height = barH;
-        PreviewFill.Height = barH;
-
-        if (TryParseColor(ColorBox.Text, out var hex))
-            PreviewFill.Background = new SolidColorBrush(HexToColor(hex));
-
-        double percent = ComputePreviewPercent(out var endAt, out var timeValid);
-        double trackW = PreviewTrack.ActualWidth;
-        if (trackW > 0)
-            PreviewFill.Width = Math.Max(0, trackW * percent / 100.0);
-
-        int maxSize = (int)ImageMaxSizeBox.Value;
-        PreviewImageCanvas.Height = maxSize;
-
-        var path = GifBox.Text.Trim();
-        bool pathUsable = !string.IsNullOrEmpty(path) && File.Exists(path);
-
-        // 路径/尺寸变化时释放旧的图片精灵，避免资源泄漏或旧尺寸残留。
-        if (_previewSprite != null &&
-            (_previewSpritePath != path || _previewSpriteMaxSize != maxSize || !pathUsable))
-        {
-            PreviewImageCanvas.Children.Remove(_previewSprite.Element);
-            _previewSprite.Dispose();
-            _previewSprite = null;
-            _previewSpritePath = null;
         }
 
-        if (pathUsable && _previewSprite == null)
-        {
-            try
-            {
-                _previewSprite = new ImageSprite(path, maxSize);
-                _previewSpritePath = path;
-                _previewSpriteMaxSize = maxSize;
-                PreviewImageCanvas.Children.Add(_previewSprite.Element);
-            }
-            catch { _previewSprite = null; _previewSpritePath = null; }
-        }
-
-        if (trackW > 0 && _previewSprite != null)
-        {
-            double imgW = _previewSprite.Width;
-            double frontX = trackW * percent / 100.0;
-            // 图片中心对齐进度前沿；到右边界时停止跟随，避免图片超出画布。
-            double left = frontX - imgW / 2.0;
-            double maxLeft = trackW - imgW;
-            if (left > maxLeft) left = maxLeft;
-            Canvas.SetLeft(_previewSprite.Element, left);
-            Canvas.SetTop(_previewSprite.Element, 0);
-        }
-
-        if (!timeValid)
-            PreviewStatus.Text = "请填写有效的截止（及开始）时间以预览完成度";
-        else
-            PreviewStatus.Text = $"{percent:0.#}%　{FormatCountdown(endAt)}";
-    }
-
-    /// <summary>与 Headless task.Percent 一致：墙钟实时；循环任务取当前发生窗口。</summary>
-    private double ComputePreviewPercent(out DateTimeOffset endAt, out bool valid)
-    {
-        valid = false;
-        endAt = default;
-        if (!TryComposeDateTime(EndDatePicker, EndHourBox, EndMinuteBox, out var endFull))
-            return 0;
-
-        var now = DateTimeOffset.Now;
-
-        if (SelectedType() == "scheduled")
-        {
-            if (!TryComposeDateTime(StartDatePicker, StartHourBox, StartMinuteBox, out var startFull))
-                return 0;
-
-            var rec = CollectRecurrence();
-            if (rec != null)
-            {
-                valid = true;
-                if (TryRecurrenceWindow(startFull.LocalDateTime, endFull.LocalDateTime, rec, now.LocalDateTime,
-                        out var ws, out var we))
-                {
-                    endAt = new DateTimeOffset(we, now.Offset);
-                    if (now.LocalDateTime >= we) return 100;
-                    var span = (we - ws).TotalSeconds;
-                    return span <= 0 ? 100 : Math.Clamp((now.LocalDateTime - ws).TotalSeconds / span * 100.0, 0, 100);
-                }
-                endAt = endFull; // 尚未到首个发生窗口
-                return 0;
-            }
-
-            valid = true;
-            endAt = endFull;
-            if (now >= endFull) return 100;
-            var total = (endFull - startFull).TotalSeconds;
-            return total <= 0 ? 100 : Math.Clamp((now - startFull).TotalSeconds / total * 100.0, 0, 100);
-        }
-
-        valid = true;
-        endAt = endFull;
-        if (now >= endFull) return 100;
-        var t = (endFull - _taskCreatedAt).TotalSeconds;
-        return t <= 0 ? 100 : Math.Clamp((now - _taskCreatedAt).TotalSeconds / t * 100.0, 0, 100);
-    }
-
-    // C# 端镜像 Go task.windowAt：返回与 now 相关的当前发生窗口（仅用于预览）。
-    private static bool TryRecurrenceWindow(DateTime start, DateTime end, RecurrenceDto rec, DateTime now,
-        out DateTime ws, out DateTime we)
-    {
-        ws = default; we = default;
-        var startTOD = start.TimeOfDay;
-        var endTOD = end.TimeOfDay;
-        var anchor = start.Date;
-        int maxBack = rec.Mode == "everyN" ? Math.Min(Math.Max(8, rec.Interval + 1), 400) : 8;
-        var d0 = now.Date;
-        for (int i = 0; i <= maxBack; i++)
-        {
-            var d = d0.AddDays(-i);
-            if (d < anchor) break;
-            if (!IsOccurrenceDay(rec, anchor, d)) continue;
-            var s = d + startTOD;
-            var e = endTOD > startTOD ? d + endTOD : d.AddDays(1) + endTOD;
-            if (s <= now) { ws = s; we = e; return true; }
-        }
-        return false;
-    }
-
-    private static bool IsOccurrenceDay(RecurrenceDto rec, DateTime anchor, DateTime d)
-    {
-        if (d < anchor) return false;
-        switch (rec.Mode)
-        {
-            case "daily": return true;
-            case "everyN":
-                int n = rec.Interval < 1 ? 1 : rec.Interval;
-                int days = (int)Math.Round((d - anchor).TotalDays);
-                return days % n == 0;
-            case "weekly":
-                return rec.Weekdays != null && rec.Weekdays.Contains((int)d.DayOfWeek);
-            default: return false;
-        }
+        bool isNew = _editingId == null;
+        _ipc.Send(new Command { Action = isNew ? "createTask" : "updateTask", Task = dto });
+        _ipc.Send(new Command { Action = "listTasks" });
+        StatusText.Text = isNew ? "已创建" : "已更新";
+        _editingId = dto.Id;
     }
 
     private static string FormatCountdown(DateTimeOffset endAt)
@@ -1020,8 +847,7 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
     protected override void OnClosing(CancelEventArgs e)
     {
         DesktopLog.Info("ConfigWindow OnClosing: hide to tray");
-        _previewTimer.Stop();
-        _previewGifTimer.Stop();
+        _autoSaveTimer.Stop();
         Wpf.Ui.Appearance.SystemThemeWatcher.UnWatch(this);
         // 关闭窗口仅隐藏到托盘，不退出进程（文档 §5.3）。
         e.Cancel = true;
