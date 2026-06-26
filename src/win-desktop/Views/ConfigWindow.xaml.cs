@@ -78,6 +78,8 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
         ShowConfigAtRuntimeCheck.Unchecked += OnSettingsControlChanged;
         BarPositionBox.SelectionChanged += OnSettingsSelectionChanged;
         BarDirectionBox.SelectionChanged += OnSettingsSelectionChanged;
+        AllFourCheck.Checked += OnSettingsControlChanged;
+        AllFourCheck.Unchecked += OnSettingsControlChanged;
         AdvancedPositionCheck.Checked += OnSettingsControlChanged;
         AdvancedPositionCheck.Unchecked += OnSettingsControlChanged;
         AdvancedPositionCheck.Checked += OnAdvancedPositionChanged;
@@ -166,6 +168,7 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
             TaskPositionRow.Visibility = s.AdvancedPosition ? Visibility.Visible : Visibility.Collapsed;
             UpdateDirectionOptions(s.BarPosition);
             SelectComboByTag(BarDirectionBox, s.BarDirection);
+            AllFourCheck.IsChecked = s.AllFour;
             _loadingSettings = false;
             DesktopLog.Info("ConfigWindow.OnSettingsReceived applied to UI");
             UpdatePreview();
@@ -213,6 +216,7 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
         _settings.BarPosition = (BarPositionBox.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? "top";
         _settings.BarDirection = (BarDirectionBox.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? "";
         _settings.AdvancedPosition = AdvancedPositionCheck.IsChecked == true;
+        _settings.AllFour = AllFourCheck.IsChecked == true;
         var rect = SystemParameters.WorkArea;
         _settings.ScreenWidth = rect.Width;
         _settings.ScreenHeight = rect.Height;
@@ -248,10 +252,6 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
                 BarDirectionBox.Items.Add(new ComboBoxItem { Content = "从上到下", Tag = "forward" });
                 BarDirectionBox.Items.Add(new ComboBoxItem { Content = "从下到上", Tag = "reverse" });
                 break;
-            case "allFour":
-                BarDirectionBox.Items.Add(new ComboBoxItem { Content = "顺时针", Tag = "clockwise" });
-                BarDirectionBox.Items.Add(new ComboBoxItem { Content = "逆时针", Tag = "counterClockwise" });
-                break;
             default: // top / bottom
                 BarDirectionBox.Items.Add(new ComboBoxItem { Content = "从左到右", Tag = "forward" });
                 BarDirectionBox.Items.Add(new ComboBoxItem { Content = "从右到左", Tag = "reverse" });
@@ -261,6 +261,8 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
         SelectComboByTag(BarDirectionBox, selectedTag);
         if (BarDirectionBox.SelectedItem == null) SelectComboByTag(BarDirectionBox, "");
     }
+
+    private void OnAllFourChanged(object sender, RoutedEventArgs e) => CommitSettings();
 
     private void OnBarPositionChanged(object sender, SelectionChangedEventArgs e)
     {

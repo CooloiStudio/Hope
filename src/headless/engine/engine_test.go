@@ -36,8 +36,8 @@ func TestBuildAllFourLayoutClockwise(t *testing.T) {
 	tasks := []*task.Task{makeTask("t1", now, start, end)}
 	behaviorsOf := func(*task.Task) []string { return nil }
 
-	// 使用 1920x1080 工作区验证：周长 6000，20% -> x=1200，落在顶边。
-	segs := buildAllFourLayout(tasks, now, behaviorsOf, "clockwise", 1920, 1080)
+	// 1920x1080：周长 6000，20% -> x=1200，落在顶边（顺时针 top->right->bottom->left）。
+	segs := buildAllFourLayout(tasks, now, behaviorsOf, "top", "forward", 1920, 1080)
 	if len(segs) != 1 {
 		t.Fatalf("expected 1 segment for 20%% task, got %d", len(segs))
 	}
@@ -52,6 +52,9 @@ func TestBuildAllFourLayoutClockwise(t *testing.T) {
 	if s.Gif == "" {
 		t.Errorf("active edge should carry the task gif")
 	}
+	if s.ImageRotation != 0 {
+		t.Errorf("top edge rotation should be 0, got %.1f", s.ImageRotation)
+	}
 }
 
 func TestBuildAllFourLayoutWrapsThreeSides(t *testing.T) {
@@ -62,17 +65,24 @@ func TestBuildAllFourLayoutWrapsThreeSides(t *testing.T) {
 	tasks := []*task.Task{makeTask("t1", now, start, end)}
 	behaviorsOf := func(*task.Task) []string { return nil }
 
-	// 1920x1080：周长 6000，85% -> x=5100 = 1920+1080+1920+180，落在右侧（顺时针顺序 top->left->bottom->right）。
-	segs := buildAllFourLayout(tasks, now, behaviorsOf, "clockwise", 1920, 1080)
+	// 1920x1080：周长 6000，85% -> x=5100 = 1920+1080+1920+180，落在左侧（顺时针顺序 top->right->bottom->left）。
+	segs := buildAllFourLayout(tasks, now, behaviorsOf, "top", "forward", 1920, 1080)
 	if len(segs) != 4 {
 		t.Fatalf("expected 4 segments for 85%% task, got %d", len(segs))
 	}
 
 	positions := []string{segs[0].Position, segs[1].Position, segs[2].Position, segs[3].Position}
-	want := []string{"top", "left", "bottom", "right"}
+	want := []string{"top", "right", "bottom", "left"}
 	for i, p := range want {
 		if positions[i] != p {
 			t.Errorf("segment %d position: want %s got %s", i, p, positions[i])
+		}
+	}
+
+	rotations := []float64{0, 90, 180, 270}
+	for i := 0; i < 4; i++ {
+		if segs[i].ImageRotation != rotations[i] {
+			t.Errorf("segment %d rotation: want %.1f got %.1f", i, rotations[i], segs[i].ImageRotation)
 		}
 	}
 
@@ -84,9 +94,9 @@ func TestBuildAllFourLayoutWrapsThreeSides(t *testing.T) {
 			t.Errorf("filled segment %d should not carry gif", i)
 		}
 	}
-	wantRight := 180.0 / 1080.0 * 100.0 // 16.7
-	if segs[3].BarEnd < wantRight-0.5 || segs[3].BarEnd > wantRight+0.5 || segs[3].FillEnd != segs[3].BarEnd {
-		t.Errorf("right segment: want end≈%.1f fill=end, got end=%.1f fill=%.1f", wantRight, segs[3].BarEnd, segs[3].FillEnd)
+	wantLeft := 180.0 / 1080.0 * 100.0 // 16.7
+	if segs[3].BarEnd < wantLeft-0.5 || segs[3].BarEnd > wantLeft+0.5 || segs[3].FillEnd != segs[3].BarEnd {
+		t.Errorf("left segment: want end≈%.1f fill=end, got end=%.1f fill=%.1f", wantLeft, segs[3].BarEnd, segs[3].FillEnd)
 	}
 	if segs[3].Gif == "" {
 		t.Errorf("active edge should carry the task gif")
@@ -96,23 +106,47 @@ func TestBuildAllFourLayoutWrapsThreeSides(t *testing.T) {
 func TestBuildAllFourLayoutCounterClockwise(t *testing.T) {
 	start := mustTime("2026-06-25T08:00:00+08:00")
 	end := mustTime("2026-06-25T18:00:00+08:00")
-	now := mustTime("2026-06-25T11:15:00+08:00") // 195min/600min = 32.5% -> x=1950，越过顶边进入逆时针的右侧
+	now := mustTime("2026-06-25T11:15:00+08:00") // 195min/600min = 32.5% -> x=1950，越过顶边进入逆时针的左侧
 
 	tasks := []*task.Task{makeTask("t1", now, start, end)}
 	behaviorsOf := func(*task.Task) []string { return nil }
 
-	segs := buildAllFourLayout(tasks, now, behaviorsOf, "counterClockwise", 1920, 1080)
+	segs := buildAllFourLayout(tasks, now, behaviorsOf, "top", "reverse", 1920, 1080)
 	if len(segs) != 2 {
 		t.Fatalf("expected 2 segments for 32.5%% counter-clockwise task, got %d", len(segs))
 	}
-	if segs[0].Position != "top" || segs[1].Position != "right" {
-		t.Errorf("expected top then right, got %s then %s", segs[0].Position, segs[1].Position)
+	if segs[0].Position != "top" || segs[1].Position != "left" {
+		t.Errorf("expected top then left, got %s then %s", segs[0].Position, segs[1].Position)
 	}
 	if segs[0].BarEnd != 100 || segs[0].Gif != "" {
 		t.Errorf("top segment should be filled without gif")
 	}
 	if segs[1].Gif == "" {
-		t.Errorf("right active segment should carry gif")
+		t.Errorf("left active segment should carry gif")
+	}
+	if segs[1].ImageRotation != 90 {
+		t.Errorf("left edge rotation should be 90, got %.1f", segs[1].ImageRotation)
+	}
+}
+
+func TestBuildAllFourLayoutFromBottom(t *testing.T) {
+	start := mustTime("2026-06-25T08:00:00+08:00")
+	end := mustTime("2026-06-25T18:00:00+08:00")
+	now := mustTime("2026-06-25T11:00:00+08:00") // 30% -> x=1800，落在底边
+
+	tasks := []*task.Task{makeTask("t1", now, start, end)}
+	behaviorsOf := func(*task.Task) []string { return nil }
+
+	// bottom + forward => counter-clockwise, order = bottom -> right -> top -> left
+	segs := buildAllFourLayout(tasks, now, behaviorsOf, "bottom", "forward", 1920, 1080)
+	if len(segs) != 1 {
+		t.Fatalf("expected 1 segment, got %d", len(segs))
+	}
+	if segs[0].Position != "bottom" {
+		t.Errorf("expected position bottom, got %s", segs[0].Position)
+	}
+	if segs[0].ImageRotation != 0 {
+		t.Errorf("bottom edge rotation should be 0, got %.1f", segs[0].ImageRotation)
 	}
 }
 

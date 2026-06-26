@@ -153,28 +153,30 @@
                             <TextBlock Text="进度条位置" Margin="0,12,0,2" />
                             <ComboBox x:Name="BarPositionBox" HorizontalAlignment="Stretch"
                                       SelectionChanged="OnBarPositionChanged"
-                                      ToolTip="进度条在屏幕上的位置；高级设置中可选择四边模式">
+                                      ToolTip="进度条在屏幕上的位置">
                                 <ComboBoxItem Content="屏幕顶边" Tag="top" IsSelected="True" />
                                 <ComboBoxItem Content="屏幕底边" Tag="bottom" />
                                 <ComboBoxItem Content="屏幕左边" Tag="left" />
                                 <ComboBoxItem Content="屏幕右边" Tag="right" />
-                                <ComboBoxItem Content="四边环绕（高级）" Tag="allFour" />
+                            </ComboBox>
+
+                            <TextBlock Text="进度条方向" Margin="0,12,0,2" />
+                            <ComboBox x:Name="BarDirectionBox" HorizontalAlignment="Stretch"
+                                      SelectionChanged="OnBarDirectionChanged"
+                                      ToolTip="根据位置自动选择默认方向；可手动覆盖">
+                                <ComboBoxItem Content="默认" Tag="" IsSelected="True" />
+                                <ComboBoxItem Content="从左到右" Tag="forward" />
+                                <ComboBoxItem Content="从右到左" Tag="reverse" />
+                                <ComboBoxItem Content="从上到下" Tag="forward" />
+                                <ComboBoxItem Content="从下到上" Tag="reverse" />
                             </ComboBox>
 
                             <Expander x:Name="AdvancedSettingsExpander" Header="高级设置" Margin="0,12,0,0">
                                 <StackPanel Margin="0,4,0,0">
-                                    <TextBlock Text="进度条方向" Margin="0,6,0,2" />
-                                    <ComboBox x:Name="BarDirectionBox" HorizontalAlignment="Stretch"
-                                              SelectionChanged="OnBarDirectionChanged"
-                                              ToolTip="根据位置自动选择默认方向；可手动覆盖">
-                                        <ComboBoxItem Content="默认" Tag="" IsSelected="True" />
-                                        <ComboBoxItem Content="从左到右" Tag="forward" />
-                                        <ComboBoxItem Content="从右到左" Tag="reverse" />
-                                        <ComboBoxItem Content="从上到下" Tag="forward" />
-                                        <ComboBoxItem Content="从下到上" Tag="reverse" />
-                                        <ComboBoxItem Content="顺时针" Tag="clockwise" />
-                                        <ComboBoxItem Content="逆时针" Tag="counterClockwise" />
-                                    </ComboBox>
+                                    <CheckBox x:Name="AllFourCheck" Content="我全都要（四边环绕）"
+                                              Margin="0,6,0,0"
+                                              Checked="OnAllFourChanged" Unchecked="OnAllFourChanged"
+                                              ToolTip="从当前位置出发，沿当前方向环绕屏幕四边" />
 
                                     <CheckBox x:Name="AdvancedPositionCheck" Content="允许为单个任务指定展示位置"
                                               Margin="0,12,0,0"

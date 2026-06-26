@@ -39,10 +39,9 @@ func (e *Engine) ComputeState() ipc.State {
 	behaviorsOf := func(t *task.Task) []string { return effectiveBehaviors(t, settings) }
 
 	var segments []task.Segment
-	switch settings.BarPosition {
-	case "allFour":
-		segments = buildAllFourLayout(tasks, now, behaviorsOf, settings.BarDirection, settings.ScreenWidth, settings.ScreenHeight)
-	default:
+	if settings.AllFour {
+		segments = buildAllFourLayout(tasks, now, behaviorsOf, settings.BarPosition, settings.BarDirection, settings.ScreenWidth, settings.ScreenHeight)
+	} else {
 		positions := collectPositions(tasks, settings)
 		for _, pos := range positions {
 			group := filterTasksByPosition(tasks, pos, settings.BarPosition, settings.AdvancedPosition)
@@ -152,18 +151,21 @@ func filterTasksByPosition(tasks []*task.Task, position, globalPosition string, 
 }
 
 // buildAllFourLayout 将每个任务的进度按屏幕物理周长映射到四边。
+// startPos 为 BarPosition（用户选择的基础位置），baseDir 为 BarDirection（forward/reverse）。
+// 四边环绕顺序由 derive(startPos, baseDir) 决定：
+//   - 顺时针：top(左->右) -> right(上->下) -> bottom(右->左) -> left(下->上)
+//   - 逆时针：top(左->右) -> left(下->上) -> bottom(右->左) -> right(上->下)
 // 已填满的边生成满段，当前活跃边生成部分填充段并挂载图片；未到达的边不生成。
-func buildAllFourLayout(tasks []*task.Task, now time.Time, behaviorsOf func(*task.Task) []string, direction string, screenWidth, screenHeight float64) []task.Segment {
+// 图片旋转角度 = 从起始边到当前活跃边沿环绕方向经过的边数 * 90（顺时针正，逆时针负）。
+func buildAllFourLayout(tasks []*task.Task, now time.Time, behaviorsOf func(*task.Task) []string, startPos, baseDir string, screenWidth, screenHeight float64) []task.Segment {
 	if screenWidth <= 0 || screenHeight <= 0 {
 		// 桌面端尚未上报尺寸时，使用常见 16:9 默认值作为降级，避免完全无法渲染。
 		screenWidth, screenHeight = 1920, 1080
 	}
 
-	// 用户定义的“顺时针”顺序：top -> left -> bottom -> right。
-	clockwise := []string{"top", "left", "bottom", "right"}
-	counterClockwise := []string{"top", "right", "bottom", "left"}
+	clockwise, counterClockwise := deriveAllFourOrders(startPos)
 	sides := clockwise
-	if direction == "counterClockwise" {
+	if baseDir == "reverse" {
 		sides = counterClockwise
 	}
 
@@ -226,20 +228,22 @@ func buildAllFourLayout(tasks []*task.Task, now time.Time, behaviorsOf func(*tas
 					localEnd = 100
 				}
 			}
+			rotation := rotationForSide(sides, startPos, i)
 			seg := task.Segment{
-				TaskID:       t.ID,
-				Name:         t.Name,
-				Color:        t.Color,
-				Gif:          "", // 非活跃边不挂图片
-				ImageMaxSize: t.ImageMaxSize,
-				BarStart:     round1(localStart),
-				BarEnd:       round1(localEnd),
-				Percent:      round1(localEnd),
-				FillEnd:      round1(localEnd),
-				EndAt:        endAt,
-				Expired:      expired,
-				Behaviors:    bs,
-				Position:     pos,
+				TaskID:        t.ID,
+				Name:          t.Name,
+				Color:         t.Color,
+				Gif:           "", // 非活跃边不挂图片
+				ImageMaxSize:  t.ImageMaxSize,
+				BarStart:      round1(localStart),
+				BarEnd:        round1(localEnd),
+				Percent:       round1(localEnd),
+				FillEnd:       round1(localEnd),
+				EndAt:         endAt,
+				Expired:       expired,
+				Behaviors:     bs,
+				Position:      pos,
+				ImageRotation: rotation,
 			}
 			if isActive {
 				seg.Gif = t.Gif
@@ -248,6 +252,48 @@ func buildAllFourLayout(tasks []*task.Task, now time.Time, behaviorsOf func(*tas
 		}
 	}
 	return out
+}
+
+// deriveAllFourOrders 返回以 startPos 为起点的顺时针与逆时针四边序列。
+// 顺时针顺序：top -> right -> bottom -> left；以 startPos 为起点旋转得到。
+// 逆时针顺序：top -> left -> bottom -> right；以 startPos 为起点旋转得到。
+func deriveAllFourOrders(startPos string) (clockwise, counterClockwise []string) {
+	cwBase := []string{"top", "right", "bottom", "left"}
+	ccwBase := []string{"top", "left", "bottom", "right"}
+	idx := -1
+	for i, p := range cwBase {
+		if p == startPos {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		idx = 0
+	}
+	rotate := func(base []string, offset int) []string {
+		out := make([]string, 4)
+		for i := 0; i < 4; i++ {
+			out[i] = base[(i+offset)%4]
+		}
+		return out
+	}
+	return rotate(cwBase, idx), rotate(ccwBase, idx)
+}
+
+// rotationForSide 返回从起始边 startPos 沿 sides 顺序到 sides[idx] 所对应的图片旋转角度（度）。
+func rotationForSide(sides []string, startPos string, idx int) float64 {
+	startIdx := -1
+	for i, p := range sides {
+		if p == startPos {
+			startIdx = i
+			break
+		}
+	}
+	if startIdx < 0 {
+		startIdx = 0
+	}
+	steps := (idx - startIdx + 4) % 4
+	return float64(steps * 90)
 }
 
 func clamp(v, lo, hi float64) float64 {

@@ -10,9 +10,10 @@ using WpfImage = System.Windows.Controls.Image;
 namespace Hope.Desktop.Overlay;
 
 /// <summary>
-/// 一张挂在进度条下方、跟随进度前沿移动的图片精灵。
+/// 一张挂在进度条旁边、跟随进度前沿移动的图片精灵。
 /// 支持任意图片格式；多帧动图（动画 GIF 等）由 ImageAnimator 驱动逐帧循环播放，
 /// 每帧转换为 WPF 可显示的 BitmapSource。
+/// 统一按高度限制尺寸，可通过 RotateTransform 旋转。
 /// </summary>
 public sealed class ImageSprite : IDisposable
 {
@@ -20,8 +21,7 @@ public sealed class ImageSprite : IDisposable
     public string Path { get; }
     public double Width { get; }
     public double Height { get; }
-    public double MaxHeight { get; }
-    public bool LimitWidth { get; }
+    public double MaxSize { get; }
 
     private readonly Bitmap _bitmap;
     private readonly MemoryStream _stream;
@@ -29,22 +29,18 @@ public sealed class ImageSprite : IDisposable
     private readonly bool _animating;
     private bool _disposed;
 
-    public ImageSprite(string path, double maxSize, bool limitWidth = false)
+    public ImageSprite(string path, double maxSize)
     {
         Path = path;
-        LimitWidth = limitWidth;
-        MaxHeight = limitWidth ? 0 : maxSize;
+        MaxSize = maxSize;
         // 将图片完整读入内存后再交给 GDI+：避免锁定原文件，防止更换图片时因句柄占用导致加载失败。
         var bytes = File.ReadAllBytes(path);
         _stream = new MemoryStream(bytes);
         _bitmap = (Bitmap)DrawingImage.FromStream(_stream);
 
-        // 仅当尺寸超过上限时等比缩小；否则保持原始尺寸。
-        // 水平边限制高度，垂直边限制宽度。
+        // 统一按高度限制尺寸，保持原始宽高比。
         double scale = 1.0;
-        if (limitWidth && _bitmap.Width > maxSize && _bitmap.Width > 0)
-            scale = maxSize / _bitmap.Width;
-        else if (!limitWidth && _bitmap.Height > maxSize && _bitmap.Height > 0)
+        if (_bitmap.Height > maxSize && _bitmap.Height > 0)
             scale = maxSize / _bitmap.Height;
 
         Height = Math.Max(1, _bitmap.Height * scale);
@@ -56,6 +52,8 @@ public sealed class ImageSprite : IDisposable
             Height = Height,
             IsHitTestVisible = false,
             Stretch = System.Windows.Media.Stretch.Fill,
+            RenderTransformOrigin = new System.Windows.Point(0.5, 0.5),
+            RenderTransform = new RotateTransform(0),
         };
 
         // 多帧图片（动画 GIF / 多帧 TIFF 等）才需要逐帧推进。
@@ -65,6 +63,16 @@ public sealed class ImageSprite : IDisposable
             _animating = true;
         }
         Render();
+    }
+
+    /// <summary>设置图片旋转角度（度）与旋转中心（相对于元素自身的比例坐标，默认 0.5,0.5）。</summary>
+    public void SetRotation(double angle, double centerX = 0.5, double centerY = 0.5)
+    {
+        Element.RenderTransformOrigin = new System.Windows.Point(centerX, centerY);
+        if (Element.RenderTransform is RotateTransform rt)
+            rt.Angle = angle;
+        else
+            Element.RenderTransform = new RotateTransform(angle);
     }
 
     /// <summary>动图：推进到当前时间对应的帧并刷新显示。静态图无操作。</summary>

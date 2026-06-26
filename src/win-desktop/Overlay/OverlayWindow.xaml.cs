@@ -189,12 +189,11 @@ public partial class OverlayWindow : Window
 
         var wanted = _segments.Where(s => ImageSprite.IsUsable(s.Gif)).ToList();
 
-        // 移除已不需要、路径变更、最大尺寸变更或方向变更（限制宽度/高度）的精灵
+        // 移除已不需要、路径变更或最大尺寸变更的精灵
         foreach (var id in _sprites.Keys.ToList())
         {
             var seg = wanted.FirstOrDefault(s => s.TaskId == id);
-            bool needLimitWidth = IsVertical;
-            if (seg == null || seg.Gif != _sprites[id].Path || seg.ImageMaxSize != _sprites[id].MaxHeight || needLimitWidth != _sprites[id].LimitWidth)
+            if (seg == null || seg.Gif != _sprites[id].Path || seg.ImageMaxSize != _sprites[id].MaxSize)
             {
                 GifCanvas.Children.Remove(_sprites[id].Element);
                 _sprites[id].Dispose();
@@ -204,6 +203,16 @@ public partial class OverlayWindow : Window
 
         double w = Width;
         double h = Height;
+        // 旋转中心比例（相对于图片自身尺寸）
+        double cx = 0.5, cy = 0.5;
+        switch (Position)
+        {
+            case PositionTop:    cx = 0.5; cy = 0; break;
+            case PositionBottom: cx = 0.5; cy = 1; break;
+            case PositionLeft:   cx = 0;   cy = 0.5; break;
+            case PositionRight:  cx = 1;   cy = 0.5; break;
+        }
+
         foreach (var seg in wanted)
         {
             if (!_sprites.TryGetValue(seg.TaskId, out var sprite))
@@ -211,7 +220,7 @@ public partial class OverlayWindow : Window
                 try
                 {
                     var maxSize = seg.ImageMaxSize > 0 ? seg.ImageMaxSize : 15;
-                    sprite = new ImageSprite(seg.Gif!, maxSize, IsVertical);
+                    sprite = new ImageSprite(seg.Gif!, maxSize);
                 }
                 catch
                 {
@@ -221,29 +230,30 @@ public partial class OverlayWindow : Window
                 GifCanvas.Children.Add(sprite.Element);
             }
 
+            // 设置旋转中心和角度
+            sprite.SetRotation(seg.ImageRotation, cx, cy);
+
             double localFill = IsReverse ? 100.0 - seg.FillEnd : seg.FillEnd;
             double front = localFill / 100.0 * (IsVertical ? h : w);
 
+            double left, top;
             if (IsVertical)
             {
-                // 进度条在左/右边缘，图片在进度条内侧（朝屏幕中心）。
-                double top = front - sprite.Height / 2.0;
-                double maxTop = h - sprite.Height;
-                if (top > maxTop) top = maxTop;
-                double left = Position == PositionLeft ? _barHeightPx : 0;
-                Canvas.SetLeft(sprite.Element, left);
-                Canvas.SetTop(sprite.Element, top);
+                left = Position == PositionLeft ? _barHeightPx : 0;
+                top = front - sprite.Height * cy;
+                if (top < 0) top = 0;
+                if (top > h - sprite.Height) top = h - sprite.Height;
             }
             else
             {
-                // 进度条在顶/底边缘，图片在进度条内侧（朝屏幕中心）。
-                double left = front - sprite.Width / 2.0;
-                double maxLeft = w - sprite.Width;
-                if (left > maxLeft) left = maxLeft;
-                double top = Position == PositionTop ? _barHeightPx : 0;
-                Canvas.SetLeft(sprite.Element, left);
-                Canvas.SetTop(sprite.Element, top);
+                left = front - sprite.Width * cx;
+                if (left < 0) left = 0;
+                if (left > w - sprite.Width) left = w - sprite.Width;
+                top = Position == PositionTop ? _barHeightPx : 0;
             }
+
+            Canvas.SetLeft(sprite.Element, left);
+            Canvas.SetTop(sprite.Element, top);
         }
     }
 

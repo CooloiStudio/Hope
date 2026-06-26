@@ -27,13 +27,15 @@ type Settings struct {
 	Autostart           bool     `json:"autostart"`
 	ShowConfigAtRuntime bool     `json:"showConfigAtRuntime"`
 	Language            string   `json:"language"`
-	// BarPosition 全局进度条位置：top / bottom / left / right / allFour（默认 top）。
+	// BarPosition 全局进度条位置：top / bottom / left / right（默认 top）。
 	BarPosition string `json:"barPosition"`
-	// BarDirection 全局进度条方向：forward / reverse / clockwise / counterClockwise。
-	// 在 top/bottom 时默认 forward；在 left/right 时默认 forward；在 allFour 时默认 clockwise。
+	// BarDirection 全局进度条方向：forward / reverse。
+	// 在 top/bottom 时默认 forward（水平从左到右/从右到左）；在 left/right 时默认 forward（垂直从上到下/从下到上）。
 	BarDirection string `json:"barDirection"`
 	// AdvancedPosition 为 true 时允许为单个任务指定展示位置（在高级设置中开启）。
 	AdvancedPosition bool `json:"advancedPosition"`
+	// AllFour 为 true 时启用四边环绕（我全都要）。从 BarPosition 出发沿 BarDirection 方向环绕。
+	AllFour bool `json:"allFour"`
 	// ScreenWidth 主屏幕工作区宽度（像素），四边模式下用于计算物理周长。
 	ScreenWidth float64 `json:"screenWidth"`
 	// ScreenHeight 主屏幕工作区高度（像素），四边模式下用于计算物理周长。
@@ -55,6 +57,7 @@ func DefaultSettings() Settings {
 		BarPosition:         "top",
 		BarDirection:        "forward",
 		AdvancedPosition:    false,
+		AllFour:             false,
 		ScreenWidth:         0,
 		ScreenHeight:        0,
 	}
@@ -139,6 +142,13 @@ func mergeSettings(def, loaded Settings) Settings {
 	out.Autostart = loaded.Autostart
 	out.ShowConfigAtRuntime = loaded.ShowConfigAtRuntime
 	out.AdvancedPosition = loaded.AdvancedPosition
+	out.AllFour = loaded.AllFour
+	// 兼容旧版 BarPosition="allFour"：迁移为 top + AllFour=true
+	// 必须在读取 loaded.AllFour 之后执行，以确保旧配置（无 AllFour 字段）能正确迁移。
+	if out.BarPosition == "allFour" {
+		out.BarPosition = "top"
+		out.AllFour = true
+	}
 	if loaded.ScreenWidth > 0 {
 		out.ScreenWidth = loaded.ScreenWidth
 	}

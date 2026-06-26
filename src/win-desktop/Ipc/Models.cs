@@ -28,6 +28,7 @@ public sealed class Segment
     [JsonPropertyName("expired")] public bool Expired { get; set; }
     [JsonPropertyName("behaviors")] public List<string>? Behaviors { get; set; }
     [JsonPropertyName("position")] public string Position { get; set; } = "";
+    [JsonPropertyName("imageRotation")] public double ImageRotation { get; set; }
 }
 
 /// <summary>任务到期一次性事件（供 notify 等一次性提醒；keep/blink/hide 由 Segment 持续驱动）。</summary>
@@ -91,6 +92,7 @@ public sealed class SettingsDto
     [JsonPropertyName("barPosition")] public string BarPosition { get; set; } = "top";
     [JsonPropertyName("barDirection")] public string BarDirection { get; set; } = "forward";
     [JsonPropertyName("advancedPosition")] public bool AdvancedPosition { get; set; }
+    [JsonPropertyName("allFour")] public bool AllFour { get; set; }
     [JsonPropertyName("screenWidth")] public double ScreenWidth { get; set; }
     [JsonPropertyName("screenHeight")] public double ScreenHeight { get; set; }
 }

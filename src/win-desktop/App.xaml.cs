@@ -22,7 +22,7 @@ public partial class App : Application
     private readonly Dictionary<string, OverlayWindow> _overlays = new();
     private string _currentBarPosition = OverlayWindow.PositionTop;
     private string _currentBarDirection = "forward";
-    private HeadlessSupervisor _supervisor = null!;
+    private bool _allFour;    private HeadlessSupervisor _supervisor = null!;
     private NotifyIcon? _tray;
     private ConfigWindow? _config;
 
@@ -55,7 +55,7 @@ public partial class App : Application
         _supervisor = new HeadlessSupervisor();
         _supervisor.Start();
 
-        EnsureOverlays(_currentBarPosition, _currentBarDirection);
+        EnsureOverlays();
 
         _ipc = new IpcClient();
         _ipc.StateReceived += OnStateReceived;
@@ -101,7 +101,8 @@ public partial class App : Application
             _barHeightPx = Math.Clamp(s.BarHeightPx, 1, 10);
             _currentBarPosition = string.IsNullOrWhiteSpace(s.BarPosition) ? OverlayWindow.PositionTop : s.BarPosition;
             _currentBarDirection = s.BarDirection ?? "";
-            EnsureOverlays(_currentBarPosition, _currentBarDirection);
+            _allFour = s.AllFour;
+            EnsureOverlays();
             if (!_startupConfigHandled)
             {
                 _startupConfigHandled = true;
@@ -116,10 +117,9 @@ public partial class App : Application
         {
             var all = msg.Segments ?? new List<Segment>();
             bool celebrate = IsCelebrateActive(all);
-            string effectivePosition = celebrate ? "allFour" : _currentBarPosition;
-            string effectiveDirection = celebrate ? "clockwise" : _currentBarDirection;
-            EnsureOverlays(effectivePosition, effectiveDirection);
-            DispatchState(msg);
+            bool wantAllFour = _allFour || celebrate;
+            EnsureOverlays(wantAllFour);
+            DispatchState(msg, celebrate);
             if (msg.Expired != null)
                 foreach (var ev in msg.Expired) HandleExpired(ev);
         });
@@ -128,11 +128,12 @@ public partial class App : Application
     private static bool IsCelebrateActive(List<Segment> segments) =>
         segments.Any(s => s.Expired && s.Behaviors != null && s.Behaviors.Contains("celebrate"));
 
-    /// <summary>根据当前全局位置/方向确保创建或销毁对应 OverlayWindow；庆祝模式临时需要四边窗口。</summary>
-    private void EnsureOverlays(string position, string direction)
+    /// <summary>根据当前全局设置确保创建或销毁对应 OverlayWindow。</summary>
+    private void EnsureOverlays(bool? forceAllFour = null)
     {
+        bool allFour = forceAllFour ?? _allFour;
         var wanted = new HashSet<string>();
-        if (position == "allFour")
+        if (allFour)
         {
             wanted.Add(OverlayWindow.PositionTop);
             wanted.Add(OverlayWindow.PositionRight);
@@ -141,13 +142,8 @@ public partial class App : Application
         }
         else
         {
-            wanted.Add(position);
+            wanted.Add(_currentBarPosition);
         }
-
-        bool isAllFour = wanted.Count == 4;
-        string resolvedDirection = string.IsNullOrWhiteSpace(direction)
-            ? (isAllFour ? "clockwise" : "forward")
-            : direction;
 
         foreach (var pos in _overlays.Keys.ToList())
         {
@@ -165,36 +161,21 @@ public partial class App : Application
                 _overlays[pos] = new OverlayWindow
                 {
                     Position = pos,
-                    Direction = LocalDirectionFor(pos, resolvedDirection),
+                    Direction = LocalDirectionFor(pos),
                 };
             }
         }
     }
 
-    private static string LocalDirectionFor(string position, string globalDirection) => globalDirection switch
+    private string LocalDirectionFor(string position)
     {
-        "clockwise" => position switch
-        {
-            "top" => "forward",
-            "right" => "forward",
-            "bottom" => "reverse",
-            "left" => "reverse",
-            _ => "forward",
-        },
-        "counterClockwise" => position switch
-        {
-            "top" => "reverse",
-            "left" => "forward",
-            "bottom" => "forward",
-            "right" => "reverse",
-            _ => "forward",
-        },
-        _ => globalDirection,
-    };
+        if (_allFour) return "forward"; // 四边环绕时方向已编码到 Segment 中
+        return _currentBarDirection;
+    }
 
-    private void DispatchState(StateMessage msg)
+    private void DispatchState(StateMessage msg, bool celebrate)
     {
-        var all = ExpandForCelebrate(msg.Segments ?? new List<Segment>());
+        var all = celebrate && !_allFour ? ExpandForCelebrate(msg.Segments ?? new List<Segment>()) : (msg.Segments ?? new List<Segment>());
         var groups = all.GroupBy(s => string.IsNullOrWhiteSpace(s.Position) ? _currentBarPosition : s.Position)
                         .ToDictionary(g => g.Key, g => g.ToList());
 
@@ -214,7 +195,6 @@ public partial class App : Application
 
     private static List<Segment> ExpandForCelebrate(List<Segment> segments)
     {
-        if (!IsCelebrateActive(segments)) return segments;
         var expanded = new List<Segment>(segments.Count * 4);
         foreach (var s in segments)
         {
@@ -235,6 +215,7 @@ public partial class App : Application
                     Expired = s.Expired,
                     Behaviors = s.Behaviors,
                     Position = side,
+                    ImageRotation = s.ImageRotation,
                 });
             }
         }
