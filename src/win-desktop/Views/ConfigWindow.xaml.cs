@@ -58,19 +58,14 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
 
         PopulateTimeBoxes(StartHourBox, StartMinuteBox);
         PopulateTimeBoxes(EndHourBox, EndMinuteBox);
-        for (int i = 1; i <= 10; i++)
-        {
-            RefreshBox.Items.Add(i.ToString());
-            BarHeightBox.Items.Add(i.ToString());
-        }
         foreach (var chk in WeekdayChecks())
         {
             chk.Checked += (_, _) => UpdatePreview();
             chk.Unchecked += (_, _) => UpdatePreview();
         }
 
-        RefreshBox.SelectionChanged += OnSettingsSelectionChanged;
-        BarHeightBox.SelectionChanged += OnBarHeightBoxChanged;
+        RefreshBox.ValueChanged += OnSliderValueChanged;
+        BarHeightBox.ValueChanged += OnSliderValueChanged;
         GlobalModeBox.SelectionChanged += OnSettingsSelectionChanged;
         GlobalNotifyCheck.Checked += OnSettingsControlChanged;
         GlobalNotifyCheck.Unchecked += OnSettingsControlChanged;
@@ -145,8 +140,10 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
         {
             _settings = s;
             _loadingSettings = true;
-            RefreshBox.SelectedItem = Math.Clamp(s.RefreshSec, 1, 10).ToString();
-            BarHeightBox.SelectedItem = Math.Clamp(s.BarHeightPx, 1, 10).ToString();
+            RefreshBox.Value = Math.Clamp(s.RefreshSec, 1, 10);
+            BarHeightBox.Value = Math.Clamp(s.BarHeightPx, 1, 10);
+            RefreshValueText.Text = ((int)RefreshBox.Value).ToString();
+            BarHeightValueText.Text = ((int)BarHeightBox.Value).ToString();
             LoadBehaviors(s.ExpiredBehaviors, GlobalModeBox, GlobalNotifyCheck);
             AutostartCheck.IsChecked = s.Autostart;
             ShowConfigAtRuntimeCheck.IsChecked = s.ShowConfigAtRuntime;
@@ -156,15 +153,17 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
         });
     }
 
-    private void OnBarHeightBoxChanged(object sender, SelectionChangedEventArgs e)
-    {
-        UpdatePreview();
-        if (e.AddedItems.Count > 0) CommitSettings();
-    }
-
     private void OnSettingsSelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (e.AddedItems.Count > 0) CommitSettings();
+    }
+
+    private void OnSliderValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+    {
+        if (sender == RefreshBox) RefreshValueText.Text = ((int)RefreshBox.Value).ToString();
+        if (sender == BarHeightBox) BarHeightValueText.Text = ((int)BarHeightBox.Value).ToString();
+        UpdatePreview();
+        CommitSettings();
     }
 
     private void OnSettingsControlChanged(object sender, RoutedEventArgs e) => CommitSettings();
@@ -178,8 +177,8 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
             return;
         }
 
-        _settings.RefreshSec = ParseIntItem(RefreshBox, _settings.RefreshSec);
-        _settings.BarHeightPx = ParseIntItem(BarHeightBox, _settings.BarHeightPx);
+        _settings.RefreshSec = (int)RefreshBox.Value;
+        _settings.BarHeightPx = (int)BarHeightBox.Value;
         _settings.ExpiredBehaviors = CollectBehaviors(GlobalModeBox, GlobalNotifyCheck);
         _settings.Autostart = AutostartCheck.IsChecked == true;
         _settings.ShowConfigAtRuntime = ShowConfigAtRuntimeCheck.IsChecked == true;
@@ -646,7 +645,7 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
         // InitializeComponent 设置 ColorBox.Text 时会触发 TextChanged，此时预览控件尚未创建。
         if (!_previewReady || PreviewTrack == null || PreviewFill == null || PreviewStatus == null)
             return;
-        int barH = Math.Clamp(ParseIntItem(BarHeightBox, _settings.BarHeightPx), 1, 10);
+        int barH = (int)BarHeightBox.Value;
         PreviewTrack.Height = barH;
         PreviewFill.Height = barH;
 

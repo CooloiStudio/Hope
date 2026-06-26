@@ -112,10 +112,22 @@
                             <TextBlock Text="全局设置" FontWeight="Bold" Margin="0,0,0,8" />
 
                             <TextBlock Text="刷新间隔（秒，进度条更新频率）" Margin="0,6,0,2" />
-                            <ComboBox x:Name="RefreshBox" HorizontalAlignment="Stretch" />
+                            <DockPanel LastChildFill="True">
+                                <TextBlock x:Name="RefreshValueText" DockPanel.Dock="Right"
+                                           Width="20" TextAlignment="Center" VerticalAlignment="Center"
+                                           Margin="8,0,0,0" Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
+                                <Slider x:Name="RefreshBox" Minimum="1" Maximum="10" TickFrequency="1"
+                                        IsSnapToTickEnabled="True" VerticalAlignment="Center" />
+                            </DockPanel>
 
                             <TextBlock Text="进度条高度（px）" Margin="0,12,0,2" />
-                            <ComboBox x:Name="BarHeightBox" HorizontalAlignment="Stretch" />
+                            <DockPanel LastChildFill="True">
+                                <TextBlock x:Name="BarHeightValueText" DockPanel.Dock="Right"
+                                           Width="20" TextAlignment="Center" VerticalAlignment="Center"
+                                           Margin="8,0,0,0" Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
+                                <Slider x:Name="BarHeightBox" Minimum="1" Maximum="10" TickFrequency="1"
+                                        IsSnapToTickEnabled="True" VerticalAlignment="Center" />
+                            </DockPanel>
 
                             <TextBlock Text="任务到期后（默认值；新建任务自动同步）" Margin="0,12,0,2"
                                        TextWrapping="Wrap" />
