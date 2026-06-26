@@ -34,6 +34,10 @@ type Settings struct {
 	BarDirection string `json:"barDirection"`
 	// AdvancedPosition 为 true 时允许为单个任务指定展示位置（在高级设置中开启）。
 	AdvancedPosition bool `json:"advancedPosition"`
+	// ScreenWidth 主屏幕工作区宽度（像素），四边模式下用于计算物理周长。
+	ScreenWidth float64 `json:"screenWidth"`
+	// ScreenHeight 主屏幕工作区高度（像素），四边模式下用于计算物理周长。
+	ScreenHeight float64 `json:"screenHeight"`
 	// LegacyExpiredBehavior 兼容旧版单值字段，仅用于迁移读入，迁移后清空不再写出。
 	LegacyExpiredBehavior string `json:"expiredBehavior,omitempty"`
 }
@@ -51,6 +55,8 @@ func DefaultSettings() Settings {
 		BarPosition:         "top",
 		BarDirection:        "forward",
 		AdvancedPosition:    false,
+		ScreenWidth:         0,
+		ScreenHeight:        0,
 	}
 }
 
@@ -133,6 +139,12 @@ func mergeSettings(def, loaded Settings) Settings {
 	out.Autostart = loaded.Autostart
 	out.ShowConfigAtRuntime = loaded.ShowConfigAtRuntime
 	out.AdvancedPosition = loaded.AdvancedPosition
+	if loaded.ScreenWidth > 0 {
+		out.ScreenWidth = loaded.ScreenWidth
+	}
+	if loaded.ScreenHeight > 0 {
+		out.ScreenHeight = loaded.ScreenHeight
+	}
 	return out
 }
 

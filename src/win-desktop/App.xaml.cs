@@ -66,11 +66,29 @@ public partial class App : Application
         SetupTray();
     }
 
-    // 连接建立后拉取一次全局设置，使进度条高度等即时生效。
+    // 连接建立后拉取一次全局设置，使进度条高度等即时生效，并上报当前主屏幕工作区尺寸。
     private void OnConnectionChanged(bool connected)
     {
         DesktopLog.Info($"IPC connection changed connected={connected}");
-        if (connected) _ipc.Send(new Command { Action = "getSettings" });
+        if (connected)
+        {
+            _ipc.Send(new Command { Action = "getSettings" });
+            SendScreenSize();
+        }
+    }
+
+    private void SendScreenSize()
+    {
+        var rect = SystemParameters.WorkArea;
+        _ipc.Send(new Command
+        {
+            Action = "updateSettings",
+            Settings = new SettingsDto
+            {
+                ScreenWidth = rect.Width,
+                ScreenHeight = rect.Height
+            }
+        });
     }
 
     private bool _startupConfigHandled;
@@ -367,9 +385,12 @@ public partial class App : Application
 
     private void ShowAbout()
     {
+        var v = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version;
+        var versionText = v != null ? $"v{v.Major}.{v.Minor}.{v.Build}" : "v0.0.0";
         Dispatcher.BeginInvoke(() =>
             System.Windows.MessageBox.Show(
-                "Hope（盼头）· 桌面效率提示\n\n" +
+                $"Hope（盼头）{versionText}\n\n" +
+                "桌面效率提示\n\n" +
                 "屏幕顶端分段彩色进度条，点击穿透、不抢焦点。\n\n" +
                 "可见范围：桌面 / 浏览器 / Office / 无边框或全屏优化的游戏。\n" +
                 "真·独占全屏需安装全屏游戏拓展包（Phase 2）。",

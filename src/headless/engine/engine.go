@@ -41,7 +41,7 @@ func (e *Engine) ComputeState() ipc.State {
 	var segments []task.Segment
 	switch settings.BarPosition {
 	case "allFour":
-		segments = buildAllFourLayout(tasks, now, behaviorsOf, settings.BarDirection)
+		segments = buildAllFourLayout(tasks, now, behaviorsOf, settings.BarDirection, settings.ScreenWidth, settings.ScreenHeight)
 	default:
 		positions := collectPositions(tasks, settings)
 		for _, pos := range positions {
@@ -151,58 +151,113 @@ func filterTasksByPosition(tasks []*task.Task, position, globalPosition string, 
 	return out
 }
 
-// buildAllFourLayout 将单条 0-100% 布局按顺时针 / 逆时针映射到屏幕四边。
-func buildAllFourLayout(tasks []*task.Task, now time.Time, behaviorsOf func(*task.Task) []string, direction string) []task.Segment {
-	layout := task.BuildLayout(tasks, now, behaviorsOf, "allFour")
-	if len(layout.Segments) == 0 {
-		return nil
+// buildAllFourLayout 将每个任务的进度按屏幕物理周长映射到四边。
+// 已填满的边生成满段，当前活跃边生成部分填充段并挂载图片；未到达的边不生成。
+func buildAllFourLayout(tasks []*task.Task, now time.Time, behaviorsOf func(*task.Task) []string, direction string, screenWidth, screenHeight float64) []task.Segment {
+	if screenWidth <= 0 || screenHeight <= 0 {
+		// 桌面端尚未上报尺寸时，使用常见 16:9 默认值作为降级，避免完全无法渲染。
+		screenWidth, screenHeight = 1920, 1080
 	}
 
-	sides := []string{"top", "right", "bottom", "left"}
+	// 用户定义的“顺时针”顺序：top -> left -> bottom -> right。
+	clockwise := []string{"top", "left", "bottom", "right"}
+	counterClockwise := []string{"top", "right", "bottom", "left"}
+	sides := clockwise
 	if direction == "counterClockwise" {
-		sides = []string{"top", "left", "bottom", "right"}
+		sides = counterClockwise
 	}
 
-	const sideSpan = 25.0
-	var out []task.Segment
-	for _, seg := range layout.Segments {
-		for i, side := range sides {
-			sideStart := float64(i) * sideSpan
-			sideEnd := sideStart + sideSpan
+	// 每条边在总周长上的起点偏移。
+	w, h := screenWidth, screenHeight
+	cum := []float64{0, w, w + h, w + h + w, 2 * (w + h)}
+	// 每条边对应的物理长度。
+	sideLen := []float64{w, h, w, h}
 
-			is := math.Max(seg.BarStart, sideStart)
-			ie := math.Min(seg.BarEnd, sideEnd)
-			if ie <= is {
+	perim := 2 * (w + h)
+	var out []task.Segment
+
+	for _, t := range tasks {
+		if t.Completed {
+			continue
+		}
+		bs := behaviorsOf(t)
+		if !t.IsExpired(now) && t.Percent(now) <= 0 {
+			continue // 未开始
+		}
+
+		var pct float64
+		var expired bool
+		endAt := t.EffectiveEnd(now)
+		if t.IsExpired(now) {
+			if !task.KeepsVisibleWhenExpired(bs) {
 				continue
 			}
+			pct = 100
+			expired = true
+		} else {
+			pct = t.Percent(now)
+		}
 
-			localStart := (is - sideStart) / sideSpan * 100.0
-			localEnd := (ie - sideStart) / sideSpan * 100.0
-			localFill := localEnd
-			if seg.FillEnd < sideStart {
-				localFill = localStart
-			} else if seg.FillEnd < sideEnd {
-				localFill = (seg.FillEnd - sideStart) / sideSpan * 100.0
+		x := perim * pct / 100.0
+		// 找到当前活跃边。
+		activeIdx := 0
+		for i := 0; i < 4; i++ {
+			if x >= cum[i] && x < cum[i+1] {
+				activeIdx = i
+				break
 			}
+		}
+		// 当 pct == 100 时 x 可能恰好等于 perim，归为最后一条边。
+		if x >= perim {
+			activeIdx = 3
+		}
 
-			out = append(out, task.Segment{
-				TaskID:       seg.TaskID,
-				Name:         seg.Name,
-				Color:        seg.Color,
-				Gif:          seg.Gif,
-				ImageMaxSize: seg.ImageMaxSize,
+		for i := 0; i <= activeIdx; i++ {
+			pos := sides[i]
+			isActive := i == activeIdx
+			localStart := 0.0
+			localEnd := 100.0
+			if isActive {
+				localEnd = ((x - cum[i]) / sideLen[i]) * 100.0
+				if localEnd < 0 {
+					localEnd = 0
+				}
+				if localEnd > 100 {
+					localEnd = 100
+				}
+			}
+			seg := task.Segment{
+				TaskID:       t.ID,
+				Name:         t.Name,
+				Color:        t.Color,
+				Gif:          "", // 非活跃边不挂图片
+				ImageMaxSize: t.ImageMaxSize,
 				BarStart:     round1(localStart),
 				BarEnd:       round1(localEnd),
 				Percent:      round1(localEnd),
-				FillEnd:      round1(localFill),
-				EndAt:        seg.EndAt,
-				Expired:      seg.Expired,
-				Behaviors:    seg.Behaviors,
-				Position:     side,
-			})
+				FillEnd:      round1(localEnd),
+				EndAt:        endAt,
+				Expired:      expired,
+				Behaviors:    bs,
+				Position:     pos,
+			}
+			if isActive {
+				seg.Gif = t.Gif
+			}
+			out = append(out, seg)
 		}
 	}
 	return out
+}
+
+func clamp(v, lo, hi float64) float64 {
+	if v < lo {
+		return lo
+	}
+	if v > hi {
+		return hi
+	}
+	return v
 }
 
 func round1(v float64) float64 { return math.Round(v*10) / 10 }

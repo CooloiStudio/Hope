@@ -91,4 +91,6 @@ public sealed class SettingsDto
     [JsonPropertyName("barPosition")] public string BarPosition { get; set; } = "top";
     [JsonPropertyName("barDirection")] public string BarDirection { get; set; } = "forward";
     [JsonPropertyName("advancedPosition")] public bool AdvancedPosition { get; set; }
+    [JsonPropertyName("screenWidth")] public double ScreenWidth { get; set; }
+    [JsonPropertyName("screenHeight")] public double ScreenHeight { get; set; }
 }

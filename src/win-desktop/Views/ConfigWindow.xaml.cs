@@ -196,6 +196,9 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
     private void CommitSettings()
     {
         if (_loadingSettings) return;
+        // InitializeComponent() 期间会触发 BarPositionBox 的 SelectionChanged，
+        // 此时 _ipc 尚未赋值，连控件也尚未完全构造，因此只能静默返回。
+        if (_ipc == null) return;
         if (!_ipc.IsConnected)
         {
             SettingsStatus.Text = "未连接到核心进程（hope-headless），无法保存设置";
@@ -210,6 +213,9 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
         _settings.BarPosition = (BarPositionBox.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? "top";
         _settings.BarDirection = (BarDirectionBox.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? "";
         _settings.AdvancedPosition = AdvancedPositionCheck.IsChecked == true;
+        var rect = SystemParameters.WorkArea;
+        _settings.ScreenWidth = rect.Width;
+        _settings.ScreenHeight = rect.Height;
 
         _ipc.Send(new Command { Action = "updateSettings", Settings = _settings });
         _ipc.Send(new Command { Action = "getSettings" });
