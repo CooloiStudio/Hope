@@ -658,7 +658,7 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
         UpdatePreview();
     }
 
-    // 实时预览：条高 = barHeightPx，[0,percent] 满涂任务色，图片右边缘对齐 percent 前沿。
+    // 实时预览：条高 = barHeightPx，[0,percent] 满涂任务色，图片中心对齐进度前沿。
     private void UpdatePreview()
     {
         // InitializeComponent 设置 ColorBox.Text 时会触发 TextChanged，此时预览控件尚未创建。
@@ -708,8 +708,8 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
         {
             double imgW = _previewSprite.Width;
             double frontX = trackW * percent / 100.0;
-            // 图片右边缘对齐进度前沿；允许左侧超出画布，到右边界时停止跟随。
-            double left = frontX - imgW;
+            // 图片中心对齐进度前沿；到右边界时停止跟随，避免图片超出画布。
+            double left = frontX - imgW / 2.0;
             double maxLeft = trackW - imgW;
             if (left > maxLeft) left = maxLeft;
             Canvas.SetLeft(_previewSprite.Element, left);

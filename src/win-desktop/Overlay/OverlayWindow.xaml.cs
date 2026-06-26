@@ -193,9 +193,9 @@ public partial class OverlayWindow : Window
                 GifCanvas.Children.Add(sprite.Element);
             }
 
-            // 图片右边缘对齐进度前沿；允许左侧超出屏幕，到右边界时停止跟随。
+            // 图片中心对齐进度前沿；到右边界时停止跟随，避免图片超出屏幕。
             double frontX = seg.FillEnd / 100.0 * w;
-            double left = frontX - sprite.Width;
+            double left = frontX - sprite.Width / 2.0;
             double maxLeft = w - sprite.Width;
             if (left > maxLeft) left = maxLeft;
             Canvas.SetLeft(sprite.Element, left);
