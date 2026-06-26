@@ -18,9 +18,19 @@ internal static class AppIconHelper
 {
     private const string ResourcesDir = "resources";
 
-    /// <summary>深色系统主题下托盘用白色，浅色主题用黑色。</summary>
+    /// <summary>深色系统主题下托盘用白色，浅色主题用黑色。以系统模式（任务栏颜色）为准。</summary>
     public static bool IsDarkTheme()
     {
+        // 任务栏实际颜色由 Windows 系统模式决定，优先读取该键。
+        try
+        {
+            using var key = Registry.CurrentUser.OpenSubKey(
+                @"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize");
+            if (key?.GetValue("SystemUsesLightTheme") is int systemLight)
+                return systemLight == 0;
+        }
+        catch { /* 回退应用主题 */ }
+
         try
         {
             var theme = ApplicationThemeManager.GetAppTheme();
