@@ -173,6 +173,11 @@ public partial class App : Application
                     Direction = LocalDirectionFor(pos),
                 };
             }
+            else
+            {
+                _overlays[pos].Position = pos;
+                _overlays[pos].Direction = LocalDirectionFor(pos);
+            }
         }
     }
 
