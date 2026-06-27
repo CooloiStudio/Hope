@@ -171,18 +171,21 @@
                                 <ComboBoxItem Content="从下到上" Tag="reverse" />
                             </ComboBox>
 
-                            <Expander x:Name="AdvancedSettingsExpander" Header="高级设置" Margin="0,12,0,0">
-                                <StackPanel Margin="0,4,0,0">
-                                    <CheckBox x:Name="AllFourCheck" Content="我全都要（四边环绕）"
-                                              Margin="0,6,0,0"
-                                              Checked="OnAllFourChanged" Unchecked="OnAllFourChanged"
-                                              ToolTip="从当前位置出发，沿当前方向环绕屏幕四边" />
+                            <CheckBox x:Name="ShowAdvancedSettingsCheck" Content="显示高级设置"
+                                      Margin="0,12,0,0"
+                                      Checked="OnShowAdvancedSettingsChanged" Unchecked="OnShowAdvancedSettingsChanged"
+                                      ToolTip="勾选后展开高级选项" />
 
-                                    <CheckBox x:Name="AdvancedPositionCheck" Content="允许为单个任务指定展示位置"
-                                              Margin="0,12,0,0"
-                                              ToolTip="开启后，任务编辑中会出现「展示位置」选项" />
-                                </StackPanel>
-                            </Expander>
+                            <StackPanel x:Name="AdvancedOptionsPanel" Margin="0,4,0,0" Visibility="Collapsed">
+                                <CheckBox x:Name="AllFourCheck" Content="我全都要（四边环绕）"
+                                          Margin="0,6,0,0"
+                                          Checked="OnAllFourChanged" Unchecked="OnAllFourChanged"
+                                          ToolTip="从当前位置出发，沿当前方向环绕屏幕四边" />
+
+                                <CheckBox x:Name="AdvancedPositionCheck" Content="允许为单个任务指定展示位置"
+                                          Margin="0,12,0,0"
+                                          ToolTip="开启后，任务编辑中会出现「展示位置」选项" />
+                            </StackPanel>
 
                             <TextBlock Text="任务到期后（默认值；新建任务自动同步）" Margin="0,12,0,2"
                                        TextWrapping="Wrap" />

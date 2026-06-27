@@ -273,6 +273,12 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
             TaskPositionRow.Visibility = AdvancedPositionCheck.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
     }
 
+    private void OnShowAdvancedSettingsChanged(object sender, RoutedEventArgs e)
+    {
+        if (AdvancedOptionsPanel != null)
+            AdvancedOptionsPanel.Visibility = ShowAdvancedSettingsCheck.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
+    }
+
     private void OnResetWindowHeight(object sender, RoutedEventArgs e)
     {
         FitHeightToTaskEditor();
