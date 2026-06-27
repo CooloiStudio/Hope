@@ -250,7 +250,7 @@ public partial class OverlayWindow : Window
             // 设置旋转中心和角度
             sprite.SetRotation(seg.ImageRotation, cx, cy);
 
-            double localFill = IsSegReverse(seg) ? 100.0 - seg.FillEnd : seg.FillEnd;
+            double localFill = IsSegReverse(seg) ? 100.0 - seg.BarStart : seg.FillEnd;
             double front = localFill / 100.0 * (IsVertical ? h : w);
 
             double left, top;
@@ -349,8 +349,10 @@ public partial class OverlayWindow : Window
         foreach (var seg in _segments)
         {
             double localStart = IsSegReverse(seg) ? 100.0 - seg.BarEnd : seg.BarStart;
-            double localEnd = IsSegReverse(seg) ? 100.0 - seg.BarStart : seg.BarEnd;
-            double localFill = IsSegReverse(seg) ? 100.0 - seg.FillEnd : seg.FillEnd;
+            double localEnd   = IsSegReverse(seg) ? 100.0 - seg.BarStart : seg.BarEnd;
+            // reverse 时：段在反向坐标系中占据 [100-BarEnd, 100-BarStart]，
+            // 整段满涂，填充区右端 = 100 - BarStart（段左边缘的反向映射）。
+            double localFill  = IsSegReverse(seg) ? 100.0 - seg.BarStart : seg.FillEnd;
 
             if (IsVertical)
             {
