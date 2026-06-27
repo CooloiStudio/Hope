@@ -24,9 +24,13 @@ import (
 	"hope/headless/ipc"
 )
 
-// Version 由构建时通过 -ldflags "-X main.Version=vX.Y.Z" 注入。
-// 未注入时默认为 "dev"。
-var Version = "dev"
+// Version 是 headless 的版本号，与前端 Hope.Desktop 的版本号规则相同
+//（v大版本.新功能版本.修改版本），但两者独立计算、独立递增。
+// 修改 headless 代码时只更新此变量，不需要同步前端版本号。
+//
+// 构建时可通过 -ldflags "-X main.Version=vX.Y.Z" 覆盖（CI/CD 场景）。
+// 修改版本号时，请同步更新：CHANGELOG.md 中对应的 headless 相关条目。
+var Version = "0.8.14"
 
 func main() {
 	debug := flag.Bool("debug", false, "输出日志到控制台并启用 debug 级别")
