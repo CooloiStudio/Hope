@@ -132,6 +132,15 @@
                         <StackPanel>
                             <TextBlock Text="全局设置" FontWeight="Bold" Margin="0,0,0,8" />
 
+                            <!-- 进度条设置分组 -->
+                            <Grid Margin="0,6,0,8">
+                                <Border Height="1" VerticalAlignment="Center" Background="{DynamicResource ControlStrokeColorDefaultBrush}" />
+                                <TextBlock Text="进度条设置" HorizontalAlignment="Center"
+                                           Background="{DynamicResource ApplicationBackgroundBrush}"
+                                           Padding="8,0" Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                                           FontSize="12" />
+                            </Grid>
+
                             <TextBlock Text="刷新间隔（秒，进度条更新频率）" Margin="0,6,0,2" />
                             <DockPanel LastChildFill="True">
                                 <TextBlock x:Name="RefreshValueText" DockPanel.Dock="Right"
@@ -187,20 +196,18 @@
                                           ToolTip="开启后，任务编辑中会出现「展示位置」选项" />
                             </StackPanel>
 
-                            <TextBlock Text="任务到期后（默认值；新建任务自动同步）" Margin="0,12,0,2"
+                            <TextBlock Text="任务到期提醒" Margin="0,12,0,2"
                                        TextWrapping="Wrap" />
-                            <DockPanel>
-                                <CheckBox x:Name="GlobalNotifyCheck" DockPanel.Dock="Right" Content="系统通知"
-                                          VerticalAlignment="Center" Margin="8,0,0,0"
-                                          ToolTip="到期时弹出一次系统气球通知（可与显示模式叠加）" />
-                                <ComboBox x:Name="GlobalModeBox" HorizontalAlignment="Stretch"
-                                          ToolTip="到期后顶栏的显示方式（四选一）">
-                                    <ComboBoxItem Content="保持显示" Tag="keep" />
-                                    <ComboBoxItem Content="自动隐藏" Tag="hide" />
-                                    <ComboBoxItem Content="闪烁提醒" Tag="blink" />
-                                    <ComboBoxItem Content="庆祝模式（四边闪烁）" Tag="celebrate" />
-                                </ComboBox>
-                            </DockPanel>
+                            <ComboBox x:Name="GlobalModeBox" HorizontalAlignment="Stretch"
+                                      ToolTip="到期后顶栏的显示方式（四选一）">
+                                <ComboBoxItem Content="保持显示" Tag="keep" />
+                                <ComboBoxItem Content="自动隐藏" Tag="hide" />
+                                <ComboBoxItem Content="闪烁提醒" Tag="blink" />
+                                <ComboBoxItem Content="庆祝模式（四边闪烁）" Tag="celebrate" />
+                            </ComboBox>
+                            <CheckBox x:Name="GlobalNotifyCheck" Content="系统通知"
+                                      Margin="0,8,0,0"
+                                      ToolTip="到期时弹出一次系统气球通知（可与显示模式叠加）" />
 
                             <CheckBox x:Name="AutostartCheck" Content="开机自启动" Margin="0,16,0,0" />
 
