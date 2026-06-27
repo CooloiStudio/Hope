@@ -79,7 +79,7 @@ func TestBuildAllFourLayoutWrapsThreeSides(t *testing.T) {
 		}
 	}
 
-	rotations := []float64{0, 0, 0, 0}
+	rotations := []float64{0, 0, 180, 0}
 	for i := 0; i < 4; i++ {
 		if segs[i].ImageRotation != rotations[i] {
 			t.Errorf("segment %d rotation: want %.1f got %.1f", i, rotations[i], segs[i].ImageRotation)
@@ -125,7 +125,7 @@ func TestBuildAllFourLayoutCounterClockwise(t *testing.T) {
 	if segs[1].Gif == "" {
 		t.Errorf("left active segment should carry gif")
 	}
-	// 逆时针：left 边图片水平放置于进度条旁，旋转 = 0°
+	// 逆时针：left 边旋转 = 0°（图片水平放置于进度条旁）
 	if segs[1].ImageRotation != 0 {
 		t.Errorf("left edge rotation should be 0, got %.1f", segs[1].ImageRotation)
 	}
@@ -140,7 +140,7 @@ func TestBuildAllFourLayoutFromBottom(t *testing.T) {
 	behaviorsOf := func(*task.Task) []string { return nil }
 
 	// bottom + forward => 逆时针，顺序 = bottom -> right -> top -> left
-	// 所有边图片均水平、顶部朝上，旋转 = 0°
+	// 起点是 bottom，图片底部吸附进度条，旋转 = 180°
 	segs := buildAllFourLayout(tasks, now, behaviorsOf, "bottom", "forward", 1920, 1080)
 	if len(segs) != 1 {
 		t.Fatalf("expected 1 segment, got %d", len(segs))
@@ -148,8 +148,8 @@ func TestBuildAllFourLayoutFromBottom(t *testing.T) {
 	if segs[0].Position != "bottom" {
 		t.Errorf("expected position bottom, got %s", segs[0].Position)
 	}
-	if segs[0].ImageRotation != 0 {
-		t.Errorf("bottom edge rotation should be 0, got %.1f", segs[0].ImageRotation)
+	if segs[0].ImageRotation != 180 {
+		t.Errorf("bottom edge rotation should be 180, got %.1f", segs[0].ImageRotation)
 	}
 }
 
@@ -245,7 +245,7 @@ func TestEdgeLen(t *testing.T) {
 // TestRotationForSide 验证各边对应的旋转角度。
 func TestRotationForSide(t *testing.T) {
 	sides := []string{"top", "right", "bottom", "left"}
-	want := []float64{0, 0, 0, 0}
+	want := []float64{0, 0, 180, 0}
 	for i := 0; i < 4; i++ {
 		got := rotationForSide(sides, i)
 		if got != want[i] {
