@@ -3,8 +3,12 @@ package engine
 
 import (
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"math"
+	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -211,18 +215,15 @@ func buildAllFourLayout(tasks []*task.Task, now time.Time, behaviorsOf func(*tas
 		x := perim * pct / 100.0
 
 		// 找到当前活跃边 idx
-		// 使用 <= 而非 <：当 x 恰好等于 cum[i+1]（当前边刚好填满）时，
-		// 当前边应为 activeIdx（localEnd=100），下一条边在下一轮出现。
-		activeIdx := 0
+		// 使用 <：当 x 恰好等于 cum[i+1]（当前边刚填满）时，
+		// x < cum[i+1] 不成立，循环继续，activeIdx 指向下一条边（localEnd=0）。
+		// 下一帧 x 略大于 cum[i+1]，localEnd > 0，新边自然出现。
+		activeIdx := 3 // pct=100 时 x=perim，归为最后一条边
 		for i := 0; i < 4; i++ {
-			if x <= cum[i+1] {
+			if x < cum[i+1] {
 				activeIdx = i
 				break
 			}
-		}
-		// x > cum[4]（浮点误差）时归为最后一条边
-		if x > perim {
-			activeIdx = 3
 		}
 
 		for i := 0; i <= activeIdx; i++ {
@@ -264,7 +265,51 @@ func buildAllFourLayout(tasks []*task.Task, now time.Time, behaviorsOf func(*tas
 			out = append(out, seg)
 		}
 	}
+	// 调试日志：写入 %APPDATA%\Hope\logs\allfour-debug.log
+	writeAllFourDebugLog(w, h, sides, cum, perim, tasks, now, out)
+
 	return out
+}
+
+// writeAllFourDebugLog 将四边环绕的关键计算值写入调试日志文件。
+// 仅当环境变量 HOPE_DEBUG_ALLFOUR=1 时写入，避免影响性能。
+// 文件位于 %APPDATA%\Hope\logs\allfour-debug.log，每次调用覆盖写入最新状态。
+func writeAllFourDebugLog(screenW, screenH float64, sides []string, cum []float64, perim float64, tasks []*task.Task, now time.Time, out []task.Segment) {
+	if os.Getenv("HOPE_DEBUG_ALLFOUR") == "" {
+		return
+	}
+	dir := os.Getenv("APPDATA")
+	if dir == "" {
+		dir = os.TempDir()
+	}
+	logDir := filepath.Join(dir, "Hope", "logs")
+	os.MkdirAll(logDir, 0755)
+	logPath := filepath.Join(logDir, "allfour-debug.log")
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("t=%s  screen=%.0f x %.0f  perim=%.0f\n",
+		now.Format("15:04:05.000"), screenW, screenH, perim))
+	sb.WriteString(fmt.Sprintf("sides=%v\n", sides))
+	sb.WriteString(fmt.Sprintf("cum  =%v\n", cum))
+
+	for _, t := range tasks {
+		if t.Completed {
+			continue
+		}
+		pct := t.Percent(now)
+		x := perim * pct / 100.0
+		sb.WriteString(fmt.Sprintf("\n  task=%-20s  pct=%.2f%%  x=%.2f\n", t.Name, pct, x))
+	}
+
+	if len(out) == 0 {
+		sb.WriteString("\n  [无 Segment 生成]\n")
+	}
+	for i, seg := range out {
+		sb.WriteString(fmt.Sprintf("  seg[%d] pos=%-6s  barEnd=%.2f%%  dir=%-8s  rot=%.1f°  gif=%v\n",
+			i, seg.Position, seg.BarEnd, seg.Direction, seg.ImageRotation, seg.Gif != ""))
+	}
+
+	os.WriteFile(logPath, []byte(sb.String()), 0644)
 }
 
 // deriveAllFourOrders 返回以 startPos 为起点的四边环绕顺序。
