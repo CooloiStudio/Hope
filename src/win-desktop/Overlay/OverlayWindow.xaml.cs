@@ -345,17 +345,26 @@ public partial class OverlayWindow : Window
         BarCanvas.Children.Clear();
         _blinkRects.Clear();
 
-        // 仅绘制已填充部分（barStart → fillEnd），未完成部分不画任何底色（保持透明、不可点击）。
+        // 仅绘制已填充部分（fillStart → fillEnd），未完成部分不画任何底色（保持透明、不可点击）。
+        // reverse 方向时，填充从 BarEnd 向 BarStart 延伸，因此起点 = BarEnd - 填充长度。
         foreach (var seg in _segments)
         {
-            double localStart = IsSegReverse(seg) ? 100.0 - seg.BarEnd : seg.BarStart;
-            double localEnd = IsSegReverse(seg) ? 100.0 - seg.BarStart : seg.BarEnd;
-            double localFill = IsSegReverse(seg) ? 100.0 - seg.FillEnd : seg.FillEnd;
+            double fillStart, fillEnd;
+            if (IsSegReverse(seg))
+            {
+                fillEnd = seg.BarEnd;
+                fillStart = fillEnd - (seg.BarEnd - seg.BarStart) * seg.FillEnd / 100.0;
+            }
+            else
+            {
+                fillStart = seg.BarStart;
+                fillEnd = seg.BarStart + (seg.BarEnd - seg.BarStart) * seg.FillEnd / 100.0;
+            }
 
             if (IsVertical)
             {
-                double y0 = localStart / 100.0 * h;
-                double yFill = localFill / 100.0 * h;
+                double y0 = fillStart / 100.0 * h;
+                double yFill = fillEnd / 100.0 * h;
                 double fillHeight = yFill - y0;
                 if (fillHeight <= 0) continue;
 
@@ -373,8 +382,8 @@ public partial class OverlayWindow : Window
             }
             else
             {
-                double x0 = localStart / 100.0 * w;
-                double xFill = localFill / 100.0 * w;
+                double x0 = fillStart / 100.0 * w;
+                double xFill = fillEnd / 100.0 * w;
                 double fillWidth = xFill - x0;
                 if (fillWidth <= 0) continue;
 

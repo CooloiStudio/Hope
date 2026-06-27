@@ -2,6 +2,14 @@
 
 ## v0.8 (2026-06-26)
 
+### v0.8.8 (2026-06-27)
+
+#### 修复
+
+- **四边环绕 bottom/left 进度条不显示**：修复 WPF `OverlayWindow.Render` 中 reverse 方向的填充区域计算。原实现将 `BarStart`/`BarEnd`/`FillEnd` 整体翻转，导致 reverse 边（如 bottom、left）在任务完成时 `fillWidth`/`fillHeight` 为 0，进度条不绘制。
+- **四边环绕图片旋转**：所有边（top/right/bottom/left）的图片统一保持 0° 水平显示、顶部朝上，避免 bottom 边 180° 导致图片上下颠倒。
+- **版本号**：更新至 `v0.8.8`。
+
 ### v0.8.7 (2026-06-27)
 
 #### 新增与修复
