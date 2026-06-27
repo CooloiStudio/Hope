@@ -1,6 +1,9 @@
+using System;
 using System.Diagnostics;
 using System.IO;
 using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace Hope.Desktop;
 
@@ -18,13 +21,13 @@ public sealed class HeadlessSupervisor : IDisposable
     private async Task LoopAsync()
     {
         var exe = ResolveHeadlessPath();
-        if (exe == null) return; // 找不到核心时不阻塞 Desktop 自身
+        if (exe == null) return;
 
+        int consecutiveQuickExits = 0;
         while (!_quitting && !_cts.IsCancellationRequested)
         {
             try
             {
-                // 已在运行则不重复拉起（Headless 自身有单实例互斥）。
                 if (Process.GetProcessesByName("hope-headless").Length == 0)
                 {
                     var psi = new ProcessStartInfo(exe)
@@ -34,7 +37,6 @@ public sealed class HeadlessSupervisor : IDisposable
                         WindowStyle = ProcessWindowStyle.Hidden,
                     };
 
-                    // 调试模式下重定向 headless 的输出到 VS Code / IDE 的 Debug console。
                     if (Debugger.IsAttached)
                     {
                         psi.RedirectStandardOutput = true;
@@ -42,7 +44,6 @@ public sealed class HeadlessSupervisor : IDisposable
                         psi.ArgumentList.Add("--debug");
                     }
 
-                    // 传入自身路径，接通反方向互拉：Desktop 异常退出时由 Headless 重新拉起（文档 §3.3）。
                     var selfPath = Environment.ProcessPath;
                     if (!string.IsNullOrEmpty(selfPath))
                     {
@@ -50,17 +51,60 @@ public sealed class HeadlessSupervisor : IDisposable
                         psi.ArgumentList.Add(selfPath);
                     }
 
-                    _currentProcess = Process.Start(psi);
-                    if (_currentProcess != null && Debugger.IsAttached)
+                    Process? proc = Process.Start(psi);
+                    _currentProcess = proc;
+                    if (proc != null)
                     {
-                        _ = Task.Run(() => ForwardStreamAsync(_currentProcess.StandardOutput, false, _cts.Token));
-                        _ = Task.Run(() => ForwardStreamAsync(_currentProcess.StandardError, true, _cts.Token));
+                        if (Debugger.IsAttached)
+                        {
+                            _ = Task.Run(() => ForwardStreamAsync(proc.StandardOutput, false, _cts.Token));
+                            _ = Task.Run(() => ForwardStreamAsync(proc.StandardError, true, _cts.Token));
+                        }
+
+                        // 等待一小段时间，检查进程是否因互斥量冲突而立即退出
+                        try { await Task.Delay(3000, _cts.Token); } catch { }
+
+                        if (proc.HasExited)
+                        {
+                            // 进程在 3 秒内退出，可能是互斥量冲突
+                            TimeSpan runtime;
+                            try { runtime = proc.ExitTime - proc.StartTime; }
+                            catch { runtime = TimeSpan.FromSeconds(99); } // 无法获取时间，假设不是快速退出
+
+                            if (runtime < TimeSpan.FromSeconds(5))
+                            {
+                                consecutiveQuickExits++;
+                                Debug.WriteLine($"[HeadlessSupervisor] headless exited quickly (ran {runtime.TotalSeconds:F1}s), possible mutex conflict. consecutiveQuickExits={consecutiveQuickExits}");
+                            }
+                            else
+                            {
+                                consecutiveQuickExits = 0;
+                            }
+                        }
+                        else
+                        {
+                            // 进程还在运行，启动成功
+                            consecutiveQuickExits = 0;
+                        }
                     }
                 }
+                else
+                {
+                    consecutiveQuickExits = 0;
+                }
             }
-            catch { /* 下一轮重试 */ }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[HeadlessSupervisor] exception: {ex.Message}");
+            }
 
-            await Task.Delay(2000).ContinueWith(_ => { }).ConfigureAwait(false);
+            // 如果连续快速退出，增加延迟避免日志刷屏和频繁重启
+            int delayMs = consecutiveQuickExits > 3 ? 30000 : 2000;
+            if (consecutiveQuickExits > 0)
+            {
+                Debug.WriteLine($"[HeadlessSupervisor] waiting {delayMs}ms before next retry (consecutiveQuickExits={consecutiveQuickExits})");
+            }
+            await Task.Delay(delayMs, CancellationToken.None).ConfigureAwait(false);
         }
     }
 
@@ -82,18 +126,15 @@ public sealed class HeadlessSupervisor : IDisposable
 
     private static string? ResolveHeadlessPath()
     {
-        // 生产：与 Desktop 同目录。
         var sameDir = Path.Combine(AppContext.BaseDirectory, "hope-headless.exe");
         if (File.Exists(sameDir)) return sameDir;
 
-        // 开发：Monorepo 下的 src/headless。
         var dev = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "headless", "hope-headless.exe"));
         if (File.Exists(dev)) return dev;
 
         return null;
     }
 
-    /// <summary>标记正常退出，停止互拉。</summary>
     public void StopWatching() => _quitting = true;
 
     public void Dispose()

@@ -2,6 +2,13 @@
 
 ## v0.8 (2026-06-26)
 
+### v0.8.13 (2026-06-27)
+
+#### 修复
+
+- **修复 HeadlessSupervisor 频繁重启 headless 导致日志刷屏**：当已有 headless 进程持有互斥量时，新启动的 headless 会立即退出。Supervisor 每 2 秒重试一次，导致不断输出 "another instance is running, exiting"。现在检测 headless 是否在 5 秒内退出，如果是则增加重试延迟到 30 秒，避免日志刷屏。
+- **版本号**：更新至 `v0.8.13`。
+
 ### v0.8.12 (2026-06-27)
 
 #### 修复
