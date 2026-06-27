@@ -617,6 +617,54 @@ WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE
   - [x] 图片高度 **超过 15px 时等比缩放到 15px**，不超过则保持原始尺寸
   - [x] 存在图片时窗口向下扩展（高度 = 条高 + 图片区 ≤15px）；图片区点击穿透
 
+#### 5.4.1 正向/反向渲染逻辑
+
+> 进度条支持 **正向（forward）** 与 **反向（reverse）** 两种填充方向，可全局设置或按任务覆盖。
+
+**方向判断优先级：**
+
+1. 段级方向：`Segment.Direction`（如果非空且有效）
+2. 窗口级方向：`OverlayWindow.Direction`（全局设置）
+3. 判断方法：`IsSegReverse(seg)` → 段级优先，回退到窗口级
+
+**正向渲染（forward）：**
+
+- 填充区 = `[BarStart, FillEnd]`
+- 矩形从左/上开始，向右/下增长
+- 示例（顶部进度条）：矩形左边缘 = `BarStart% × 屏幕宽度`，宽度 = `(FillEnd - BarStart)% × 屏幕宽度`
+
+**反向渲染（reverse）：**
+
+- 填充区 = `[BarEnd - (FillEnd - BarStart), BarEnd]`
+- 矩形从右/下开始，向左/上增长
+- 关键计算：
+  ```
+  localStart = BarEnd - (FillEnd - BarStart)  // 填充区左/上边界
+  localFill  = BarEnd                        // 填充区右/下边界（固定）
+  ```
+- 示例（顶部进度条）：
+  - 矩形右边缘 = `BarEnd% × 屏幕宽度`
+  - 矩形宽度 = `(FillEnd - BarStart)% × 屏幕宽度`
+  - 矩形左边缘 = `右边缘 - 宽度`
+
+**图片位置计算（UpdateSprites）：**
+
+- 正向：填充前沿 = `FillEnd`
+- 反向：填充前沿 = `BarEnd - (FillEnd - BarStart)`
+- 图片中心对齐填充前沿，随进度移动
+
+**悬停检测（OnHoverTick）：**
+
+- 正向：鼠标位置百分比 = `(光标位置 / 屏幕尺寸) × 100`
+- 反向：鼠标位置百分比 = `100 - (光标位置 / 屏幕尺寸) × 100`
+- 仅已填充（彩色）部分响应悬停，透明区域不交互
+
+**实现要点：**
+
+- 渲染签名（`BuildRenderSignature`）包含方向信息，方向变化时触发重绘
+- 反向渲染的矩形坐标计算在 `Render()` 方法中完成，避免修改 Headless 计算逻辑
+- 前后端分离：Headless 计算百分比，前端根据方向换算成像素坐标
+
 **适用边界（写入「关于」）：**
 
 - ✅ 桌面、浏览器、Office、IDE

@@ -231,7 +231,7 @@ public partial class OverlayWindow : Window
             foreach (var seg in wanted)
             {
                 bool rev = IsSegReverse(seg);
-                double localFill = rev ? seg.BarEnd - (seg.FillEnd - seg.BarStart) : seg.FillEnd;
+                double localFill = rev ? 100.0 - seg.FillEnd : seg.FillEnd;
                 sb.Append(seg.TaskId).Append(':').Append(rev ? "rev" : "fwd").Append(':').Append(localFill).Append(';');
             }
             string sig = sb.ToString();
@@ -272,11 +272,11 @@ public partial class OverlayWindow : Window
             sprite.SetRotation(seg.ImageRotation, cx, cy);
 
             // 正向：填充前沿 = FillEnd
-            // 反向：填充前沿 = BarEnd - (FillEnd - BarStart)
+            // 反向：绕整条轨道(100%)镜像 → 前沿 = 100 - FillEnd
             double localFill = seg.FillEnd;
             if (IsSegReverse(seg))
             {
-                localFill = seg.BarEnd - (seg.FillEnd - seg.BarStart);
+                localFill = 100.0 - seg.FillEnd;
             }
             double front = localFill / 100.0 * (IsVertical ? h : w);
 
@@ -388,14 +388,14 @@ public partial class OverlayWindow : Window
         foreach (var seg in _segments)
         {
             // 正向：填充区 = [BarStart, FillEnd]
-            // 反向：填充区 = [BarEnd - (FillEnd - BarStart), BarEnd]
+            // 反向：绕整条轨道(100%)镜像，端点各取 100 - x → 填充区 = [100 - FillEnd, 100 - BarStart]
             double localStart = seg.BarStart;
             double localEnd   = seg.BarEnd;
             double localFill  = seg.FillEnd;
             if (IsSegReverse(seg))
             {
-                localStart = seg.BarEnd - (seg.FillEnd - seg.BarStart);
-                localFill  = seg.BarEnd;
+                localStart = 100.0 - seg.FillEnd;
+                localFill  = 100.0 - seg.BarStart;
             }
 
             if (IsVertical)
