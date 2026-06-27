@@ -211,15 +211,17 @@ func buildAllFourLayout(tasks []*task.Task, now time.Time, behaviorsOf func(*tas
 		x := perim * pct / 100.0
 
 		// 找到当前活跃边 idx
-		activeIdx := 3
+		// 使用 <= 而非 <：当 x 恰好等于 cum[i+1]（当前边刚好填满）时，
+		// 当前边应为 activeIdx（localEnd=100），下一条边在下一轮出现。
+		activeIdx := 0
 		for i := 0; i < 4; i++ {
-			if x < cum[i+1] {
+			if x <= cum[i+1] {
 				activeIdx = i
 				break
 			}
 		}
-		// pct==100 时 x==perim，归为最后一条边
-		if x >= perim {
+		// x > cum[4]（浮点误差）时归为最后一条边
+		if x > perim {
 			activeIdx = 3
 		}
 
