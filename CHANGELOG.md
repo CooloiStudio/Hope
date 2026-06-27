@@ -2,6 +2,13 @@
 
 ## v0.8 (2026-06-26)
 
+### v0.8.12 (2026-06-27)
+
+#### 修复
+
+- **修复垂直进度条 reverse 方向计算错误**：`Render()` 和 `UpdateSprites()` 中 reverse 时 `localStart`/`localFill` 的计算公式错误。原代码使用 `100 - BarStart` 作为 `localFill`，导致进度 0% 时整段满涂。修正为：`localStart = BarEnd - (FillEnd - BarStart)`，`localFill = BarEnd`，使反向填充区正确反映任务进度。此 bug 同时影响水平（top/bottom）和垂直（left/right）进度条。
+- **版本号**：更新至 `v0.8.12`。
+
 ### v0.8.11 (2026-06-27)
 
 #### 修复

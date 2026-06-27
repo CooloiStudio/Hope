@@ -250,7 +250,13 @@ public partial class OverlayWindow : Window
             // 设置旋转中心和角度
             sprite.SetRotation(seg.ImageRotation, cx, cy);
 
-            double localFill = IsSegReverse(seg) ? 100.0 - seg.BarStart : seg.FillEnd;
+            // 正向：填充前沿 = FillEnd
+            // 反向：填充前沿 = BarEnd - (FillEnd - BarStart)
+            double localFill = seg.FillEnd;
+            if (IsSegReverse(seg))
+            {
+                localFill = seg.BarEnd - (seg.FillEnd - seg.BarStart);
+            }
             double front = localFill / 100.0 * (IsVertical ? h : w);
 
             double left, top;
@@ -348,11 +354,16 @@ public partial class OverlayWindow : Window
         // 仅绘制已填充部分（barStart → fillEnd），未完成部分不画任何底色（保持透明、不可点击）。
         foreach (var seg in _segments)
         {
-            double localStart = IsSegReverse(seg) ? 100.0 - seg.BarEnd : seg.BarStart;
-            double localEnd   = IsSegReverse(seg) ? 100.0 - seg.BarStart : seg.BarEnd;
-            // reverse 时：段在反向坐标系中占据 [100-BarEnd, 100-BarStart]，
-            // 整段满涂，填充区右端 = 100 - BarStart（段左边缘的反向映射）。
-            double localFill  = IsSegReverse(seg) ? 100.0 - seg.BarStart : seg.FillEnd;
+            // 正向：填充区 = [BarStart, FillEnd]
+            // 反向：填充区 = [BarEnd - (FillEnd - BarStart), BarEnd]
+            double localStart = seg.BarStart;
+            double localEnd   = seg.BarEnd;
+            double localFill  = seg.FillEnd;
+            if (IsSegReverse(seg))
+            {
+                localStart = seg.BarEnd - (seg.FillEnd - seg.BarStart);
+                localFill  = seg.BarEnd;
+            }
 
             if (IsVertical)
             {
