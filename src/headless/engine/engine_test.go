@@ -79,7 +79,7 @@ func TestBuildAllFourLayoutWrapsThreeSides(t *testing.T) {
 		}
 	}
 
-	rotations := []float64{0, 90, 180, 270}
+	rotations := []float64{0, 0, 180, 0}
 	for i := 0; i < 4; i++ {
 		if segs[i].ImageRotation != rotations[i] {
 			t.Errorf("segment %d rotation: want %.1f got %.1f", i, rotations[i], segs[i].ImageRotation)
@@ -125,9 +125,9 @@ func TestBuildAllFourLayoutCounterClockwise(t *testing.T) {
 	if segs[1].Gif == "" {
 		t.Errorf("left active segment should carry gif")
 	}
-	// 逆时针：left 边旋转 = 270°（图片左侧吸附进度条）
-	if segs[1].ImageRotation != 270 {
-		t.Errorf("left edge rotation should be 270, got %.1f", segs[1].ImageRotation)
+	// 逆时针：left 边旋转 = 0°（图片水平放置于进度条旁）
+	if segs[1].ImageRotation != 0 {
+		t.Errorf("left edge rotation should be 0, got %.1f", segs[1].ImageRotation)
 	}
 }
 
@@ -245,7 +245,7 @@ func TestEdgeLen(t *testing.T) {
 // TestRotationForSide 验证各边对应的旋转角度。
 func TestRotationForSide(t *testing.T) {
 	sides := []string{"top", "right", "bottom", "left"}
-	want := []float64{0, 90, 180, 270}
+	want := []float64{0, 0, 180, 0}
 	for i := 0; i < 4; i++ {
 		got := rotationForSide(sides, i)
 		if got != want[i] {

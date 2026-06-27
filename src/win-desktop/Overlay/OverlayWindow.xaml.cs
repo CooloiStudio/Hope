@@ -1,3 +1,5 @@
+using System.Drawing;
+using System.IO;
 using System.Windows;
 using System.Windows.Interop;
 using System.Windows.Media;
@@ -36,6 +38,9 @@ public partial class OverlayWindow : Window
     private List<Segment> _segments = new();
     private int _barHeightPx = 4;
     private double _imageMaxThickness;
+
+    // 缓存图片缩放后的尺寸：(文件路径, maxSize) → (缩放后宽度, 缩放后高度)
+    private readonly Dictionary<(string path, double maxSize), (double width, double height)> _imageSizeCache = new();
 
     public string Position { get; set; } = PositionTop;
     public string Direction { get; set; } = "forward";
@@ -115,13 +120,17 @@ public partial class OverlayWindow : Window
         _acknowledgedBlink.IntersectWith(_blinkingIds);
 
         bool show = msg.Visible && _segments.Count > 0;
+        // 预读图片实际缩放后的尺寸，作为图片区域的厚度：
+        // top/bottom 取高度，left/right 取宽度（图片水平放置于进度条旁）。
         _imageMaxThickness = 0;
         foreach (var s in _segments)
         {
             if (ImageSprite.IsUsable(s.Gif))
             {
-                var sz = s.ImageMaxSize > 0 ? s.ImageMaxSize : 15;
-                if (sz > _imageMaxThickness) _imageMaxThickness = sz;
+                var maxSize = s.ImageMaxSize > 0 ? s.ImageMaxSize : 15;
+                var (scaledW, scaledH) = GetScaledImageSize(s.Gif!, maxSize);
+                var thickness = IsVertical ? scaledW : scaledH;
+                if (thickness > _imageMaxThickness) _imageMaxThickness = thickness;
             }
         }
 
@@ -212,13 +221,13 @@ public partial class OverlayWindow : Window
         double w = Width;
         double h = Height;
         // 旋转中心比例（相对于图片自身尺寸）
+        // top/bottom 保持图片水平并让对应边缘吸附进度条；
+        // left/right 将图片水平放置于进度条旁，中心对齐 fillEnd。
         double cx = 0.5, cy = 0.5;
         switch (Position)
         {
-            case PositionTop:    cx = 0.5; cy = 0; break;
-            case PositionBottom: cx = 0.5; cy = 1; break;
-            case PositionLeft:   cx = 0;   cy = 0.5; break;
-            case PositionRight:  cx = 1;   cy = 0.5; break;
+            case PositionTop:    cy = 0; break;
+            case PositionBottom: cy = 1; break;
         }
 
         foreach (var seg in wanted)
@@ -247,20 +256,15 @@ public partial class OverlayWindow : Window
             double left, top;
             if (IsVertical)
             {
-                // 垂直模式（left/right）：图片与进度条边距=0，直接紧贴
-                // 旋转中心已设为吸附边中点，图片绕该点旋转后自然紧贴进度条
+                // left/right 图片水平放置于进度条旁，窗口宽度 = 进度条粗细 + 图片缩放后的宽度
                 if (Position == PositionLeft)
                 {
-                    // 进度条在左，图片在右：图片左边缘 = 进度条右边缘
+                    // 进度条在左，图片在右：图片左边缘紧贴进度条右边缘
                     left = _barHeightPx;
                 }
                 else // PositionRight
                 {
-                    // 进度条在右，图片在左：图片右边缘 = 进度条左边缘
-                    // 进度条 Canvas.Left = _imageMaxThickness，图片右边缘应对齐该位置
-                    // 未旋转时图片右边缘 = left + sprite.Width
-                    // 旋转后视觉宽度可能变化，但 RenderTransform 不影响布局
-                    // 旋转中心 cx=1 表示右边缘，旋转后右边缘位置不变
+                    // 进度条在右，图片在左：图片右边缘紧贴进度条左边缘
                     left = _imageMaxThickness - sprite.Width;
                 }
                 top = front - sprite.Height * cy;
@@ -278,6 +282,37 @@ public partial class OverlayWindow : Window
             Canvas.SetLeft(sprite.Element, left);
             Canvas.SetTop(sprite.Element, top);
         }
+    }
+
+    /// <summary>
+    /// 预读图片实际尺寸，按 maxSize（高度上限）缩放后返回 (缩放后宽度, 缩放后高度)。
+    /// 结果带缓存，避免每秒多次刷新时重复读取文件。
+    /// </summary>
+    private (double width, double height) GetScaledImageSize(string imagePath, double maxSize)
+    {
+        var cacheKey = (imagePath, maxSize);
+        if (_imageSizeCache.TryGetValue(cacheKey, out var cached))
+            return cached;
+
+        double w = maxSize, h = maxSize; // 读取失败时返回配置值作为兜底
+        try
+        {
+            if (File.Exists(imagePath))
+            {
+                var bytes = File.ReadAllBytes(imagePath);
+                using var stream = new MemoryStream(bytes);
+                using var bitmap = (Bitmap)Image.FromStream(stream);
+                double scale = 1.0;
+                if (bitmap.Height > maxSize && bitmap.Height > 0)
+                    scale = maxSize / bitmap.Height;
+                h = Math.Max(1, bitmap.Height * scale);
+                w = Math.Max(1, bitmap.Width * scale);
+            }
+        }
+        catch { /* 忽略损坏文件，使用兜底值 */ }
+
+        _imageSizeCache[cacheKey] = (w, h);
+        return (w, h);
     }
 
     private void ClearSprites()

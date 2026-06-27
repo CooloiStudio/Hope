@@ -41,6 +41,9 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
     public ConfigWindow(IpcClient ipc)
     {
         DesktopLog.Info("ConfigWindow ctor: before InitializeComponent");
+        // 必须在 InitializeComponent 之前初始化，因为 XAML 事件在加载期间就可能触发 TryAutoSaveTask
+        _autoSaveTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
+        _autoSaveTimer.Tick += (_, _) => AutoSaveTask();
         InitializeComponent();
         DesktopLog.Info("ConfigWindow ctor: after InitializeComponent");
 
@@ -80,12 +83,9 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
             ScheduleFitHeightToTaskEditor();
         };
 
-        var v = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version;
-        AboutVersionText.Text = v != null ? $"v{v.Major}.{v.Minor}.{v.Build}" : "v0.0.0";
+        AboutVersionText.Text = FormatAppVersion();
 
         ContentRendered += (_, _) => EnsureFluentBackdrop();
-        _autoSaveTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
-        _autoSaveTimer.Tick += (_, _) => AutoSaveTask();
         HookTaskFieldEvents();
         OnNew(this, new RoutedEventArgs());
         DesktopLog.Info("ConfigWindow ctor: done");
@@ -111,6 +111,27 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
         if (Wpf.Ui.Controls.WindowBackdrop.IsSupported(WpfBackdrop.Acrylic))
             return WpfBackdrop.Acrylic;
         return WpfBackdrop.None;
+    }
+
+    /// <summary>读取程序集版本信息并格式化为 vX.Y.Z。</summary>
+    private static string FormatAppVersion()
+    {
+        var assembly = System.Reflection.Assembly.GetExecutingAssembly();
+
+        // 优先使用 InformationalVersion，它直接来自 csproj 的 <Version>。
+        var infoAttr = Attribute.GetCustomAttribute(assembly, typeof(System.Reflection.AssemblyInformationalVersionAttribute))
+            as System.Reflection.AssemblyInformationalVersionAttribute;
+        if (infoAttr != null && !string.IsNullOrWhiteSpace(infoAttr.InformationalVersion))
+        {
+            var v = infoAttr.InformationalVersion;
+            // 去掉 commit hash（如 0.8.1+abcd1234 → 0.8.1）
+            var plus = v.IndexOf('+');
+            if (plus > 0) v = v[..plus];
+            return $"v{v}";
+        }
+
+        var av = assembly.GetName().Version;
+        return av != null ? $"v{av.Major}.{av.Minor}.{av.Build}" : "v0.0.0";
     }
 
     /// <summary>从 Headless 拉取任务列表与全局设置（在窗口已显示后调用）。</summary>
@@ -688,6 +709,7 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
     private void TryAutoSaveTask()
     {
         if (_loadingSettings) return;
+        if (_autoSaveTimer == null) return;
         _autoSaveTimer.Stop();
         _autoSaveTimer.Start();
     }

@@ -350,22 +350,21 @@ func edgeLen(side string, w, h float64) float64 {
 }
 
 // rotationForSide 返回 sides[idx] 对应的图片旋转角度（度）。
-// 旋转目标是让图片的同一边缘始终吸附进度条：
+// 水平边（top/bottom）保持图片水平，并让对应边缘吸附进度条：
 //   top    → 图片顶部吸附 → 旋转 0°
-//   right  → 图片右侧吸附 → 旋转 90°
 //   bottom → 图片底部吸附 → 旋转 180°
-//   left   → 图片左侧吸附 → 旋转 270°
+// 垂直边（left/right）将图片水平放置于进度条旁边，均为 0°。
 // 此映射只取决于目标边的位置，与环绕方向无关。
 func rotationForSide(sides []string, idx int) float64 {
 	switch sides[idx] {
 	case "top":
 		return 0
 	case "right":
-		return 90
+		return 0
 	case "bottom":
 		return 180
 	case "left":
-		return 270
+		return 0
 	default:
 		return 0
 	}

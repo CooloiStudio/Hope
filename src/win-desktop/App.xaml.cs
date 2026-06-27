@@ -25,6 +25,8 @@ public partial class App : Application
     private bool _allFour;    private HeadlessSupervisor _supervisor = null!;
     private NotifyIcon? _tray;
     private ConfigWindow? _config;
+    /// <summary>已弹过到期通知的 taskId 集合；任务不再 expired 时清除，允许下个周期再次通知。</summary>
+    private readonly HashSet<string> _notifiedTaskIds = new();
 
     private System.Threading.Mutex? _instanceMutex;
     private bool _paused;
@@ -120,6 +122,13 @@ public partial class App : Application
             bool wantAllFour = _allFour || celebrate;
             EnsureOverlays(wantAllFour);
             DispatchState(msg, celebrate);
+
+            // 清除已不在当前到期列表中的 taskId，允许下个周期再次通知
+            var currentExpiredIds = new HashSet<string>(
+                all.Where(s => s.Expired).Select(s => s.TaskId)
+            );
+            _notifiedTaskIds.IntersectWith(currentExpiredIds);
+
             if (msg.Expired != null)
                 foreach (var ev in msg.Expired) HandleExpired(ev);
         });
@@ -224,6 +233,10 @@ public partial class App : Application
 
     private void HandleExpired(ExpiredEvent ev)
     {
+        // 去重：同一到期周期只弹一次通知。
+        if (_notifiedTaskIds.Contains(ev.TaskId)) return;
+        _notifiedTaskIds.Add(ev.TaskId);
+
         // 一次性提醒：notify 弹气球。keep/hide/blink 为持续表现，由 Overlay 依据 Segment 状态驱动。
         if (ev.Behaviors != null && ev.Behaviors.Contains("notify"))
             _tray?.ShowBalloonTip(5000, "Hope · 任务到期", $"「{ev.Name}」已到达截止时间", ToolTipIcon.Info);
