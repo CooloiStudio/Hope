@@ -217,13 +217,13 @@
                             <TextBlock Text="到期提醒效果（默认自动显示，可叠加勾选）" Margin="0,12,0,2"
                                        TextWrapping="Wrap" />
                             <CheckBox x:Name="GlobalBlinkCheck" Content="闪烁提醒"
-                                      Margin="0,4,0,0"
+                                      Margin="0"
                                       ToolTip="到期后顶栏柔和闪烁，直到用户查看" />
                             <CheckBox x:Name="GlobalCelebrateCheck" Content="全屏庆祝"
-                                      Margin="0,6,0,0"
+                                      Margin="0"
                                       ToolTip="到期时四边同步闪烁庆祝" />
                             <CheckBox x:Name="GlobalNotifyCheck" Content="系统通知"
-                                      Margin="0,6,0,0"
+                                      Margin="0"
                                       ToolTip="到期时弹出一次系统气球通知" />
 
                             <Grid Margin="0,6,0,8">
@@ -360,11 +360,11 @@
                                           ToolTip="勾选则本任务沿用全局到期提醒；取消后可单独叠加勾选下列效果" />
                             </DockPanel>
                             <StackPanel x:Name="TaskBehaviorPanel" Orientation="Horizontal" Margin="56,4,0,0">
-                                <CheckBox x:Name="TaskBlinkCheck" Content="闪烁提醒" Margin="0,0,12,0"
+                                <CheckBox x:Name="TaskBlinkCheck" Content="闪烁提醒" Margin="0,0,30,0" Padding="0" MinWidth="0"
                                           ToolTip="到期后顶栏柔和闪烁，直到用户查看" />
-                                <CheckBox x:Name="TaskCelebrateCheck" Content="全屏庆祝" Margin="0,0,12,0"
+                                <CheckBox x:Name="TaskCelebrateCheck" Content="全屏庆祝" Margin="0,0,30,0" Padding="0" MinWidth="0"
                                           ToolTip="到期时四边同步闪烁庆祝" />
-                                <CheckBox x:Name="TaskNotifyCheck" Content="系统通知"
+                                <CheckBox x:Name="TaskNotifyCheck" Content="系统通知" Margin="0" Padding="0" MinWidth="0"
                                           ToolTip="到期时弹出一次系统气球通知" />
                             </StackPanel>
 

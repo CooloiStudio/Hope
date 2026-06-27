@@ -61,6 +61,27 @@ func TestBuildAllFourLayoutClockwise(t *testing.T) {
 	}
 }
 
+// 低进度覆盖高进度：四边环绕下重叠区由 z 序决定，低进度段须最后生成（绘制在最上层）。
+func TestBuildAllFourLayoutLowCoversHigh(t *testing.T) {
+	start := mustTime("2026-06-25T08:00:00+08:00")
+	now := mustTime("2026-06-25T10:00:00+08:00")
+	tLow := makeTask("low", now, start, mustTime("2026-06-25T18:00:00+08:00"))   // 20%
+	tHigh := makeTask("high", now, start, mustTime("2026-06-25T10:30:00+08:00")) // 80%
+	behaviorsOf := func(*task.Task) []string { return nil }
+
+	// 输入顺序故意是 low 在前、high 在后；修复后应按 pct 降序输出（high 先、low 后）。
+	segs := buildAllFourLayout([]*task.Task{tLow, tHigh}, now, behaviorsOf, "top", "forward", 1920, 1080)
+	if len(segs) == 0 {
+		t.Fatalf("expected segments, got 0")
+	}
+	if segs[0].TaskID != "high" {
+		t.Errorf("first (bottom z) segment should be high-progress, got %s", segs[0].TaskID)
+	}
+	if segs[len(segs)-1].TaskID != "low" {
+		t.Errorf("last (top z) segment should be low-progress, got %s", segs[len(segs)-1].TaskID)
+	}
+}
+
 func TestBuildAllFourLayoutWrapsThreeSides(t *testing.T) {
 	start := mustTime("2026-06-25T08:00:00+08:00")
 	end := mustTime("2026-06-25T18:00:00+08:00")

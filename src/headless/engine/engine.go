@@ -8,6 +8,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -211,8 +212,17 @@ func buildAllFourLayout(tasks []*task.Task, now time.Time, behaviorsOf func(*tas
 	}
 	perim := cum[4]
 
-	var out []task.Segment
-
+	// 先收集可见任务及其进度，再按 pct 降序生成段：
+	// 四边环绕下每个任务都从起点画到自身 pct，重叠区由绘制顺序（z 序）决定；
+	// 桌面端后绘制者在上层，故低进度段需最后 append，才能「低任务进度覆盖高任务进度」。
+	type afItem struct {
+		t       *task.Task
+		pct     float64
+		expired bool
+		endAt   time.Time
+		bs      []string
+	}
+	var items []afItem
 	for _, t := range tasks {
 		if t.Completed {
 			continue
@@ -234,6 +244,19 @@ func buildAllFourLayout(tasks []*task.Task, now time.Time, behaviorsOf func(*tas
 		} else {
 			pct = t.Percent(now)
 		}
+		items = append(items, afItem{t, pct, expired, endAt, bs})
+	}
+	// 降序：高进度先画（在底层），低进度后画（在上层）覆盖之。
+	sort.SliceStable(items, func(i, j int) bool { return items[i].pct > items[j].pct })
+
+	var out []task.Segment
+
+	for _, it := range items {
+		t := it.t
+		pct := it.pct
+		expired := it.expired
+		endAt := it.endAt
+		bs := it.bs
 
 		x := perim * pct / 100.0
 
