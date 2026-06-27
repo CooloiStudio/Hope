@@ -79,7 +79,8 @@ func TestBuildAllFourLayoutWrapsThreeSides(t *testing.T) {
 		}
 	}
 
-	rotations := []float64{0, 0, 180, 0}
+	// 顺时针：起点 top=0°，每进入下一条边再转 90° → 0/90/180/270
+	rotations := []float64{0, 90, 180, 270}
 	for i := 0; i < 4; i++ {
 		if segs[i].ImageRotation != rotations[i] {
 			t.Errorf("segment %d rotation: want %.1f got %.1f", i, rotations[i], segs[i].ImageRotation)
@@ -125,9 +126,9 @@ func TestBuildAllFourLayoutCounterClockwise(t *testing.T) {
 	if segs[1].Gif == "" {
 		t.Errorf("left active segment should carry gif")
 	}
-	// 逆时针：left 边旋转 = 0°（图片水平放置于进度条旁）
-	if segs[1].ImageRotation != 0 {
-		t.Errorf("left edge rotation should be 0, got %.1f", segs[1].ImageRotation)
+	// 逆时针：起点 top=0°，进入第 2 条边(left) 逆向再转 90° → -90° 归一化 270°
+	if segs[1].ImageRotation != 270 {
+		t.Errorf("left edge rotation should be 270 (idx1, ccw), got %.1f", segs[1].ImageRotation)
 	}
 }
 
@@ -140,7 +141,7 @@ func TestBuildAllFourLayoutFromBottom(t *testing.T) {
 	behaviorsOf := func(*task.Task) []string { return nil }
 
 	// bottom + forward => 逆时针，顺序 = bottom -> right -> top -> left
-	// 起点是 bottom，图片底部吸附进度条，旋转 = 180°
+	// 起点是 bottom（idx=0），保持原图朝向，旋转 = 0°
 	segs := buildAllFourLayout(tasks, now, behaviorsOf, "bottom", "forward", 1920, 1080)
 	if len(segs) != 1 {
 		t.Fatalf("expected 1 segment, got %d", len(segs))
@@ -148,8 +149,8 @@ func TestBuildAllFourLayoutFromBottom(t *testing.T) {
 	if segs[0].Position != "bottom" {
 		t.Errorf("expected position bottom, got %s", segs[0].Position)
 	}
-	if segs[0].ImageRotation != 180 {
-		t.Errorf("bottom edge rotation should be 180, got %.1f", segs[0].ImageRotation)
+	if segs[0].ImageRotation != 0 {
+		t.Errorf("bottom start edge rotation should be 0, got %.1f", segs[0].ImageRotation)
 	}
 }
 
@@ -242,14 +243,16 @@ func TestEdgeLen(t *testing.T) {
 	}
 }
 
-// TestRotationForSide 验证各边对应的旋转角度。
-func TestRotationForSide(t *testing.T) {
-	sides := []string{"top", "right", "bottom", "left"}
-	want := []float64{0, 0, 180, 0}
+// TestRotationForSurround 验证按环绕顺序累加的旋转角度。
+func TestRotationForSurround(t *testing.T) {
+	cw := []float64{0, 90, 180, 270}
+	ccw := []float64{0, 270, 180, 90}
 	for i := 0; i < 4; i++ {
-		got := rotationForSide(sides, i)
-		if got != want[i] {
-			t.Errorf("rotationForSide()[%d] = %.1f, want %.1f", i, got, want[i])
+		if got := rotationForSurround("cw", i); got != cw[i] {
+			t.Errorf("rotationForSurround(cw,%d) = %.1f, want %.1f", i, got, cw[i])
+		}
+		if got := rotationForSurround("ccw", i); got != ccw[i] {
+			t.Errorf("rotationForSurround(ccw,%d) = %.1f, want %.1f", i, got, ccw[i])
 		}
 	}
 }

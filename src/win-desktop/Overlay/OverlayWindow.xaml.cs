@@ -133,7 +133,11 @@ public partial class OverlayWindow : Window
             {
                 var maxSize = s.ImageMaxSize > 0 ? s.ImageMaxSize : 15;
                 var (scaledW, scaledH) = GetScaledImageSize(s.Gif!, maxSize);
-                var thickness = IsVertical ? scaledW : scaledH;
+                // 旋转 90°/270° 时占用的宽高互换，带厚度需按旋转后的有效尺寸取。
+                bool quarter = IsQuarterTurn(s.ImageRotation);
+                var ew = quarter ? scaledH : scaledW;  // 水平方向占用
+                var eh = quarter ? scaledW : scaledH;  // 垂直方向占用
+                var thickness = IsVertical ? ew : eh;
                 if (thickness > _imageMaxThickness) _imageMaxThickness = thickness;
             }
         }
@@ -241,13 +245,6 @@ public partial class OverlayWindow : Window
                 DesktopLog.Info($"UpdateSprites pos={Position} dir={Direction} {sig}");
             }
         }
-        // 旋转中心与定位锚点：统一取图片中心 (0.5, 0.5)。
-        // 绕中心旋转可保证任意角度下图片包围盒不变（贴边不偏移）；
-        // 此前 bottom 用 cy=1（底边）作旋转中心，配合 180° 旋转会把图片翻到锚点下方、
-        // 压住进度条且超出窗口被裁剪。改用中心后图片始终停留在 Canvas 摆放位置。
-        // 水平(top/bottom)以 cx 让图片中点对齐前沿；垂直(left/right)以 cy 对齐前沿。
-        double cx = 0.5, cy = 0.5;
-
         foreach (var seg in wanted)
         {
             if (!_sprites.TryGetValue(seg.TaskId, out var sprite))
@@ -265,8 +262,8 @@ public partial class OverlayWindow : Window
                 GifCanvas.Children.Add(sprite.Element);
             }
 
-            // 设置旋转中心和角度
-            sprite.SetRotation(seg.ImageRotation, cx, cy);
+            // 始终绕图片中心 (0.5,0.5) 旋转：包围盒只在中心两侧对称扩展，便于按有效尺寸贴边。
+            sprite.SetRotation(seg.ImageRotation, 0.5, 0.5);
 
             // 正向：填充前沿 = FillEnd
             // 反向：绕整条轨道(100%)镜像 → 前沿 = 100 - FillEnd
@@ -277,35 +274,41 @@ public partial class OverlayWindow : Window
             }
             double front = localFill / 100.0 * (IsVertical ? h : w);
 
-            double left, top;
+            // 旋转 90°/270° 时图片占用的宽高互换；用旋转后的有效尺寸 (ew,eh) 计算贴边位置。
+            bool quarter = IsQuarterTurn(seg.ImageRotation);
+            double ew = quarter ? sprite.Height : sprite.Width;   // 水平方向占用
+            double eh = quarter ? sprite.Width  : sprite.Height;  // 垂直方向占用
+
+            // 绕中心旋转后视觉包围盒中心 = 布局框中心，故按“有效包围盒中心”定位即可贴住进度条。
+            double centerX, centerY;
             if (IsVertical)
             {
-                // left/right 图片水平放置于进度条旁，窗口宽度 = 进度条粗细 + 图片缩放后的宽度
-                if (Position == PositionLeft)
-                {
-                    // 进度条在左，图片在右：图片左边缘紧贴进度条右边缘
-                    left = _barHeightPx;
-                }
-                else // PositionRight
-                {
-                    // 进度条在右，图片在左：图片右边缘紧贴进度条左边缘
-                    left = _imageMaxThickness - sprite.Width;
-                }
-                top = front - sprite.Height * cy;
-                if (top < 0) top = 0;
-                if (top > h - sprite.Height) top = h - sprite.Height;
+                // left：包围盒左缘贴进度条右缘；right：包围盒右缘贴进度条左缘。
+                centerX = Position == PositionLeft ? _barHeightPx + ew / 2.0
+                                                   : _imageMaxThickness - ew / 2.0;
+                centerY = front;
+                if (h >= eh) centerY = Math.Clamp(centerY, eh / 2.0, h - eh / 2.0);
             }
             else
             {
-                left = front - sprite.Width * cx;
-                if (left < 0) left = 0;
-                if (left > w - sprite.Width) left = w - sprite.Width;
-                top = Position == PositionTop ? _barHeightPx : 0;
+                // top：包围盒上缘贴进度条下缘；bottom：包围盒下缘贴进度条上缘。
+                centerY = Position == PositionTop ? _barHeightPx + eh / 2.0
+                                                 : _imageMaxThickness - eh / 2.0;
+                centerX = front;
+                if (w >= ew) centerX = Math.Clamp(centerX, ew / 2.0, w - ew / 2.0);
             }
 
-            Canvas.SetLeft(sprite.Element, left);
-            Canvas.SetTop(sprite.Element, top);
+            Canvas.SetLeft(sprite.Element, centerX - sprite.Width / 2.0);
+            Canvas.SetTop(sprite.Element, centerY - sprite.Height / 2.0);
         }
+    }
+
+    // 旋转角是否为 90°/270°（此时图片占用宽高互换）。
+    private static bool IsQuarterTurn(double angleDeg)
+    {
+        int q = ((int)Math.Round(angleDeg / 90.0)) % 4;
+        if (q < 0) q += 4;
+        return q == 1 || q == 3;
     }
 
     /// <summary>

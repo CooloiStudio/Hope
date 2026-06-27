@@ -269,7 +269,7 @@ func buildAllFourLayout(tasks []*task.Task, now time.Time, behaviorsOf func(*tas
 				Behaviors:     bs,
 				Position:      pos,
 				Direction:     localDirection(pos, surroundDir),
-				ImageRotation: rotationForSide(sides, i),
+				ImageRotation: rotationForSurround(surroundDir, i),
 			}
 			if isActive {
 				seg.Gif = t.Gif
@@ -408,25 +408,21 @@ func edgeLen(side string, w, h float64) float64 {
 	return h
 }
 
-// rotationForSide 返回 sides[idx] 对应的图片旋转角度（度）。
-// 水平边（top/bottom）保持图片水平，并让对应边缘吸附进度条：
-//   top    → 图片顶部吸附 → 旋转 0°
-//   bottom → 图片底部吸附 → 旋转 180°
-// 垂直边（left/right）将图片水平放置于进度条旁边，均为 0°。
-// 此映射只取决于目标边的位置，与环绕方向无关。
-func rotationForSide(sides []string, idx int) float64 {
-	switch sides[idx] {
-	case "top":
-		return 0
-	case "right":
-		return 0
-	case "bottom":
-		return 180
-	case "left":
-		return 0
-	default:
-		return 0
+// rotationForSurround 返回环绕顺序中第 idx 条边的图片旋转角度（度）。
+// 规则：起始边（idx=0）保持原图朝向（0°），之后每进入下一条边沿环绕方向再转 90°。
+//   顺时针(cw)：0, 90, 180, 270
+//   逆时针(ccw)：0, 270, 180, 90
+// 即旋转量只取决于「从起点出发走过几条边」与环绕方向，与边的绝对位置无关。
+func rotationForSurround(surroundDir string, idx int) float64 {
+	step := 90.0
+	if surroundDir != "cw" {
+		step = -90.0
 	}
+	a := math.Mod(step*float64(idx), 360)
+	if a < 0 {
+		a += 360
+	}
+	return a
 }
 
 // localDirection 返回某条边在给定环绕方向下的本地填充方向。

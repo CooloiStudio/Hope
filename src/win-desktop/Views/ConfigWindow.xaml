@@ -150,7 +150,7 @@
                                         IsSnapToTickEnabled="True" VerticalAlignment="Center" />
                             </DockPanel>
 
-                            <TextBlock Text="进度条高度（px）" Margin="0,12,0,2" />
+                            <TextBlock Text="粗细（px）" Margin="0,12,0,2" />
                             <DockPanel LastChildFill="True">
                                 <TextBlock x:Name="BarHeightValueText" DockPanel.Dock="Right"
                                            Width="20" TextAlignment="Center" VerticalAlignment="Center"
@@ -159,7 +159,7 @@
                                         IsSnapToTickEnabled="True" VerticalAlignment="Center" />
                             </DockPanel>
 
-                            <TextBlock Text="进度条位置" Margin="0,12,0,2" />
+                            <TextBlock Text="起始位置" Margin="0,12,0,2" />
                             <ComboBox x:Name="BarPositionBox" HorizontalAlignment="Stretch"
                                       SelectionChanged="OnBarPositionChanged"
                                       ToolTip="进度条在屏幕上的位置">
@@ -169,7 +169,7 @@
                                 <ComboBoxItem Content="屏幕右边" Tag="right" />
                             </ComboBox>
 
-                            <TextBlock Text="进度条方向" Margin="0,12,0,2" />
+                            <TextBlock Text="前进方向" Margin="0,12,0,2" />
                             <ComboBox x:Name="BarDirectionBox" HorizontalAlignment="Stretch"
                                       SelectionChanged="OnBarDirectionChanged"
                                       ToolTip="根据位置自动选择默认方向；可手动覆盖">
