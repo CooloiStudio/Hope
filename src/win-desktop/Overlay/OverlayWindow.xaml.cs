@@ -241,15 +241,12 @@ public partial class OverlayWindow : Window
                 DesktopLog.Info($"UpdateSprites pos={Position} dir={Direction} {sig}");
             }
         }
-        // 旋转中心比例（相对于图片自身尺寸）
-        // top/bottom 保持图片水平并让对应边缘吸附进度条；
-        // left/right 将图片水平放置于进度条旁，中心对齐 fillEnd。
+        // 旋转中心与定位锚点：统一取图片中心 (0.5, 0.5)。
+        // 绕中心旋转可保证任意角度下图片包围盒不变（贴边不偏移）；
+        // 此前 bottom 用 cy=1（底边）作旋转中心，配合 180° 旋转会把图片翻到锚点下方、
+        // 压住进度条且超出窗口被裁剪。改用中心后图片始终停留在 Canvas 摆放位置。
+        // 水平(top/bottom)以 cx 让图片中点对齐前沿；垂直(left/right)以 cy 对齐前沿。
         double cx = 0.5, cy = 0.5;
-        switch (Position)
-        {
-            case PositionTop:    cy = 0; break;
-            case PositionBottom: cy = 1; break;
-        }
 
         foreach (var seg in wanted)
         {
