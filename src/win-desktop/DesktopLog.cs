@@ -32,6 +32,7 @@ internal static class DesktopLog
         {
             var line = $"{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff} [{level}] [{ThreadTag()}] {message}";
             System.Diagnostics.Trace.WriteLine(line);
+            System.Diagnostics.Debug.WriteLine(line);
             lock (Gate)
             {
                 System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(LogPath)!);

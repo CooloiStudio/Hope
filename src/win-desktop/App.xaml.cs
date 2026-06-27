@@ -99,7 +99,7 @@ public partial class App : Application
 
     private void OnSettingsReceived(SettingsDto s)
     {
-        DesktopLog.Info($"App.OnSettingsReceived barHeightPx={s.BarHeightPx} showConfigAtRuntime={s.ShowConfigAtRuntime} barPosition={s.BarPosition}");
+        DesktopLog.Info($"App.OnSettingsReceived barHeightPx={s.BarHeightPx} showConfigAtRuntime={s.ShowConfigAtRuntime} barPosition={s.BarPosition} barDirection={s.BarDirection}");
         Dispatcher.BeginInvoke(() =>
         {
             _barHeightPx = Math.Clamp(s.BarHeightPx, 1, 10);
@@ -179,18 +179,23 @@ public partial class App : Application
 
         foreach (var pos in wanted)
         {
+            var dir = LocalDirectionFor(pos);
             if (!_overlays.ContainsKey(pos))
             {
                 _overlays[pos] = new OverlayWindow
                 {
                     Position = pos,
-                    Direction = LocalDirectionFor(pos),
+                    Direction = dir,
                 };
+                DesktopLog.Info($"EnsureOverlays created pos={pos} direction={dir}");
             }
             else
             {
+                var oldDir = _overlays[pos].Direction;
                 _overlays[pos].Position = pos;
-                _overlays[pos].Direction = LocalDirectionFor(pos);
+                _overlays[pos].Direction = dir;
+                if (oldDir != dir)
+                    DesktopLog.Info($"EnsureOverlays updated pos={pos} direction={oldDir}->{dir}");
             }
         }
     }

@@ -2,6 +2,22 @@
 
 ## v0.8 (2026-06-26)
 
+### v0.8.16 (2026-06-27)
+
+#### 修复
+
+- **`DesktopLog` 新增 `Debug.WriteLine` 输出**：之前日志只写入文件（`hope-desktop.log`）和 `Trace.WriteLine`，导致 VS Code debug console 无法看到；现在同时输出到 `Debug.WriteLine`，直接在调试控制台可见。
+- **`Render()` 和 `UpdateSprites()` 新增渲染状态调试日志**：当渲染签名变化时输出 `Position`、`Direction`、`reverse`、`barStart`、`barEnd`、`fillEnd` 等关键值，便于定位方向/位置问题。
+- **`EnsureOverlays()` 新增方向变更日志**：当窗口 `Direction` 发生变化时输出日志（如 `direction=forward->reverse`），便于确认设置是否正确下发。
+- **版本号**：更新至 `v0.8.16`。
+
+### v0.8.15 (2026-06-27)
+
+#### 修复
+
+- **`OnSettingsReceived` 日志补充 `barDirection` 字段**：之前日志只输出 `barPosition`，缺少方向信息（forward/reverse），导致 debug console 里无法确认当前方向。现在日志格式为 `barPosition=top barDirection=forward`，方便调试。
+- **版本号**：更新至 `v0.8.15`。
+
 ### v0.8.14 (2026-06-27)
 
 #### 新增

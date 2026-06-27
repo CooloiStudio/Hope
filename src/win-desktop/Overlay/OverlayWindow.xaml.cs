@@ -62,6 +62,10 @@ public partial class OverlayWindow : Window
     private readonly HashSet<string> _blinkingIds = new();
     // 上次渲染的分段签名：未变化时跳过重建，避免每秒重置闪烁动画导致渐变不连续。
     private string _lastRenderSig = "";
+    // 上次渲染日志签名：避免同一状态下重复输出 debug 日志。
+    private string _lastRenderLogSig = "";
+    // 上次图片位置日志签名：避免同一状态下重复输出 debug 日志。
+    private string _lastSpriteLogSig = "";
 
     public OverlayWindow()
     {
@@ -220,6 +224,23 @@ public partial class OverlayWindow : Window
 
         double w = Width;
         double h = Height;
+        // debug 日志：图片位置计算状态变化时输出一次。
+        {
+            var sb = new System.Text.StringBuilder();
+            sb.Append(Position).Append('|').Append(Direction).Append('|');
+            foreach (var seg in wanted)
+            {
+                bool rev = IsSegReverse(seg);
+                double localFill = rev ? seg.BarEnd - (seg.FillEnd - seg.BarStart) : seg.FillEnd;
+                sb.Append(seg.TaskId).Append(':').Append(rev ? "rev" : "fwd").Append(':').Append(localFill).Append(';');
+            }
+            string sig = sb.ToString();
+            if (sig != _lastSpriteLogSig)
+            {
+                _lastSpriteLogSig = sig;
+                DesktopLog.Info($"UpdateSprites pos={Position} dir={Direction} {sig}");
+            }
+        }
         // 旋转中心比例（相对于图片自身尺寸）
         // top/bottom 保持图片水平并让对应边缘吸附进度条；
         // left/right 将图片水平放置于进度条旁，中心对齐 fillEnd。
@@ -347,6 +368,18 @@ public partial class OverlayWindow : Window
         string sig = BuildRenderSignature(w, h);
         if (sig == _lastRenderSig && BarCanvas.Children.Count > 0) return;
         _lastRenderSig = sig;
+
+        // debug 日志：渲染状态变化时输出一次，便于定位方向/位置问题。
+        if (sig != _lastRenderLogSig)
+        {
+            _lastRenderLogSig = sig;
+            foreach (var seg in _segments)
+            {
+                bool rev = IsSegReverse(seg);
+                DesktopLog.Info($"Render pos={Position} dir={Direction} segDir={seg.Direction} reverse={rev} " +
+                               $"barStart={seg.BarStart} barEnd={seg.BarEnd} fillEnd={seg.FillEnd}");
+            }
+        }
 
         BarCanvas.Children.Clear();
         _blinkRects.Clear();
