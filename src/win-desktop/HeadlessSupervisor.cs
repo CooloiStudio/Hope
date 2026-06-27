@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.IO;
+using System.Text;
 
 namespace Hope.Desktop;
 
@@ -10,6 +11,7 @@ public sealed class HeadlessSupervisor : IDisposable
 {
     private readonly CancellationTokenSource _cts = new();
     private volatile bool _quitting;
+    private Process? _currentProcess;
 
     public void Start() => _ = Task.Run(LoopAsync);
 
@@ -31,6 +33,15 @@ public sealed class HeadlessSupervisor : IDisposable
                         CreateNoWindow = true,
                         WindowStyle = ProcessWindowStyle.Hidden,
                     };
+
+                    // 调试模式下重定向 headless 的输出到 VS Code / IDE 的 Debug console。
+                    if (Debugger.IsAttached)
+                    {
+                        psi.RedirectStandardOutput = true;
+                        psi.RedirectStandardError = true;
+                        psi.ArgumentList.Add("--debug");
+                    }
+
                     // 传入自身路径，接通反方向互拉：Desktop 异常退出时由 Headless 重新拉起（文档 §3.3）。
                     var selfPath = Environment.ProcessPath;
                     if (!string.IsNullOrEmpty(selfPath))
@@ -38,13 +49,35 @@ public sealed class HeadlessSupervisor : IDisposable
                         psi.ArgumentList.Add("--desktop");
                         psi.ArgumentList.Add(selfPath);
                     }
-                    Process.Start(psi);
+
+                    _currentProcess = Process.Start(psi);
+                    if (_currentProcess != null && Debugger.IsAttached)
+                    {
+                        _ = Task.Run(() => ForwardStreamAsync(_currentProcess.StandardOutput, false, _cts.Token));
+                        _ = Task.Run(() => ForwardStreamAsync(_currentProcess.StandardError, true, _cts.Token));
+                    }
                 }
             }
             catch { /* 下一轮重试 */ }
 
             await Task.Delay(2000).ContinueWith(_ => { }).ConfigureAwait(false);
         }
+    }
+
+    private static async Task ForwardStreamAsync(StreamReader reader, bool isError, CancellationToken ct)
+    {
+        try
+        {
+            while (!ct.IsCancellationRequested)
+            {
+                var line = await reader.ReadLineAsync(ct).ConfigureAwait(false);
+                if (line == null) break;
+                var prefix = isError ? "[headless:err]" : "[headless:out]";
+                Debug.WriteLine($"{prefix} {line}");
+            }
+        }
+        catch (OperationCanceledException) { }
+        catch (IOException) { }
     }
 
     private static string? ResolveHeadlessPath()
@@ -67,5 +100,6 @@ public sealed class HeadlessSupervisor : IDisposable
     {
         _quitting = true;
         _cts.Cancel();
+        _currentProcess?.Dispose();
     }
 }

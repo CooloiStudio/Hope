@@ -2,6 +2,15 @@
 
 ## v0.8 (2026-06-26)
 
+### v0.8.7 (2026-06-27)
+
+#### 新增与修复
+
+- **四边环绕调试日志**：`engine.writeAllFourDebugLog` 现在同时输出到 `%APPDATA%\Hope\logs\allfour-debug.log` 与 `stderr`（VS Code debug console 可捕获）。
+- **调试日志开关**：移除 `HOPE_DEBUG_ALLFOUR` 环境变量限制；四边环绕调试日志仅在勾选"我全都要（四边环绕）"时才会输出。
+- **WPF 调试转发**：当 IDE 调试器附加（`Debugger.IsAttached`）时，`HeadlessSupervisor` 会自动为 `hope-headless.exe` 添加 `--debug` 并转发其 stdout/stderr 到 `Debug.WriteLine`，便于在 VS Code debug console 中直接查看 headless 日志。
+- **版本号**：更新至 `v0.8.7`。
+
 ### 新增功能
 
 #### 1. 进度条位置与方向设置

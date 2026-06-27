@@ -265,19 +265,17 @@ func buildAllFourLayout(tasks []*task.Task, now time.Time, behaviorsOf func(*tas
 			out = append(out, seg)
 		}
 	}
-	// 调试日志：写入 %APPDATA%\Hope\logs\allfour-debug.log
+	// 调试日志：写入 %APPDATA%\Hope\logs\allfour-debug.log 并输出到 stderr
+	// 仅在四边环绕模式下调用，因此日志只在勾选"我全都要"时输出。
 	writeAllFourDebugLog(w, h, sides, cum, perim, tasks, now, out)
 
 	return out
 }
 
-// writeAllFourDebugLog 将四边环绕的关键计算值写入调试日志文件。
-// 仅当环境变量 HOPE_DEBUG_ALLFOUR=1 时写入，避免影响性能。
+// writeAllFourDebugLog 将四边环绕的关键计算值写入调试日志文件并输出到 stderr。
+// 仅当四边环绕模式启用时由 buildAllFourLayout 调用，因此日志只在勾选"我全都要"时输出。
 // 文件位于 %APPDATA%\Hope\logs\allfour-debug.log，每次调用覆盖写入最新状态。
 func writeAllFourDebugLog(screenW, screenH float64, sides []string, cum []float64, perim float64, tasks []*task.Task, now time.Time, out []task.Segment) {
-	if os.Getenv("HOPE_DEBUG_ALLFOUR") == "" {
-		return
-	}
 	dir := os.Getenv("APPDATA")
 	if dir == "" {
 		dir = os.TempDir()
@@ -309,7 +307,9 @@ func writeAllFourDebugLog(screenW, screenH float64, sides []string, cum []float6
 			i, seg.Position, seg.BarEnd, seg.Direction, seg.ImageRotation, seg.Gif != ""))
 	}
 
-	os.WriteFile(logPath, []byte(sb.String()), 0644)
+	content := sb.String()
+	os.WriteFile(logPath, []byte(content), 0644)
+	fmt.Fprint(os.Stderr, content)
 }
 
 // deriveAllFourOrders 返回以 startPos 为起点的四边环绕顺序。
