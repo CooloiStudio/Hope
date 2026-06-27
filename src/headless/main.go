@@ -24,6 +24,10 @@ import (
 	"hope/headless/ipc"
 )
 
+// Version 由构建时通过 -ldflags "-X main.Version=vX.Y.Z" 注入。
+// 未注入时默认为 "dev"。
+var Version = "dev"
+
 func main() {
 	debug := flag.Bool("debug", false, "输出日志到控制台并启用 debug 级别")
 	desktop := flag.String("desktop", "", "可选：hope-desktop.exe 路径，提供后将监视并在其退出时重新拉起")
@@ -41,7 +45,8 @@ func main() {
 		log.Error("load config failed", "err", err)
 		os.Exit(1)
 	}
-	log.Info("hope-headless starting", "dataDir", config.Dir())
+	log.Info("hope-headless starting", "version", Version, "dataDir", config.Dir())
+	engine.SetVersion(Version)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	var quitting atomic.Bool

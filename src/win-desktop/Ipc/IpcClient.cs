@@ -38,6 +38,9 @@ public sealed class IpcClient : IDisposable
     /// <summary>收到 getSettings 响应时触发。</summary>
     public event Action<SettingsDto>? SettingsReceived;
 
+    /// <summary>收到 getVersion 响应时触发。</summary>
+    public event Action<string>? VersionReceived;
+
     /// <summary>连接状态变化。</summary>
     public event Action<bool>? ConnectionChanged;
 
@@ -110,6 +113,19 @@ public sealed class IpcClient : IDisposable
                     {
                         DesktopLog.Info($"IPC dispatch type=settings barHeightPx={settings.BarHeightPx}");
                         SettingsReceived?.Invoke(settings);
+                    }
+                    return;
+                }
+                if (type == "version")
+                {
+                    if (doc.RootElement.TryGetProperty("version", out var v))
+                    {
+                        var ver = v.GetString();
+                        if (ver != null)
+                        {
+                            DesktopLog.Info($"IPC dispatch type=version version={ver}");
+                            VersionReceived?.Invoke(ver);
+                        }
                     }
                     return;
                 }

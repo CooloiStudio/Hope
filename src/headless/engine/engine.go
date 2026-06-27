@@ -17,6 +17,18 @@ import (
 	"hope/headless/task"
 )
 
+// buildVersion 由 main.SetVersion 注入，默认为 "dev"。
+// 通过构建时 -ldflags "-X main.Version=vX.Y.Z" 设置 main.Version，
+// 再由 main 调用 SetVersion 传入本包。
+var buildVersion = "dev"
+
+// SetVersion 设置构建版本号，由 main 包在启动时调用。
+func SetVersion(v string) {
+	if v != "" {
+		buildVersion = v
+	}
+}
+
 // Engine 持有运行期状态（暂停 / 隐藏 / 到期信号）。
 type Engine struct {
 	store *config.Store
@@ -518,6 +530,8 @@ func (e *Engine) HandleCommand(cmd ipc.Command) any {
 	case "listTasks":
 		_, tasks := e.store.Snapshot()
 		return map[string]any{"type": "tasks", "tasks": tasks}
+	case "getVersion":
+		return map[string]any{"type": "version", "version": buildVersion}
 	case "getSettings":
 		settings, _ := e.store.Snapshot()
 		return map[string]any{"type": "settings", "settings": settings}

@@ -62,6 +62,7 @@ public partial class App : Application
         _ipc = new IpcClient();
         _ipc.StateReceived += OnStateReceived;
         _ipc.SettingsReceived += OnSettingsReceived;
+        _ipc.VersionReceived += OnVersionReceived;
         _ipc.ConnectionChanged += OnConnectionChanged;
         _ipc.Start();
 
@@ -75,6 +76,7 @@ public partial class App : Application
         if (connected)
         {
             _ipc.Send(new Command { Action = "getSettings" });
+            _ipc.Send(new Command { Action = "getVersion" });
             SendScreenSize();
         }
     }
@@ -109,6 +111,18 @@ public partial class App : Application
             {
                 _startupConfigHandled = true;
                 if (s.ShowConfigAtRuntime) ShowConfig();
+            }
+        });
+    }
+
+    private void OnVersionReceived(string version)
+    {
+        DesktopLog.Info($"App.OnVersionReceived headlessVersion={version}");
+        Dispatcher.BeginInvoke(() =>
+        {
+            if (_tray != null)
+            {
+                _tray.Text = $"Hope v{version}";
             }
         });
     }
