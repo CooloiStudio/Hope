@@ -141,22 +141,23 @@
                                            FontSize="12" />
                             </Grid>
 
-                            <TextBlock Text="刷新间隔（秒，进度条更新频率）" Margin="0,6,0,2" />
-                            <DockPanel LastChildFill="True">
-                                <TextBlock x:Name="RefreshValueText" DockPanel.Dock="Right"
-                                           Width="20" TextAlignment="Center" VerticalAlignment="Center"
-                                           Margin="8,0,0,0" Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
-                                <Slider x:Name="RefreshBox" Minimum="1" Maximum="10" TickFrequency="1"
-                                        IsSnapToTickEnabled="True" VerticalAlignment="Center" />
-                            </DockPanel>
-
-                            <TextBlock Text="粗细（px）" Margin="0,12,0,2" />
+                            <TextBlock Text="粗细（px）" Margin="0,6,0,2" />
                             <DockPanel LastChildFill="True">
                                 <TextBlock x:Name="BarHeightValueText" DockPanel.Dock="Right"
                                            Width="20" TextAlignment="Center" VerticalAlignment="Center"
                                            Margin="8,0,0,0" Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
                                 <Slider x:Name="BarHeightBox" Minimum="1" Maximum="10" TickFrequency="1"
                                         IsSnapToTickEnabled="True" VerticalAlignment="Center" />
+                            </DockPanel>
+
+                            <TextBlock Text="图片最大高度（px）" Margin="0,12,0,2" />
+                            <DockPanel LastChildFill="True">
+                                <TextBlock x:Name="ImageMaxHeightValueText" DockPanel.Dock="Right"
+                                           Width="24" TextAlignment="Center" VerticalAlignment="Center"
+                                           Margin="8,0,0,0" Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
+                                <Slider x:Name="ImageMaxHeightBox" Minimum="15" Maximum="30" TickFrequency="1"
+                                        IsSnapToTickEnabled="True" VerticalAlignment="Center"
+                                        ToolTip="所有任务图片统一的最大高度，超出按比例缩放" />
                             </DockPanel>
 
                             <TextBlock Text="起始位置" Margin="0,12,0,2" />
@@ -169,25 +170,34 @@
                                 <ComboBoxItem Content="屏幕右边" Tag="right" />
                             </ComboBox>
 
-                            <TextBlock Text="前进方向" Margin="0,12,0,2" />
-                            <ComboBox x:Name="BarDirectionBox" HorizontalAlignment="Stretch"
-                                      SelectionChanged="OnBarDirectionChanged"
-                                      ToolTip="根据位置自动选择默认方向；可手动覆盖">
-                                <ComboBoxItem Content="默认" Tag="" IsSelected="True" />
-                                <ComboBoxItem Content="从左到右" Tag="forward" />
-                                <ComboBoxItem Content="从右到左" Tag="reverse" />
-                                <ComboBoxItem Content="从上到下" Tag="forward" />
-                                <ComboBoxItem Content="从下到上" Tag="reverse" />
-                            </ComboBox>
-
                             <CheckBox x:Name="ShowAdvancedSettingsCheck" Content="显示高级设置"
                                       Margin="0,12,0,0"
                                       Checked="OnShowAdvancedSettingsChanged" Unchecked="OnShowAdvancedSettingsChanged"
                                       ToolTip="勾选后展开高级选项" />
 
                             <StackPanel x:Name="AdvancedOptionsPanel" Margin="0,4,0,0" Visibility="Collapsed">
+                                <TextBlock Text="前进方向" Margin="0,6,0,2" />
+                                <ComboBox x:Name="BarDirectionBox" HorizontalAlignment="Stretch"
+                                          SelectionChanged="OnBarDirectionChanged"
+                                          ToolTip="根据位置自动选择默认方向；可手动覆盖">
+                                    <ComboBoxItem Content="默认" Tag="" IsSelected="True" />
+                                    <ComboBoxItem Content="从左到右" Tag="forward" />
+                                    <ComboBoxItem Content="从右到左" Tag="reverse" />
+                                    <ComboBoxItem Content="从上到下" Tag="forward" />
+                                    <ComboBoxItem Content="从下到上" Tag="reverse" />
+                                </ComboBox>
+
+                                <TextBlock Text="刷新间隔（秒，进度条更新频率）" Margin="0,12,0,2" />
+                                <DockPanel LastChildFill="True">
+                                    <TextBlock x:Name="RefreshValueText" DockPanel.Dock="Right"
+                                               Width="20" TextAlignment="Center" VerticalAlignment="Center"
+                                               Margin="8,0,0,0" Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
+                                    <Slider x:Name="RefreshBox" Minimum="1" Maximum="10" TickFrequency="1"
+                                            IsSnapToTickEnabled="True" VerticalAlignment="Center" />
+                                </DockPanel>
+
                                 <CheckBox x:Name="AllFourCheck" Content="我全都要（四边环绕）"
-                                          Margin="0,6,0,0"
+                                          Margin="0,12,0,0"
                                           Checked="OnAllFourChanged" Unchecked="OnAllFourChanged"
                                           ToolTip="从当前位置出发，沿当前方向环绕屏幕四边" />
 
@@ -204,18 +214,17 @@
                                            FontSize="12" />
                             </Grid>
 
-                            <TextBlock Text="提醒效果" Margin="0,12,0,2"
+                            <TextBlock Text="到期提醒效果（默认自动显示，可叠加勾选）" Margin="0,12,0,2"
                                        TextWrapping="Wrap" />
-                            <ComboBox x:Name="GlobalModeBox" HorizontalAlignment="Stretch"
-                                      ToolTip="到期后顶栏的显示方式（四选一）">
-                                <ComboBoxItem Content="保持显示" Tag="keep" />
-                                <ComboBoxItem Content="自动隐藏" Tag="hide" />
-                                <ComboBoxItem Content="闪烁提醒" Tag="blink" />
-                                <ComboBoxItem Content="庆祝模式（四边闪烁）" Tag="celebrate" />
-                            </ComboBox>
+                            <CheckBox x:Name="GlobalBlinkCheck" Content="闪烁提醒"
+                                      Margin="0,4,0,0"
+                                      ToolTip="到期后顶栏柔和闪烁，直到用户查看" />
+                            <CheckBox x:Name="GlobalCelebrateCheck" Content="全屏庆祝"
+                                      Margin="0,6,0,0"
+                                      ToolTip="到期时四边同步闪烁庆祝" />
                             <CheckBox x:Name="GlobalNotifyCheck" Content="系统通知"
-                                      Margin="0,8,0,0"
-                                      ToolTip="到期时弹出一次系统气球通知（可与显示模式叠加）" />
+                                      Margin="0,6,0,0"
+                                      ToolTip="到期时弹出一次系统气球通知" />
 
                             <Grid Margin="0,6,0,8">
                                 <Border Height="1" VerticalAlignment="Center" Background="{DynamicResource ControlStrokeColorDefaultBrush}" />
@@ -293,15 +302,6 @@
                                             ToolTip="支持任意图片格式；可直接拖放图片文件到此。图片挂在进度条下方，跟随该任务进度前沿移动，动图循环播放（超过 15px 自动缩放）" />
                             </DockPanel>
 
-                            <!-- 图片最大尺寸 -->
-                            <DockPanel Margin="0,6,0,0">
-                                <TextBlock Style="{StaticResource FieldLabel}" Text="最大尺寸" />
-                                <TextBlock x:Name="ImageMaxSizeValueText" DockPanel.Dock="Right" Width="24"
-                                           TextAlignment="Center" VerticalAlignment="Center" Margin="8,0,0,0" />
-                                <Slider x:Name="ImageMaxSizeBox" Minimum="15" Maximum="30" TickFrequency="1"
-                                        IsSnapToTickEnabled="True" VerticalAlignment="Center" Value="15" />
-                            </DockPanel>
-
                             <Separator Style="{StaticResource TaskEditSeparator}" />
 
                             <!-- 类型 -->
@@ -351,22 +351,22 @@
                                 </DockPanel>
                             </StackPanel>
 
-                            <!-- 到期提醒：显示模式下拉 + 通知勾选，单行 -->
+                            <!-- 到期提醒：默认自动显示；勾「使用全局默认」沿用全局，否则可叠加勾选 -->
                             <DockPanel Margin="0,6,0,0">
-                                <TextBlock Style="{StaticResource FieldLabel}" Text="到期提醒" />
-                                <CheckBox x:Name="TaskNotifyCheck" DockPanel.Dock="Right" Content="系统通知"
-                                          VerticalAlignment="Center" Margin="8,0,0,0"
-                                          ToolTip="到期时弹出一次系统气球通知（可与显示模式叠加）" />
-                                <ComboBox x:Name="TaskModeBox" HorizontalAlignment="Stretch"
-                                          SelectionChanged="OnTaskModeChanged"
-                                          ToolTip="到期后顶栏的显示方式；选「使用全局默认」则沿用全局设置（含系统通知），此时本任务通知不可单独勾选">
-                                    <ComboBoxItem Content="使用全局默认" Tag="global" />
-                                    <ComboBoxItem Content="保持显示" Tag="keep" />
-                                    <ComboBoxItem Content="自动隐藏" Tag="hide" />
-                                    <ComboBoxItem Content="闪烁提醒" Tag="blink" />
-                                    <ComboBoxItem Content="庆祝模式（四边闪烁）" Tag="celebrate" />
-                                </ComboBox>
+                                <TextBlock Style="{StaticResource FieldLabel}" Text="到期提醒" VerticalAlignment="Center" />
+                                <CheckBox x:Name="TaskUseGlobalCheck" Content="使用全局默认"
+                                          VerticalAlignment="Center"
+                                          Checked="OnTaskUseGlobalChanged" Unchecked="OnTaskUseGlobalChanged"
+                                          ToolTip="勾选则本任务沿用全局到期提醒；取消后可单独叠加勾选下列效果" />
                             </DockPanel>
+                            <StackPanel x:Name="TaskBehaviorPanel" Orientation="Horizontal" Margin="56,4,0,0">
+                                <CheckBox x:Name="TaskBlinkCheck" Content="闪烁提醒" Margin="0,0,12,0"
+                                          ToolTip="到期后顶栏柔和闪烁，直到用户查看" />
+                                <CheckBox x:Name="TaskCelebrateCheck" Content="全屏庆祝" Margin="0,0,12,0"
+                                          ToolTip="到期时四边同步闪烁庆祝" />
+                                <CheckBox x:Name="TaskNotifyCheck" Content="系统通知"
+                                          ToolTip="到期时弹出一次系统气球通知" />
+                            </StackPanel>
 
                             <StackPanel x:Name="StartPanel">
                                 <Separator Style="{StaticResource TaskEditSeparator}" />

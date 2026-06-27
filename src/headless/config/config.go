@@ -21,6 +21,8 @@ func stripBOM(b []byte) []byte { return bytes.TrimPrefix(b, utf8BOM) }
 // ExpiredBehaviors 为「全局默认」到期提醒（多选）；任务可在 task.Task.ExpiredBehaviors 单独覆盖。
 type Settings struct {
 	BarHeightPx         int      `json:"barHeightPx"`
+	// ImageMaxHeightPx 为图片最大高度（px，全局统一）；段图片按此高度等比缩放。
+	ImageMaxHeightPx    int      `json:"imageMaxHeightPx"`
 	ExpiredBehaviors    []string `json:"expiredBehaviors"`
 	RefreshSec          int      `json:"refreshSec"`
 	Monitor             string   `json:"monitor"` // 首版仅 "primary"
@@ -48,7 +50,9 @@ type Settings struct {
 func DefaultSettings() Settings {
 	return Settings{
 		BarHeightPx:         4,
-		ExpiredBehaviors:    []string{task.BehaviorKeep},
+		ImageMaxHeightPx:    15,
+		// 默认到期后自动显示（保持满色段），不附加额外效果；可叠加 blink/celebrate/notify。
+		ExpiredBehaviors:    []string{},
 		RefreshSec:          1,
 		Monitor:             "primary",
 		Autostart:           false,
@@ -117,12 +121,15 @@ func mergeSettings(def, loaded Settings) Settings {
 	if loaded.BarHeightPx > 0 {
 		out.BarHeightPx = loaded.BarHeightPx
 	}
+	if loaded.ImageMaxHeightPx > 0 {
+		out.ImageMaxHeightPx = loaded.ImageMaxHeightPx
+	}
 	switch {
 	case len(loaded.ExpiredBehaviors) > 0:
-		out.ExpiredBehaviors = loaded.ExpiredBehaviors
+		out.ExpiredBehaviors = sanitizeBehaviors(loaded.ExpiredBehaviors)
 	case loaded.LegacyExpiredBehavior != "":
-		// 旧版单值 → 迁移为多选集合
-		out.ExpiredBehaviors = []string{loaded.LegacyExpiredBehavior}
+		// 旧版单值 → 迁移为多选集合（keep/hide 已废弃，过滤掉）
+		out.ExpiredBehaviors = sanitizeBehaviors([]string{loaded.LegacyExpiredBehavior})
 	}
 	if loaded.RefreshSec > 0 {
 		out.RefreshSec = loaded.RefreshSec
@@ -154,6 +161,23 @@ func mergeSettings(def, loaded Settings) Settings {
 	}
 	if loaded.ScreenHeight > 0 {
 		out.ScreenHeight = loaded.ScreenHeight
+	}
+	return out
+}
+
+// sanitizeBehaviors 仅保留可叠加的有效到期提醒（blink/celebrate/notify），
+// 过滤已废弃的 keep/hide（新模型默认即「自动显示」）。返回非 nil 切片（可能为空）。
+func sanitizeBehaviors(bs []string) []string {
+	out := make([]string, 0, len(bs))
+	seen := map[string]bool{}
+	for _, b := range bs {
+		switch b {
+		case task.BehaviorBlink, task.BehaviorCelebrate, task.BehaviorNotify:
+			if !seen[b] {
+				seen[b] = true
+				out = append(out, b)
+			}
+		}
 	}
 	return out
 }
@@ -220,9 +244,36 @@ func (s *Store) DeleteTask(id string) {
 }
 
 // UpdateSettings 覆盖设置并持久化。
+// 约定：Desktop 的 updateSettings 携带完整用户意图，故以下字段允许「显式置空/默认」覆盖，
+// 不再走「非零才覆盖」：ExpiredBehaviors（可清空＝无附加效果）、BarDirection（""＝自动）。
+// 屏幕尺寸不由此命令维护（见 SetScreen），缺省（≤0）时保留现值，避免被默认值覆盖。
 func (s *Store) UpdateSettings(ns Settings) {
 	s.mu.Lock()
-	s.Settings = mergeSettings(s.Settings, ns)
+	cur := s.Settings
+	merged := mergeSettings(cur, ns)
+	merged.ExpiredBehaviors = sanitizeBehaviors(ns.ExpiredBehaviors)
+	merged.BarDirection = ns.BarDirection
+	if ns.ScreenWidth <= 0 {
+		merged.ScreenWidth = cur.ScreenWidth
+	}
+	if ns.ScreenHeight <= 0 {
+		merged.ScreenHeight = cur.ScreenHeight
+	}
+	s.Settings = merged
+	s.mu.Unlock()
+	_ = s.SaveSettings()
+}
+
+// SetScreen 仅更新主屏幕工作区尺寸并持久化，不触碰其它设置。
+// Desktop 启动/连接时上报屏幕尺寸走此路径，避免误用默认值覆盖用户设置。
+func (s *Store) SetScreen(w, h float64) {
+	s.mu.Lock()
+	if w > 0 {
+		s.Settings.ScreenWidth = w
+	}
+	if h > 0 {
+		s.Settings.ScreenHeight = h
+	}
 	s.mu.Unlock()
 	_ = s.SaveSettings()
 }

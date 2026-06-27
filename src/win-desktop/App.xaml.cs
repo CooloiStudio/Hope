@@ -81,12 +81,15 @@ public partial class App : Application
         }
     }
 
+    // 仅上报屏幕尺寸，使用独立的 screenSize 命令；切勿走 updateSettings，
+    // 否则 SettingsDto 的默认值（barHeightPx=4、barPosition=top、expiredBehaviors 等）
+    // 会经服务端 mergeSettings 把用户已保存的全局设置覆盖为默认值（启动即丢设置）。
     private void SendScreenSize()
     {
         var rect = SystemParameters.WorkArea;
         _ipc.Send(new Command
         {
-            Action = "updateSettings",
+            Action = "screenSize",
             Settings = new SettingsDto
             {
                 ScreenWidth = rect.Width,

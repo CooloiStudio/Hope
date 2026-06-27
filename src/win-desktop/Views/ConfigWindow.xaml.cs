@@ -59,8 +59,11 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
 
         RefreshBox.ValueChanged += OnSliderValueChanged;
         BarHeightBox.ValueChanged += OnSliderValueChanged;
-        ImageMaxSizeBox.ValueChanged += OnSliderValueChanged;
-        GlobalModeBox.SelectionChanged += OnSettingsSelectionChanged;
+        ImageMaxHeightBox.ValueChanged += OnSliderValueChanged;
+        GlobalBlinkCheck.Checked += OnSettingsControlChanged;
+        GlobalBlinkCheck.Unchecked += OnSettingsControlChanged;
+        GlobalCelebrateCheck.Checked += OnSettingsControlChanged;
+        GlobalCelebrateCheck.Unchecked += OnSettingsControlChanged;
         GlobalNotifyCheck.Checked += OnSettingsControlChanged;
         GlobalNotifyCheck.Unchecked += OnSettingsControlChanged;
         AutostartCheck.Checked += OnSettingsControlChanged;
@@ -151,9 +154,11 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
             _loadingSettings = true;
             RefreshBox.Value = Math.Clamp(s.RefreshSec, 1, 10);
             BarHeightBox.Value = Math.Clamp(s.BarHeightPx, 1, 10);
+            ImageMaxHeightBox.Value = Math.Clamp(s.ImageMaxHeightPx <= 0 ? 15 : s.ImageMaxHeightPx, 15, 30);
             RefreshValueText.Text = ((int)RefreshBox.Value).ToString();
             BarHeightValueText.Text = ((int)BarHeightBox.Value).ToString();
-            LoadBehaviors(s.ExpiredBehaviors, GlobalModeBox, GlobalNotifyCheck);
+            ImageMaxHeightValueText.Text = ((int)ImageMaxHeightBox.Value).ToString();
+            LoadGlobalBehaviors(s.ExpiredBehaviors);
             AutostartCheck.IsChecked = s.Autostart;
             ShowConfigAtRuntimeCheck.IsChecked = s.ShowConfigAtRuntime;
             SelectComboByTag(BarPositionBox, s.BarPosition);
@@ -176,12 +181,8 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
     {
         if (sender == RefreshBox) RefreshValueText.Text = ((int)RefreshBox.Value).ToString();
         if (sender == BarHeightBox) BarHeightValueText.Text = ((int)BarHeightBox.Value).ToString();
-        if (sender == ImageMaxSizeBox)
-        {
-            ImageMaxSizeValueText.Text = ((int)ImageMaxSizeBox.Value).ToString();
-        }
+        if (sender == ImageMaxHeightBox) ImageMaxHeightValueText.Text = ((int)ImageMaxHeightBox.Value).ToString();
         CommitSettings();
-        TryAutoSaveTask();
     }
 
     private void OnSettingsControlChanged(object sender, RoutedEventArgs e) => CommitSettings();
@@ -200,7 +201,8 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
 
         _settings.RefreshSec = (int)RefreshBox.Value;
         _settings.BarHeightPx = (int)BarHeightBox.Value;
-        _settings.ExpiredBehaviors = CollectBehaviors(GlobalModeBox, GlobalNotifyCheck);
+        _settings.ImageMaxHeightPx = (int)ImageMaxHeightBox.Value;
+        _settings.ExpiredBehaviors = CollectGlobalBehaviors();
         _settings.Autostart = AutostartCheck.IsChecked == true;
         _settings.ShowConfigAtRuntime = ShowConfigAtRuntimeCheck.IsChecked == true;
         _settings.BarPosition = (BarPositionBox.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? "top";
@@ -316,77 +318,68 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
     private static int ParseIntItem(ComboBox box, int fallback) =>
         box.SelectedItem is string s && int.TryParse(s, out var v) ? v : fallback;
 
-    // ===== 到期提醒（显示模式单选下拉 + 通知勾选框）=====
+    // ===== 到期提醒（默认自动显示，可叠加勾选：闪烁 / 全屏庆祝 / 系统通知）=====
 
-    private static string ModeOf(ComboBox box) =>
-        (box.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? "keep";
-
-    private static void SelectMode(ComboBox box, string mode)
+    // 全局到期提醒集合（可空）：按勾选追加 blink / celebrate / notify。
+    private List<string> CollectGlobalBehaviors()
     {
-        foreach (ComboBoxItem item in box.Items)
-        {
-            if (string.Equals(item.Tag?.ToString(), mode, StringComparison.OrdinalIgnoreCase))
-            {
-                box.SelectedItem = item;
-                return;
-            }
-        }
-        box.SelectedIndex = 0; // 回退到 keep
-    }
-
-    // 集合 = [显示模式]（+ 勾选时追加 notify）。
-    private static List<string> CollectBehaviors(ComboBox mode, CheckBox notify)
-    {
-        var list = new List<string> { ModeOf(mode) };
-        if (notify.IsChecked == true) list.Add("notify");
+        var list = new List<string>();
+        if (GlobalBlinkCheck.IsChecked == true) list.Add("blink");
+        if (GlobalCelebrateCheck.IsChecked == true) list.Add("celebrate");
+        if (GlobalNotifyCheck.IsChecked == true) list.Add("notify");
         return list;
     }
 
-    private static void LoadBehaviors(List<string>? behaviors, ComboBox mode, CheckBox notify)
+    private void LoadGlobalBehaviors(List<string>? behaviors)
     {
         var set = behaviors ?? new List<string>();
-        string m = set.Contains("celebrate") ? "celebrate" : set.Contains("hide") ? "hide" : set.Contains("blink") ? "blink" : "keep";
-        SelectMode(mode, m);
-        notify.IsChecked = set.Contains("notify");
+        GlobalBlinkCheck.IsChecked = set.Contains("blink");
+        GlobalCelebrateCheck.IsChecked = set.Contains("celebrate");
+        GlobalNotifyCheck.IsChecked = set.Contains("notify");
     }
 
-    private const string GlobalModeTag = "global";
-
-    // 任务到期提醒下拉变化：选「使用全局默认」时禁用并清空本任务的系统通知。
-    private void OnTaskModeChanged(object sender, SelectionChangedEventArgs e) => UpdateTaskNotifyEnabled();
-
-    private void UpdateTaskNotifyEnabled()
+    // 「使用全局默认」勾选变化：切换本任务三项叠加勾选的可用性，并触发自动保存。
+    private void OnTaskUseGlobalChanged(object sender, RoutedEventArgs e)
     {
-        if (TaskNotifyCheck == null) return;
-        bool useGlobal = ModeOf(TaskModeBox) == GlobalModeTag;
-        if (useGlobal) TaskNotifyCheck.IsChecked = false;
-        TaskNotifyCheck.IsEnabled = !useGlobal;
+        UpdateTaskBehaviorEnabled();
+        TryAutoSaveTask();
     }
 
-    // 任务级到期提醒集合：选「使用全局默认」返回 null（继承全局）；否则 [显示模式]（+ 勾选追加 notify）。
+    private void UpdateTaskBehaviorEnabled()
+    {
+        if (TaskBehaviorPanel == null) return;
+        TaskBehaviorPanel.IsEnabled = TaskUseGlobalCheck.IsChecked != true;
+    }
+
+    // 任务级到期提醒集合：勾「使用全局默认」返回 null（继承全局）；否则按勾选追加（可能为空）。
     private List<string>? CollectTaskBehaviors()
     {
-        if (ModeOf(TaskModeBox) == GlobalModeTag) return null;
-        var list = new List<string> { ModeOf(TaskModeBox) };
+        if (TaskUseGlobalCheck.IsChecked == true) return null;
+        var list = new List<string>();
+        if (TaskBlinkCheck.IsChecked == true) list.Add("blink");
+        if (TaskCelebrateCheck.IsChecked == true) list.Add("celebrate");
         if (TaskNotifyCheck.IsChecked == true) list.Add("notify");
         return list;
     }
 
-    // 载入任务级到期提醒：为空（新建或旧数据）时选「使用全局默认」。
+    // 载入任务级到期提醒：为空（新建或旧数据）时勾「使用全局默认」。
     private void LoadTaskBehaviors(List<string>? behaviors)
     {
         if (behaviors == null || behaviors.Count == 0)
         {
-            SelectMode(TaskModeBox, GlobalModeTag);
+            TaskUseGlobalCheck.IsChecked = true;
+            TaskBlinkCheck.IsChecked = false;
+            TaskCelebrateCheck.IsChecked = false;
             TaskNotifyCheck.IsChecked = false;
         }
         else
         {
-            string m = behaviors.Contains("celebrate") ? "celebrate" : behaviors.Contains("hide") ? "hide" : behaviors.Contains("blink") ? "blink" : "keep";
-            SelectMode(TaskModeBox, m);
+            TaskUseGlobalCheck.IsChecked = false;
+            TaskBlinkCheck.IsChecked = behaviors.Contains("blink");
+            TaskCelebrateCheck.IsChecked = behaviors.Contains("celebrate");
             TaskNotifyCheck.IsChecked = behaviors.Contains("notify");
         }
-        UpdateTaskNotifyEnabled();
+        UpdateTaskBehaviorEnabled();
     }
 
     // ===== 循环（仅定时任务）=====
@@ -586,8 +579,6 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
         NameBox.Text = row.Name;
         ColorBox.Text = row.Color;
         GifBox.Text = row.Gif ?? "";
-        ImageMaxSizeBox.Value = row.ImageMaxSize > 0 ? row.ImageMaxSize : 15;
-        ImageMaxSizeValueText.Text = ((int)ImageMaxSizeBox.Value).ToString();
         SelectType(row.Type);
         SetDateTime(StartDatePicker, StartHourBox, StartMinuteBox,
             row.StartAt?.LocalDateTime ?? DateTime.Now);
@@ -606,8 +597,6 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
         NameBox.Text = "";
         ColorBox.Text = SuggestUnusedColor();
         GifBox.Text = "";
-        ImageMaxSizeBox.Value = 15;
-        ImageMaxSizeValueText.Text = "15";
         SelectType("scheduled");
         SetDateTime(StartDatePicker, StartHourBox, StartMinuteBox, DateTime.Now);
         SetDateTime(EndDatePicker, EndHourBox, EndMinuteBox, DateTime.Now.AddHours(1));
@@ -694,7 +683,12 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
         NameBox.TextChanged += (_, _) => TryAutoSaveTask();
         ColorBox.TextChanged += (_, _) => TryAutoSaveTask();
         GifBox.TextChanged += (_, _) => TryAutoSaveTask();
-        ImageMaxSizeBox.ValueChanged += (_, _) => TryAutoSaveTask();
+        TaskBlinkCheck.Checked += (_, _) => TryAutoSaveTask();
+        TaskBlinkCheck.Unchecked += (_, _) => TryAutoSaveTask();
+        TaskCelebrateCheck.Checked += (_, _) => TryAutoSaveTask();
+        TaskCelebrateCheck.Unchecked += (_, _) => TryAutoSaveTask();
+        TaskNotifyCheck.Checked += (_, _) => TryAutoSaveTask();
+        TaskNotifyCheck.Unchecked += (_, _) => TryAutoSaveTask();
         TypeBox.SelectionChanged += (_, _) => { UpdateStartVisibility(); TryAutoSaveTask(); };
         StartDatePicker.SelectedDateChanged += (_, _) => TryAutoSaveTask();
         StartHourBox.SelectionChanged += (_, _) => TryAutoSaveTask();
@@ -749,7 +743,6 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
             Type = type,
             Color = color,
             Gif = string.IsNullOrEmpty(gif) ? null : gif,
-            ImageMaxSize = (int)ImageMaxSizeBox.Value,
             Position = position,
             StartAt = start,
             EndAt = TryComposeDateTime(EndDatePicker, EndHourBox, EndMinuteBox, out var end) ? end : default,

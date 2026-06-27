@@ -1,10 +1,14 @@
 package engine
 
 import (
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"hope/headless/config"
+	"hope/headless/ipc"
 	"hope/headless/task"
 )
 
@@ -302,6 +306,33 @@ func TestFilterTasksByPositionNoAdvanced(t *testing.T) {
 	all := filterTasksByPosition(tasks, "top", "top", false)
 	if len(all) != 2 {
 		t.Errorf("non-advanced: want both tasks on top, got %v", ids(all))
+	}
+}
+
+// TestUpdateSettingsPersists 验证 updateSettings 命令会把设置写入 config.json。
+func TestUpdateSettingsPersists(t *testing.T) {
+	t.Setenv("APPDATA", t.TempDir())
+	store, err := config.Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	eng := New(store, nil)
+	raw := json.RawMessage(`{"barHeightPx":7,"barPosition":"bottom","allFour":true}`)
+	eng.HandleCommand(ipc.Command{Action: "updateSettings", Settings: raw})
+
+	path := filepath.Join(config.Dir(), "config.json")
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("config.json not written: %v", err)
+	}
+	var sf struct {
+		Settings config.Settings `json:"settings"`
+	}
+	if err := json.Unmarshal(b, &sf); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if sf.Settings.BarHeightPx != 7 || sf.Settings.BarPosition != "bottom" || !sf.Settings.AllFour {
+		t.Errorf("persisted settings wrong: %+v", sf.Settings)
 	}
 }
 

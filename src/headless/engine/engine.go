@@ -66,6 +66,17 @@ func (e *Engine) ComputeState() ipc.State {
 		}
 	}
 
+	// 图片最大高度收敛为全局设置：覆盖所有带图片段的 ImageMaxSize。
+	imgMax := settings.ImageMaxHeightPx
+	if imgMax <= 0 {
+		imgMax = 15
+	}
+	for i := range segments {
+		if segments[i].Gif != "" {
+			segments[i].ImageMaxSize = imgMax
+		}
+	}
+
 	e.mu.Lock()
 	paused, hidden := e.paused, e.hidden
 	events := e.collectExpiredLocked(tasks, now, behaviorsOf)
@@ -536,6 +547,14 @@ func (e *Engine) HandleCommand(cmd ipc.Command) any {
 			var ns config.Settings
 			if err := json.Unmarshal(cmd.Settings, &ns); err == nil {
 				e.store.UpdateSettings(ns)
+			}
+		}
+	case "screenSize":
+		// 仅上报屏幕尺寸，独立于设置合并，避免默认值覆盖用户设置。
+		if len(cmd.Settings) > 0 {
+			var ns config.Settings
+			if err := json.Unmarshal(cmd.Settings, &ns); err == nil {
+				e.store.SetScreen(ns.ScreenWidth, ns.ScreenHeight)
 			}
 		}
 	case "pause":

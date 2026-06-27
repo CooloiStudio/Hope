@@ -15,13 +15,17 @@ const (
 	Instant   Type = "instant"   // 即时任务：仅 endAt，startAt 取 createdAt
 )
 
-// 到期提醒行为（多选，自动互斥；全局为默认值，任务可单独覆盖）。
+// 到期提醒行为（可叠加；全局为默认值，任务可单独覆盖）。
+// 新模型：到期默认「自动显示」（保留满色段），无需显式选项；下列为可叠加附加效果。
+// keep/hide 已废弃（保留常量仅用于兼容旧数据解析），不再作为有效行为。
 const (
-	BehaviorKeep      = "keep"      // 保持显示：到期后该任务保留为满色段
 	BehaviorBlink     = "blink"     // 闪烁提醒：柔和 alpha 渐变，持续到用户查看
 	BehaviorNotify    = "notify"    // 系统通知：到期时一次性气球提示
-	BehaviorHide      = "hide"      // 自动隐藏：到期后移除该段
-	BehaviorCelebrate = "celebrate" // 庆祝模式：四边同步闪烁
+	BehaviorCelebrate = "celebrate" // 全屏庆祝：四边同步闪烁
+
+	// 已废弃，仅兼容旧配置/任务数据。
+	BehaviorKeep = "keep"
+	BehaviorHide = "hide"
 )
 
 // ContainsBehavior 报告行为集合是否含指定项。
@@ -35,14 +39,8 @@ func ContainsBehavior(bs []string, name string) bool {
 }
 
 // KeepsVisibleWhenExpired 报告到期任务是否仍应保留在顶栏。
-// 仅当显式 hide 且未叠加 keep/blink/celebrate 时才隐藏；其余（含空集合）默认保留。
+// 新模型：到期默认自动显示，恒为 true（已移除「自动隐藏」选项）。
 func KeepsVisibleWhenExpired(bs []string) bool {
-	if ContainsBehavior(bs, BehaviorHide) &&
-		!ContainsBehavior(bs, BehaviorKeep) &&
-		!ContainsBehavior(bs, BehaviorBlink) &&
-		!ContainsBehavior(bs, BehaviorCelebrate) {
-		return false
-	}
 	return true
 }
 

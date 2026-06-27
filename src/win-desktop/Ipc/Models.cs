@@ -83,8 +83,10 @@ public sealed class RecurrenceDto
 public sealed class SettingsDto
 {
     [JsonPropertyName("barHeightPx")] public int BarHeightPx { get; set; } = 4;
-    // 全局默认到期提醒（多选）。
-    [JsonPropertyName("expiredBehaviors")] public List<string> ExpiredBehaviors { get; set; } = new() { "keep" };
+    // 图片最大高度（px，全局统一）。
+    [JsonPropertyName("imageMaxHeightPx")] public int ImageMaxHeightPx { get; set; } = 15;
+    // 全局默认到期提醒（可叠加：blink/celebrate/notify）；默认空＝到期自动显示，无附加效果。
+    [JsonPropertyName("expiredBehaviors")] public List<string> ExpiredBehaviors { get; set; } = new();
     [JsonPropertyName("refreshSec")] public int RefreshSec { get; set; } = 1;
     [JsonPropertyName("monitor")] public string Monitor { get; set; } = "primary";
     [JsonPropertyName("autostart")] public bool Autostart { get; set; }
