@@ -28,13 +28,10 @@ public partial class OverlayWindow : Window
     public const string PositionLeft = "left";
     public const string PositionRight = "right";
 
-    // 闪烁脉冲参数：柔和正弦渐变（淡出至近透明再淡入），单程时长 → 全周期约 2×。
-    private const double BlinkHalfPeriodSec = 0.8;
-    // 多个任务同时闪烁（如多任务同时到期 + 庆祝）：加长单程时长，整体更柔和。
-    private const double BlinkHalfPeriodMultiSec = 1.2;
-    private const double BlinkMinAlpha = 0.05;
-    // 全局相位锚点（App 启动时刻，跨所有 OverlayWindow 共享）：用于让主条与三个氛围条
-    // 即便在不同时刻各自启动动画，也按同一墙钟相位推进，从而保持同步。
+    // 颜色轮换呼吸：相邻颜色之间过渡的单步时长（一个半周期），保持与原单任务呼吸一致的节拍。
+    private const double BlinkStepSec = 0.8;
+    // 全局相位锚点（App 启动时刻，跨所有 OverlayWindow 共享）：各边按同一墙钟相位轮换；
+    // 当各边颜色序列相同时（四边环绕 / 全屏庆祝）即同步显示同一颜色。
     private static readonly DateTime BlinkAnchorUtc = DateTime.UtcNow;
 
     private readonly DispatcherTimer _hoverTimer;
@@ -61,22 +58,15 @@ public partial class OverlayWindow : Window
         return IsReverse;
     }
 
-    // 闪烁状态：当前正在脉冲的色段矩形、已查看（停止脉冲）的任务、本帧应闪烁的任务集合。
-    private readonly List<Rectangle> _blinkRects = new();
+    // 闪烁状态：已查看（停止）任务集合、本帧应闪烁任务集合。
     private readonly HashSet<string> _acknowledgedBlink = new();
     private readonly HashSet<string> _blinkingIds = new();
 
-    // 方案A：闪烁矩形按 taskId 持久化复用。几何/颜色/错峰参数未变则复用既有矩形与正在运行的动画，
-    // 不重建、不重启——这样其他未完成任务每秒推进进度触发刷新时，不会打断/重置已完成任务的闪烁。
-    private sealed class BlinkVisual
-    {
-        public Rectangle Rect = null!;
-        public string Geo = "";  // 几何 + 颜色签名；变化只更新矩形位置/尺寸/填充，不动 Opacity 动画
-        public string Anim = ""; // 呼吸节奏 + 错峰参数（half:delay）签名；仅此变化才重启动画
-    }
-    private readonly Dictionary<string, BlinkVisual> _blinkVisuals = new();
-    // 上一帧创建的「非闪烁」矩形：每帧只移除这批后重建，持久化闪烁矩形不受影响。
-    private readonly List<Rectangle> _staticRects = new();
+    // 颜色轮换呼吸：本边所有闪烁段共用同一支可动画画刷；动画在「去重颜色序列」间循环平滑过渡
+    // （单色时补一个透明 → 还原色↔透明呼吸）。动画挂在画刷上，与矩形几何解耦，
+    // 故未完成任务每秒推进重建矩形不会打断呼吸；仅当颜色序列变化才重建动画。
+    private readonly SolidColorBrush _blinkBrush = new(Colors.Transparent);
+    private string _blinkSeqSig = ""; // 当前颜色序列签名；变化才重建动画，否则保持相位连续
     // 上次渲染的分段签名：未变化时跳过重建，避免每秒重置闪烁动画导致渐变不连续。
     private string _lastRenderSig = "";
     // 上次渲染日志签名：避免同一状态下重复输出 debug 日志。
@@ -193,40 +183,47 @@ public partial class OverlayWindow : Window
         }
     }
 
-    // 在色段矩形上挂柔和 alpha 渐变动画（合成级，平滑且持续）。
-    // halfPeriodSec：单程时长；beginDelaySec：错峰偏移（多任务用）。
-    // 关键：以全局锚点 BlinkAnchorUtc 计算当前应处的相位，用负 BeginTime 让动画“仿佛已在过去开始”，
-    // 这样无论各窗口何时调用本方法，都会对齐到同一墙钟相位 → 主条与三个氛围条同步。
-    private static void StartBlink(Rectangle r, double halfPeriodSec, double beginDelaySec)
+    // 用「颜色序列」驱动本边共享画刷的轮换呼吸：在 seq 各颜色间循环平滑过渡（正弦缓动），
+    // 每步 BlinkStepSec。序列未变则保持动画连续；变化才重建并按全局锚点 Seek 对齐相位，
+    // 使颜色序列相同的各边（四边环绕 / 全屏庆祝）同步显示同一颜色。
+    private void UpdateBlinkBrush(List<Color> seq)
     {
-        double period = 2.0 * halfPeriodSec; // AutoReverse：一来一回 = 2×单程
-        double elapsed = (DateTime.UtcNow - BlinkAnchorUtc).TotalSeconds;
-        double pos = ((elapsed + beginDelaySec) % period + period) % period; // 当前应处相位 [0, period)
-        var anim = new DoubleAnimation
+        string sig = string.Join(",", seq.Select(c => c.ToString()));
+        if (sig == _blinkSeqSig) return; // 序列未变 → 不重启，相位连续
+        _blinkSeqSig = sig;
+
+        double total = seq.Count * BlinkStepSec;
+        var ease = new SineEase { EasingMode = EasingMode.EaseInOut };
+        var anim = new ColorAnimationUsingKeyFrames
         {
-            From = 1.0,
-            To = BlinkMinAlpha,
-            Duration = TimeSpan.FromSeconds(halfPeriodSec),
-            AutoReverse = true,
+            Duration = TimeSpan.FromSeconds(total),
             RepeatBehavior = RepeatBehavior.Forever,
-            EasingFunction = new SineEase { EasingMode = EasingMode.EaseInOut },
-            BeginTime = TimeSpan.FromSeconds(-pos), // 负起始：已推进到全局相位 pos
         };
-        r.BeginAnimation(UIElement.OpacityProperty, anim);
+        for (int i = 0; i < seq.Count; i++)
+            anim.KeyFrames.Add(new EasingColorKeyFrame(seq[i], KeyTime.FromTimeSpan(TimeSpan.FromSeconds(i * BlinkStepSec)), ease));
+        // 末尾回到首色，形成闭环。
+        anim.KeyFrames.Add(new EasingColorKeyFrame(seq[0], KeyTime.FromTimeSpan(TimeSpan.FromSeconds(total)), ease));
+        anim.Freeze();
+
+        var clock = anim.CreateClock();
+        _blinkBrush.ApplyAnimationClock(SolidColorBrush.ColorProperty, clock);
+        double elapsed = (DateTime.UtcNow - BlinkAnchorUtc).TotalSeconds;
+        clock.Controller.Seek(TimeSpan.FromSeconds((elapsed % total + total) % total), TimeSeekOrigin.BeginTime);
     }
 
-    /// <summary>用户已查看到期提醒（如打开设置）：停止当前闪烁脉冲并复位透明度。</summary>
+    private void StopBlinkBrush()
+    {
+        if (_blinkSeqSig.Length == 0) return;
+        _blinkSeqSig = "";
+        _blinkBrush.ApplyAnimationClock(SolidColorBrush.ColorProperty, null);
+        _blinkBrush.Color = Colors.Transparent;
+    }
+
+    /// <summary>用户已查看到期提醒（如打开设置）：停止当前轮换呼吸。（当前无调用点，保留为可选 API。）</summary>
     public void AcknowledgeBlink()
     {
         foreach (var id in _blinkingIds) _acknowledgedBlink.Add(id);
-        // 遍历权威的持久化矩形集合（_blinkRects 在 early-return 帧可能过时，无法可靠覆盖侧条窗口）。
-        foreach (var bv in _blinkVisuals.Values)
-        {
-            bv.Rect.BeginAnimation(UIElement.OpacityProperty, null); // 解除动画
-            bv.Rect.Opacity = 1.0;
-            bv.Anim = ""; // 标记动画已停；下次若仍需闪烁会按需重启
-        }
-        _blinkRects.Clear();
+        StopBlinkBrush();
     }
 
     // 依据当前分段维护图片精灵：按 fillEnd 定位到进度前沿，跟随进度移动。
@@ -390,8 +387,8 @@ public partial class OverlayWindow : Window
         double h = Height;
         if (w <= 0 || h <= 0) return;
 
-        // 分段签名完全未变时整体跳过。注意：签名涵盖所有段的 FillEnd，未完成任务每秒推进会令其变化；
-        // 此时仍会进入下方重建，但只重建「非闪烁段」，闪烁段按 taskId 持久化复用、动画不被打断。
+        // 分段签名未变且画布非空时跳过重建。未完成任务每秒推进会改变签名 → 进入重建；
+        // 但闪烁动画挂在共享画刷上（与矩形几何解耦），重建矩形不会打断呼吸。
         string sig = BuildRenderSignature(w, h);
         if (sig == _lastRenderSig && BarCanvas.Children.Count > 0) return;
         _lastRenderSig = sig;
@@ -408,35 +405,34 @@ public partial class OverlayWindow : Window
             }
         }
 
-        // 预计算本帧需闪烁的任务及其错峰序号：跨四条边按 taskId 排序保持一致，
-        // 使同一任务在各边同步、不同任务依次错峰。
-        var blinkIds = _segments
+        // 本边需闪烁的段（到期 + 含 blink/celebrate + 未确认）；按 taskId 取去重颜色，组成轮换序列。
+        var blinkSegs = _segments
             .Where(s => s.Expired && !_acknowledgedBlink.Contains(s.TaskId) && IsBlinkBehavior(s))
-            .Select(s => s.TaskId).Distinct()
-            .OrderBy(id => id, StringComparer.Ordinal).ToList();
-        var blinkOrder = new Dictionary<string, int>(blinkIds.Count);
-        for (int i = 0; i < blinkIds.Count; i++) blinkOrder[blinkIds[i]] = i;
-        int blinkCount = blinkIds.Count;
-        var blinkSet = new HashSet<string>(blinkIds);
+            .ToList();
+        var blinkSet = new HashSet<string>(blinkSegs.Select(s => s.TaskId));
+        var blinkColors = blinkSegs
+            .OrderBy(s => s.TaskId, StringComparer.Ordinal)
+            .Select(s => ParseColor(s.Color))
+            .Distinct()
+            .ToList();
 
-        // 1) 回收不再闪烁的持久化矩形（任务恢复进行中 / 被确认 / 段消失）。
-        foreach (var id in _blinkVisuals.Keys.ToList())
+        if (blinkColors.Count == 0)
         {
-            if (!blinkSet.Contains(id))
-            {
-                var bv = _blinkVisuals[id];
-                bv.Rect.BeginAnimation(UIElement.OpacityProperty, null);
-                BarCanvas.Children.Remove(bv.Rect);
-                _blinkVisuals.Remove(id);
-            }
+            StopBlinkBrush();
+        }
+        else
+        {
+            // 单色补一个透明 → 色↔透明呼吸；多色直接在各色间轮换（不插透明）。
+            var seq = blinkColors.Count == 1
+                ? new List<Color> { blinkColors[0], Colors.Transparent }
+                : blinkColors;
+            UpdateBlinkBrush(seq);
         }
 
-        // 2) 仅移除上一帧的「非闪烁」矩形；持久化闪烁矩形保留在画布与动画中。
-        foreach (var r in _staticRects) BarCanvas.Children.Remove(r);
-        _staticRects.Clear();
-        _blinkRects.Clear();
+        BarCanvas.Children.Clear();
 
         // 仅绘制已填充部分（barStart → fillEnd），未完成部分不画任何底色（保持透明、不可点击）。
+        // 闪烁段共用 _blinkBrush（颜色轮换呼吸）；非闪烁段用自身固定色。
         foreach (var seg in _segments)
         {
             if (!TryComputeFillRect(seg, w, h, out double rl, out double rt, out double rw, out double rh))
@@ -444,50 +440,10 @@ public partial class OverlayWindow : Window
 
             if (blinkSet.Contains(seg.TaskId))
             {
-                // 多任务时加长渐变并按序错峰；单任务保持原有节奏、无延时。
-                double half = blinkCount > 1 ? BlinkHalfPeriodMultiSec : BlinkHalfPeriodSec;
-                // 错峰延时在整个呼吸周期(2×half)内按任务数均匀铺开：2 个任务即反相、明暗交替明显。
-                double delay = blinkCount > 1 && blinkOrder.TryGetValue(seg.TaskId, out var idx)
-                    ? idx * (2.0 * half / blinkCount) : 0;
-                // 几何与动画分离：多任务打包布局下，进行中任务推进会令已完成段像素平移，
-                // 但呼吸节奏不变——此时只搬动矩形、不重启动画，避免每秒重置导致呼吸丢失。
-                string geo = $"{rl:F2}:{rt:F2}:{rw:F2}:{rh:F2}:{seg.Color}";
-                string animSig = $"{half}:{delay}";
-
-                if (_blinkVisuals.TryGetValue(seg.TaskId, out var bv))
-                {
-                    if (bv.Geo != geo)
-                    {
-                        bv.Rect.Width = rw;
-                        bv.Rect.Height = rh;
-                        bv.Rect.Fill = new SolidColorBrush(ParseColor(seg.Color));
-                        Canvas.SetLeft(bv.Rect, rl);
-                        Canvas.SetTop(bv.Rect, rt);
-                        bv.Geo = geo;
-                    }
-                    if (bv.Anim != animSig)
-                    {
-                        // 仅呼吸节奏/错峰参数变化（单↔多任务切换、错峰序号变动）才重启动画。
-                        bv.Anim = animSig;
-                        StartBlink(bv.Rect, half, delay);
-                    }
-                }
-                else
-                {
-                    var rect = new Rectangle
-                    {
-                        Width = rw,
-                        Height = rh,
-                        Fill = new SolidColorBrush(ParseColor(seg.Color)),
-                    };
-                    Canvas.SetLeft(rect, rl);
-                    Canvas.SetTop(rect, rt);
-                    BarCanvas.Children.Add(rect);
-                    bv = new BlinkVisual { Rect = rect, Geo = geo, Anim = animSig };
-                    _blinkVisuals[seg.TaskId] = bv;
-                    StartBlink(rect, half, delay);
-                }
-                _blinkRects.Add(bv.Rect);
+                var rect = new Rectangle { Width = rw, Height = rh, Fill = _blinkBrush };
+                Canvas.SetLeft(rect, rl);
+                Canvas.SetTop(rect, rt);
+                BarCanvas.Children.Add(rect);
             }
             else
             {
@@ -500,7 +456,6 @@ public partial class OverlayWindow : Window
                 Canvas.SetLeft(rect, rl);
                 Canvas.SetTop(rect, rt);
                 BarCanvas.Children.Add(rect);
-                _staticRects.Add(rect);
             }
         }
     }
@@ -558,7 +513,7 @@ public partial class OverlayWindow : Window
           .Append(w).Append('|').Append(h).Append('|').Append(_barHeightPx).Append('|');
         foreach (var s in _segments)
         {
-            bool blink = s.Behaviors != null && s.Behaviors.Contains("blink");
+            bool blink = IsBlinkBehavior(s);
             sb.Append(s.TaskId).Append(':').Append(s.BarStart).Append(':').Append(s.FillEnd)
               .Append(':').Append(s.Color).Append(':').Append(s.Expired ? 1 : 0)
               .Append(':').Append(blink && !_acknowledgedBlink.Contains(s.TaskId) ? 1 : 0)

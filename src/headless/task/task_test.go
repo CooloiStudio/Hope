@@ -150,6 +150,33 @@ func TestBuildLayoutKeepsExpired(t *testing.T) {
 	}
 }
 
+// 多个已到期任务：各自铺满整条（0..100，互相重叠），保留全部颜色供前端做轮换呼吸；
+// 不应因同为 100% 的零宽嵌套而被合并成单段。
+func TestBuildLayoutMultipleExpiredOverlap(t *testing.T) {
+	s := mustTime("2026-06-23T08:00:00+08:00")
+	e := mustTime("2026-06-23T09:00:00+08:00")
+	tasks := []*Task{
+		{ID: "a", Color: "#E53935", Type: Scheduled, StartAt: &s, EndAt: e},
+		{ID: "b", Color: "#43A047", Type: Scheduled, StartAt: &s, EndAt: e},
+		{ID: "c", Color: "#1E88E5", Type: Scheduled, StartAt: &s, EndAt: e},
+	}
+	now := mustTime("2026-06-23T10:00:00+08:00") // 三者均已到期
+	layout := BuildLayout(tasks, now, keepBehaviors, testPosition)
+	if len(layout.Segments) != 3 {
+		t.Fatalf("segments = %d, want 3 (each expired task full bar)", len(layout.Segments))
+	}
+	seen := map[string]bool{}
+	for _, seg := range layout.Segments {
+		if seg.BarStart != 0 || seg.BarEnd != 100 || seg.FillEnd != 100 || !seg.Expired {
+			t.Fatalf("segment %+v, want [0,100] expired full bar", seg)
+		}
+		seen[seg.Color] = true
+	}
+	if len(seen) != 3 {
+		t.Fatalf("distinct colors = %d, want 3", len(seen))
+	}
+}
+
 // KeepsVisibleWhenExpired：新模型到期默认自动显示，恒为 true（已移除「自动隐藏」）。
 func TestKeepsVisibleWhenExpired(t *testing.T) {
 	cases := [][]string{

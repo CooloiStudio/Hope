@@ -332,12 +332,25 @@ func BuildLayout(tasks []*Task, now time.Time, behaviorsOf func(*Task) []string,
 		return out
 	}
 
-	sort.SliceStable(items, func(i, j int) bool {
-		return items[i].pct < items[j].pct
-	})
-
-	prev := 0.0
+	// 拆分活跃 / 到期任务：
+	//   活跃：按进度升序嵌套成相邻色带，第 i 段 [p_{i-1}, p_i]（低进度在前）。
+	//   到期：均为 100%。若沿用嵌套，多个同为 100% 的到期段会因零宽被丢弃 → 只剩一种颜色，
+	//         导致前端无法对多个完成任务做颜色轮换呼吸。改为各自铺满「剩余带」[maxActivePct, 100]
+	//         （互相重叠），前端按 taskId 去重取色组成轮换序列。单个到期任务时与原行为一致。
+	var active, expired []item
 	for _, e := range items {
+		if e.expired {
+			expired = append(expired, e)
+		} else {
+			active = append(active, e)
+		}
+	}
+
+	sort.SliceStable(active, func(i, j int) bool {
+		return active[i].pct < active[j].pct
+	})
+	prev := 0.0
+	for _, e := range active {
 		p := e.pct
 		if p <= prev {
 			continue // 零宽（或重复 percent）色段不绘制
@@ -353,11 +366,31 @@ func BuildLayout(tasks []*Task, now time.Time, behaviorsOf func(*Task) []string,
 			Percent:   round1(p),
 			FillEnd:   round1(p), // 整段满涂；与 barEnd 一致，供 Overlay 绘制与 GIF 定位
 			EndAt:     e.endAt,
-			Expired:   e.expired,
+			Expired:   false,
 			Behaviors: e.behaviors,
 			Position:  position,
 		})
 		prev = p
+	}
+
+	// 到期段按 ID 稳定排序后各自铺满 [prev, 100]（互相重叠），保证各边颜色顺序一致、可被前端去重取色。
+	sort.SliceStable(expired, func(i, j int) bool { return expired[i].t.ID < expired[j].t.ID })
+	for _, e := range expired {
+		out.Segments = append(out.Segments, Segment{
+			TaskID:    e.t.ID,
+			Name:      e.t.Name,
+			Color:     e.t.Color,
+			Gif:       e.t.Gif,
+			ImageMaxSize: e.t.ImageMaxSize,
+			BarStart:  round1(prev),
+			BarEnd:    100,
+			Percent:   100,
+			FillEnd:   100,
+			EndAt:     e.endAt,
+			Expired:   true,
+			Behaviors: e.behaviors,
+			Position:  position,
+		})
 	}
 	return out
 }
