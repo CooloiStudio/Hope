@@ -227,8 +227,8 @@
                                 <RadioButton x:Name="GlobalCelebrateRadio" GroupName="GlobalReminder" Content="全屏庆祝"
                                              Margin="11,0,0,0" VerticalAlignment="Center"
                                              ToolTip="到期时四边同步呼吸庆祝" />
-                                <TextBlock Text="  ⚠️光敏性癫痫警告⚠️" Foreground="Red" VerticalAlignment="Center"
-                                           Visibility="{Binding IsChecked, ElementName=GlobalCelebrateRadio, Converter={StaticResource BoolToVisibilityConverter}}" />
+                                <TextBlock VerticalAlignment="Center"
+                                           Visibility="{Binding IsChecked, ElementName=GlobalCelebrateRadio, Converter={StaticResource BoolToVisibilityConverter}}"><Run Text="  ⚠️" /><Run Text="光敏性癫痫警告" Foreground="Red" FontWeight="Bold" /><Run Text="⚠️" /></TextBlock>
                             </StackPanel>
                             <CheckBox x:Name="GlobalNotifyCheck" Content="系统通知"
                                       Margin="0,2,0,0"
