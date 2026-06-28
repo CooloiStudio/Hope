@@ -216,26 +216,22 @@
 
                             <TextBlock Text="到期提醒效果（默认自动显示）" Margin="0,12,0,2"
                                        TextWrapping="Wrap" />
-                            <!-- 呼吸提醒 / 全屏庆祝 互斥（含「仅自动显示」复位项）；系统通知可独立叠加 -->
-                            <RadioButton x:Name="GlobalReminderNoneRadio" GroupName="GlobalReminder" Content="仅自动显示"
-                                         Margin="0"
+                            <!-- 呼吸提醒 / 全屏庆祝 互斥（含「无」复位项）；系统通知可独立叠加。左边距统一为 0 以对齐 -->
+                            <RadioButton x:Name="GlobalReminderNoneRadio" GroupName="GlobalReminder" Content="无"
+                                         Margin="0,2,0,0"
                                          ToolTip="到期后仅保持满色显示，无额外动效" />
-                            <StackPanel Orientation="Horizontal" Margin="0,2,0,0">
-                                <RadioButton x:Name="GlobalBlinkRadio" GroupName="GlobalReminder" Content="呼吸提醒"
-                                             VerticalAlignment="Center"
-                                             ToolTip="到期后顶栏柔和呼吸，直到用户查看" />
-                                <TextBlock Text="  ⚠️光敏性癫痫警告⚠️" Foreground="Red" VerticalAlignment="Center"
-                                           Visibility="{Binding IsChecked, ElementName=GlobalBlinkRadio, Converter={StaticResource BoolToVisibilityConverter}}" />
-                            </StackPanel>
+                            <RadioButton x:Name="GlobalBlinkRadio" GroupName="GlobalReminder" Content="呼吸提醒"
+                                         Margin="0,2,0,0"
+                                         ToolTip="到期后顶栏柔和呼吸，直到用户查看" />
                             <StackPanel Orientation="Horizontal" Margin="0,2,0,0">
                                 <RadioButton x:Name="GlobalCelebrateRadio" GroupName="GlobalReminder" Content="全屏庆祝"
-                                             VerticalAlignment="Center"
+                                             Margin="0" VerticalAlignment="Center"
                                              ToolTip="到期时四边同步呼吸庆祝" />
                                 <TextBlock Text="  ⚠️光敏性癫痫警告⚠️" Foreground="Red" VerticalAlignment="Center"
                                            Visibility="{Binding IsChecked, ElementName=GlobalCelebrateRadio, Converter={StaticResource BoolToVisibilityConverter}}" />
                             </StackPanel>
                             <CheckBox x:Name="GlobalNotifyCheck" Content="系统通知"
-                                      Margin="0,6,0,0"
+                                      Margin="0,2,0,0"
                                       ToolTip="到期时弹出一次系统气球通知" />
 
                             <Grid Margin="0,6,0,8">
