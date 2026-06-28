@@ -701,7 +701,19 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
     {
         if (_editingId == null) return;
         if (_rows.FirstOrDefault(r => r.Id == _editingId) is not TaskRow row) return;
+        DuplicateTaskFromRow(row);
+    }
 
+    // 列表操作列「重建」按钮：等同于编辑表单的「创建为新任务」。
+    private void OnRecreateTask(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement el || el.Tag is not string id) return;
+        if (_rows.FirstOrDefault(r => r.Id == id) is not TaskRow row) return;
+        DuplicateTaskFromRow(row);
+    }
+
+    private void DuplicateTaskFromRow(TaskRow row)
+    {
         var result = System.Windows.MessageBox.Show(
             $"确认将已完成的任务「{row.Name}」创建为新任务？\n\n开始日期将调整为今天，截止时间按原开始日期的差值顺延。",
             "创建为新任务",
@@ -1018,9 +1030,9 @@ public sealed class TaskRow
     public RecurrenceDto? Recurrence { get; init; }
 
     public string TypeLabel => Type == "instant" ? "即时" : "定时";
+    public string StartLabel => (StartAt ?? CreatedAt)?.LocalDateTime.ToString("MM-dd HH:mm") ?? "—";
     public string EndLabel => EndAt.LocalDateTime.ToString("MM-dd HH:mm");
     public string StatusLabel => Completed ? "已完成" : TypeLabel;
-    public string StateLabel => Completed ? "已完成" : "进行中";
     public Brush ColorBrush
     {
         get

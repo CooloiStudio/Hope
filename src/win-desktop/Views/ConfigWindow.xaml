@@ -120,8 +120,8 @@
                         </DataGridTemplateColumn>
                         <DataGridTextColumn Header="名称" Binding="{Binding Name}" Width="*" />
                         <DataGridTextColumn Header="类型" Binding="{Binding TypeLabel}" Width="60" />
-                        <DataGridTextColumn Header="状态" Binding="{Binding StateLabel}" Width="64" />
-                        <DataGridTextColumn Header="截止" Binding="{Binding EndLabel}" Width="120" />
+                        <DataGridTextColumn Header="开始" Binding="{Binding StartLabel}" Width="110" />
+                        <DataGridTextColumn Header="截止" Binding="{Binding EndLabel}" Width="110" />
                         <DataGridTemplateColumn Header="操作" Width="72" MinWidth="72">
                             <DataGridTemplateColumn.CellTemplate>
                                 <DataTemplate>
@@ -131,9 +131,10 @@
                                                    Tag="{Binding Id}"
                                                    Click="OnCompleteTask"
                                                    Visibility="{Binding Completed, Converter={StaticResource InvertedBoolToVisibilityConverter}}" />
-                                        <TextBlock Text="已完成" FontSize="12"
-                                                   VerticalAlignment="Center" HorizontalAlignment="Center"
-                                                   Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                                        <ui:Button Content="重建" Padding="6,2" FontSize="12"
+                                                   HorizontalAlignment="Center"
+                                                   Tag="{Binding Id}"
+                                                   Click="OnRecreateTask"
                                                    Visibility="{Binding Completed, Converter={StaticResource BoolToVisibilityConverter}}" />
                                     </Grid>
                                 </DataTemplate>
@@ -460,7 +461,7 @@
                                 </WrapPanel>
                             </DockPanel>
 
-                            <ui:Button x:Name="DuplicateTaskButton" Content="创建为新任务"
+                            <ui:Button x:Name="DuplicateTaskButton" Content="重建为新任务"
                                        HorizontalAlignment="Stretch" Height="30" Margin="0,14,0,0"
                                        Click="OnDuplicateTask" Visibility="Collapsed" />
                             <ui:Button x:Name="CompleteTaskButton" Content="完成任务"
