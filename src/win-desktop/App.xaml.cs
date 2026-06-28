@@ -229,28 +229,44 @@ public partial class App : Application
         }
     }
 
-    private static List<Segment> ExpandForCelebrate(List<Segment> segments)
+    // 庆祝模式（非四边环绕）：把「触发庆祝的到期段」复制到四条边做满填 + 闪烁。
+    // - 主进度条（home，自身 Position，缺省取全局位）：保持原子区间布局不变，图片只挂在此处。
+    // - 其余三条边：整条铺满完成色（BarStart=0/BarEnd=100/FillEnd=100），与主条同频闪烁，不挂图。
+    // 未完成 / 非庆祝段原样保留——仍只在自身位置渲染、带自己的图，不复制到其它边。
+    private List<Segment> ExpandForCelebrate(List<Segment> segments)
     {
-        var expanded = new List<Segment>(segments.Count * 4);
+        var sides = new[] { OverlayWindow.PositionTop, OverlayWindow.PositionRight, OverlayWindow.PositionBottom, OverlayWindow.PositionLeft };
+        var expanded = new List<Segment>(segments.Count);
         foreach (var s in segments)
         {
-            foreach (var side in new[] { OverlayWindow.PositionTop, OverlayWindow.PositionRight, OverlayWindow.PositionBottom, OverlayWindow.PositionLeft })
+            bool isCelebrate = s.Expired && s.Behaviors != null && s.Behaviors.Contains("celebrate");
+            if (!isCelebrate)
             {
+                expanded.Add(s); // 未完成/非庆祝段：保持原位置与图片
+                continue;
+            }
+
+            string home = string.IsNullOrWhiteSpace(s.Position) ? _currentBarPosition : s.Position;
+            foreach (var side in sides)
+            {
+                bool isHome = side == home;
                 expanded.Add(new Segment
                 {
                     TaskId = s.TaskId,
                     Name = s.Name,
                     Color = s.Color,
-                    Gif = s.Gif,
+                    Gif = isHome ? s.Gif : null, // 图片只在任务到期位置
                     ImageMaxSize = s.ImageMaxSize,
-                    BarStart = s.BarStart,
-                    BarEnd = s.BarEnd,
-                    Percent = s.Percent,
-                    FillEnd = s.FillEnd,
+                    // 主条保留原子区间；其余三边整条铺满完成色。
+                    BarStart = isHome ? s.BarStart : 0.0,
+                    BarEnd = isHome ? s.BarEnd : 100.0,
+                    Percent = isHome ? s.Percent : 100.0,
+                    FillEnd = isHome ? s.FillEnd : 100.0,
                     EndAt = s.EndAt,
                     Expired = s.Expired,
                     Behaviors = s.Behaviors,
                     Position = side,
+                    Direction = s.Direction,
                     ImageRotation = s.ImageRotation,
                 });
             }
@@ -292,7 +308,6 @@ public partial class App : Application
         menu.Items.Add(hideItem);
 
         menu.Items.Add(new ToolStripSeparator());
-        menu.Items.Add("关于", null, (_, _) => ShowAbout());
         menu.Items.Add("退出", null, (_, _) => QuitAll());
 
         _tray = new NotifyIcon
@@ -339,8 +354,8 @@ public partial class App : Application
     private void ShowConfig()
     {
         DesktopLog.Info("ShowConfig: menu click, scheduling deferred open");
-        // 打开设置即视为用户已查看到期提醒：停止当前闪烁脉冲。
-        foreach (var overlay in _overlays.Values) overlay.AcknowledgeBlink();
+        // 注意：打开/激活设置窗口不再停止到期呼吸——保持主条与三个氛围条持续同步呼吸，
+        // 直到任务本身不再到期（重新设定时间 / 删除 / 完成确认）。
         // 托盘菜单为模态循环；延迟到菜单关闭后再创建/显示 FluentWindow，避免与 Win10 背景渲染争用 UI 线程。
         var timer = new System.Windows.Forms.Timer { Interval = 10 };
         timer.Tick += (_, _) =>
@@ -402,20 +417,6 @@ public partial class App : Application
                 $"无法打开设置窗口：{ex.Message}\n\n详情见 %APPDATA%\\Hope\\logs\\hope-desktop.log",
                 "Hope", MessageBoxButton.OK, MessageBoxImage.Error);
         }
-    }
-
-    private void ShowAbout()
-    {
-        var v = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version;
-        var versionText = v != null ? $"v{v.Major}.{v.Minor}.{v.Build}" : "v0.0.0";
-        Dispatcher.BeginInvoke(() =>
-            System.Windows.MessageBox.Show(
-                $"Hope（盼头）{versionText}\n\n" +
-                "桌面效率提示\n\n" +
-                "屏幕顶端分段彩色进度条，点击穿透、不抢焦点。\n\n" +
-                "可见范围：桌面 / 浏览器 / Office / 无边框或全屏优化的游戏。\n" +
-                "真·独占全屏需安装全屏游戏拓展包（Phase 2）。",
-                "关于 Hope", MessageBoxButton.OK, MessageBoxImage.Information));
     }
 
     private void QuitAll()

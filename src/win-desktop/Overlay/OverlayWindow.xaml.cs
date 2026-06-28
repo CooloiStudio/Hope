@@ -30,7 +30,12 @@ public partial class OverlayWindow : Window
 
     // 闪烁脉冲参数：柔和正弦渐变（淡出至近透明再淡入），单程时长 → 全周期约 2×。
     private const double BlinkHalfPeriodSec = 0.8;
+    // 多个任务同时闪烁（如多任务同时到期 + 庆祝）：加长单程时长，整体更柔和。
+    private const double BlinkHalfPeriodMultiSec = 1.2;
     private const double BlinkMinAlpha = 0.05;
+    // 全局相位锚点（App 启动时刻，跨所有 OverlayWindow 共享）：用于让主条与三个氛围条
+    // 即便在不同时刻各自启动动画，也按同一墙钟相位推进，从而保持同步。
+    private static readonly DateTime BlinkAnchorUtc = DateTime.UtcNow;
 
     private readonly DispatcherTimer _hoverTimer;
     private readonly DispatcherTimer _gifTimer;
@@ -60,6 +65,18 @@ public partial class OverlayWindow : Window
     private readonly List<Rectangle> _blinkRects = new();
     private readonly HashSet<string> _acknowledgedBlink = new();
     private readonly HashSet<string> _blinkingIds = new();
+
+    // 方案A：闪烁矩形按 taskId 持久化复用。几何/颜色/错峰参数未变则复用既有矩形与正在运行的动画，
+    // 不重建、不重启——这样其他未完成任务每秒推进进度触发刷新时，不会打断/重置已完成任务的闪烁。
+    private sealed class BlinkVisual
+    {
+        public Rectangle Rect = null!;
+        public string Geo = "";  // 几何 + 颜色签名；变化只更新矩形位置/尺寸/填充，不动 Opacity 动画
+        public string Anim = ""; // 呼吸节奏 + 错峰参数（half:delay）签名；仅此变化才重启动画
+    }
+    private readonly Dictionary<string, BlinkVisual> _blinkVisuals = new();
+    // 上一帧创建的「非闪烁」矩形：每帧只移除这批后重建，持久化闪烁矩形不受影响。
+    private readonly List<Rectangle> _staticRects = new();
     // 上次渲染的分段签名：未变化时跳过重建，避免每秒重置闪烁动画导致渐变不连续。
     private string _lastRenderSig = "";
     // 上次渲染日志签名：避免同一状态下重复输出 debug 日志。
@@ -177,16 +194,23 @@ public partial class OverlayWindow : Window
     }
 
     // 在色段矩形上挂柔和 alpha 渐变动画（合成级，平滑且持续）。
-    private static void StartBlink(Rectangle r)
+    // halfPeriodSec：单程时长；beginDelaySec：错峰偏移（多任务用）。
+    // 关键：以全局锚点 BlinkAnchorUtc 计算当前应处的相位，用负 BeginTime 让动画“仿佛已在过去开始”，
+    // 这样无论各窗口何时调用本方法，都会对齐到同一墙钟相位 → 主条与三个氛围条同步。
+    private static void StartBlink(Rectangle r, double halfPeriodSec, double beginDelaySec)
     {
+        double period = 2.0 * halfPeriodSec; // AutoReverse：一来一回 = 2×单程
+        double elapsed = (DateTime.UtcNow - BlinkAnchorUtc).TotalSeconds;
+        double pos = ((elapsed + beginDelaySec) % period + period) % period; // 当前应处相位 [0, period)
         var anim = new DoubleAnimation
         {
             From = 1.0,
             To = BlinkMinAlpha,
-            Duration = TimeSpan.FromSeconds(BlinkHalfPeriodSec),
+            Duration = TimeSpan.FromSeconds(halfPeriodSec),
             AutoReverse = true,
             RepeatBehavior = RepeatBehavior.Forever,
             EasingFunction = new SineEase { EasingMode = EasingMode.EaseInOut },
+            BeginTime = TimeSpan.FromSeconds(-pos), // 负起始：已推进到全局相位 pos
         };
         r.BeginAnimation(UIElement.OpacityProperty, anim);
     }
@@ -195,10 +219,12 @@ public partial class OverlayWindow : Window
     public void AcknowledgeBlink()
     {
         foreach (var id in _blinkingIds) _acknowledgedBlink.Add(id);
-        foreach (var r in _blinkRects)
+        // 遍历权威的持久化矩形集合（_blinkRects 在 early-return 帧可能过时，无法可靠覆盖侧条窗口）。
+        foreach (var bv in _blinkVisuals.Values)
         {
-            r.BeginAnimation(UIElement.OpacityProperty, null); // 解除动画
-            r.Opacity = 1.0;
+            bv.Rect.BeginAnimation(UIElement.OpacityProperty, null); // 解除动画
+            bv.Rect.Opacity = 1.0;
+            bv.Anim = ""; // 标记动画已停；下次若仍需闪烁会按需重启
         }
         _blinkRects.Clear();
     }
@@ -364,7 +390,8 @@ public partial class OverlayWindow : Window
         double h = Height;
         if (w <= 0 || h <= 0) return;
 
-        // 分段几何/颜色/到期态未变化时跳过重建，让已挂载的闪烁动画连续运行（避免每秒重置）。
+        // 分段签名完全未变时整体跳过。注意：签名涵盖所有段的 FillEnd，未完成任务每秒推进会令其变化；
+        // 此时仍会进入下方重建，但只重建「非闪烁段」，闪烁段按 taskId 持久化复用、动画不被打断。
         string sig = BuildRenderSignature(w, h);
         if (sig == _lastRenderSig && BarCanvas.Children.Count > 0) return;
         _lastRenderSig = sig;
@@ -381,70 +408,142 @@ public partial class OverlayWindow : Window
             }
         }
 
-        BarCanvas.Children.Clear();
+        // 预计算本帧需闪烁的任务及其错峰序号：跨四条边按 taskId 排序保持一致，
+        // 使同一任务在各边同步、不同任务依次错峰。
+        var blinkIds = _segments
+            .Where(s => s.Expired && !_acknowledgedBlink.Contains(s.TaskId) && IsBlinkBehavior(s))
+            .Select(s => s.TaskId).Distinct()
+            .OrderBy(id => id, StringComparer.Ordinal).ToList();
+        var blinkOrder = new Dictionary<string, int>(blinkIds.Count);
+        for (int i = 0; i < blinkIds.Count; i++) blinkOrder[blinkIds[i]] = i;
+        int blinkCount = blinkIds.Count;
+        var blinkSet = new HashSet<string>(blinkIds);
+
+        // 1) 回收不再闪烁的持久化矩形（任务恢复进行中 / 被确认 / 段消失）。
+        foreach (var id in _blinkVisuals.Keys.ToList())
+        {
+            if (!blinkSet.Contains(id))
+            {
+                var bv = _blinkVisuals[id];
+                bv.Rect.BeginAnimation(UIElement.OpacityProperty, null);
+                BarCanvas.Children.Remove(bv.Rect);
+                _blinkVisuals.Remove(id);
+            }
+        }
+
+        // 2) 仅移除上一帧的「非闪烁」矩形；持久化闪烁矩形保留在画布与动画中。
+        foreach (var r in _staticRects) BarCanvas.Children.Remove(r);
+        _staticRects.Clear();
         _blinkRects.Clear();
 
         // 仅绘制已填充部分（barStart → fillEnd），未完成部分不画任何底色（保持透明、不可点击）。
         foreach (var seg in _segments)
         {
-            // 正向：填充区 = [BarStart, FillEnd]
-            // 反向：绕整条轨道(100%)镜像，端点各取 100 - x → 填充区 = [100 - FillEnd, 100 - BarStart]
-            double localStart = seg.BarStart;
-            double localEnd   = seg.BarEnd;
-            double localFill  = seg.FillEnd;
-            if (IsSegReverse(seg))
-            {
-                localStart = 100.0 - seg.FillEnd;
-                localFill  = 100.0 - seg.BarStart;
-            }
+            if (!TryComputeFillRect(seg, w, h, out double rl, out double rt, out double rw, out double rh))
+                continue;
 
-            if (IsVertical)
+            if (blinkSet.Contains(seg.TaskId))
             {
-                double y0 = localStart / 100.0 * h;
-                double yFill = localFill / 100.0 * h;
-                double fillHeight = yFill - y0;
-                if (fillHeight <= 0) continue;
+                // 多任务时加长渐变并按序错峰；单任务保持原有节奏、无延时。
+                double half = blinkCount > 1 ? BlinkHalfPeriodMultiSec : BlinkHalfPeriodSec;
+                // 错峰延时在整个呼吸周期(2×half)内按任务数均匀铺开：2 个任务即反相、明暗交替明显。
+                double delay = blinkCount > 1 && blinkOrder.TryGetValue(seg.TaskId, out var idx)
+                    ? idx * (2.0 * half / blinkCount) : 0;
+                // 几何与动画分离：多任务打包布局下，进行中任务推进会令已完成段像素平移，
+                // 但呼吸节奏不变——此时只搬动矩形、不重启动画，避免每秒重置导致呼吸丢失。
+                string geo = $"{rl:F2}:{rt:F2}:{rw:F2}:{rh:F2}:{seg.Color}";
+                string animSig = $"{half}:{delay}";
 
-                var fill = new Rectangle
+                if (_blinkVisuals.TryGetValue(seg.TaskId, out var bv))
                 {
-                    Width = _barHeightPx,
-                    Height = fillHeight,
-                    Fill = new SolidColorBrush(ParseColor(seg.Color)),
-                };
-                double left = Position == PositionLeft ? 0 : _imageMaxThickness;
-                Canvas.SetLeft(fill, left);
-                Canvas.SetTop(fill, y0);
-                BarCanvas.Children.Add(fill);
-                MaybeStartBlink(fill, seg);
+                    if (bv.Geo != geo)
+                    {
+                        bv.Rect.Width = rw;
+                        bv.Rect.Height = rh;
+                        bv.Rect.Fill = new SolidColorBrush(ParseColor(seg.Color));
+                        Canvas.SetLeft(bv.Rect, rl);
+                        Canvas.SetTop(bv.Rect, rt);
+                        bv.Geo = geo;
+                    }
+                    if (bv.Anim != animSig)
+                    {
+                        // 仅呼吸节奏/错峰参数变化（单↔多任务切换、错峰序号变动）才重启动画。
+                        bv.Anim = animSig;
+                        StartBlink(bv.Rect, half, delay);
+                    }
+                }
+                else
+                {
+                    var rect = new Rectangle
+                    {
+                        Width = rw,
+                        Height = rh,
+                        Fill = new SolidColorBrush(ParseColor(seg.Color)),
+                    };
+                    Canvas.SetLeft(rect, rl);
+                    Canvas.SetTop(rect, rt);
+                    BarCanvas.Children.Add(rect);
+                    bv = new BlinkVisual { Rect = rect, Geo = geo, Anim = animSig };
+                    _blinkVisuals[seg.TaskId] = bv;
+                    StartBlink(rect, half, delay);
+                }
+                _blinkRects.Add(bv.Rect);
             }
             else
             {
-                double x0 = localStart / 100.0 * w;
-                double xFill = localFill / 100.0 * w;
-                double fillWidth = xFill - x0;
-                if (fillWidth <= 0) continue;
-
-                var fill = new Rectangle
+                var rect = new Rectangle
                 {
-                    Width = fillWidth,
-                    Height = _barHeightPx,
+                    Width = rw,
+                    Height = rh,
                     Fill = new SolidColorBrush(ParseColor(seg.Color)),
                 };
-                double top = Position == PositionTop ? 0 : _imageMaxThickness;
-                Canvas.SetLeft(fill, x0);
-                Canvas.SetTop(fill, top);
-                BarCanvas.Children.Add(fill);
-                MaybeStartBlink(fill, seg);
+                Canvas.SetLeft(rect, rl);
+                Canvas.SetTop(rect, rt);
+                BarCanvas.Children.Add(rect);
+                _staticRects.Add(rect);
             }
         }
     }
 
-    private void MaybeStartBlink(Rectangle fill, Segment seg)
+    // 计算某段已填充矩形的画布坐标与尺寸（含正/反向镜像）。填充长度<=0 时返回 false（跳过绘制）。
+    private bool TryComputeFillRect(Segment seg, double w, double h,
+        out double left, out double top, out double width, out double height)
     {
-        if (seg.Expired && !_acknowledgedBlink.Contains(seg.TaskId) && IsBlinkBehavior(seg))
+        left = top = width = height = 0;
+
+        // 正向：填充区 = [BarStart, FillEnd]
+        // 反向：绕整条轨道(100%)镜像，端点各取 100 - x → 填充区 = [100 - FillEnd, 100 - BarStart]
+        double localStart = seg.BarStart;
+        double localFill  = seg.FillEnd;
+        if (IsSegReverse(seg))
         {
-            _blinkRects.Add(fill);
-            StartBlink(fill);
+            localStart = 100.0 - seg.FillEnd;
+            localFill  = 100.0 - seg.BarStart;
+        }
+
+        if (IsVertical)
+        {
+            double y0 = localStart / 100.0 * h;
+            double yFill = localFill / 100.0 * h;
+            double fillHeight = yFill - y0;
+            if (fillHeight <= 0) return false;
+            width = _barHeightPx;
+            height = fillHeight;
+            left = Position == PositionLeft ? 0 : _imageMaxThickness;
+            top = y0;
+            return true;
+        }
+        else
+        {
+            double x0 = localStart / 100.0 * w;
+            double xFill = localFill / 100.0 * w;
+            double fillWidth = xFill - x0;
+            if (fillWidth <= 0) return false;
+            width = fillWidth;
+            height = _barHeightPx;
+            left = x0;
+            top = Position == PositionTop ? 0 : _imageMaxThickness;
+            return true;
         }
     }
 

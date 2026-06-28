@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using System.ComponentModel;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Windows;
@@ -285,6 +286,29 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
     {
         FitHeightToTaskEditor();
         SettingsStatus.Text = "已按任务编辑区重置窗口高度";
+    }
+
+    private void OnEasterEggClick(object sender, MouseButtonEventArgs e)
+    {
+        var result = System.Windows.MessageBox.Show(
+            "恭喜你发现了彩蛋，点击确定打开浏览器访问，如果你打不开，可能需要一点小小的魔法。",
+            "Hope · 彩蛋",
+            MessageBoxButton.OKCancel,
+            MessageBoxImage.Information);
+        if (result != MessageBoxResult.OK) return;
+
+        try
+        {
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = "https://www.marxists.org/chinese/reference-books/poems-of-struggle/america-songs.htm",
+                UseShellExecute = true
+            });
+        }
+        catch (Exception ex)
+        {
+            DesktopLog.Info($"打开彩蛋链接失败: {ex.Message}");
+        }
     }
 
     /// <summary>按任务编辑区实测高度调整窗体高度（§5.3.3 新增 7）。</summary>

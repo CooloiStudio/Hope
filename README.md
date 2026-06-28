@@ -31,7 +31,8 @@ A little hope for leaving work on time.
 ## 功能特性
 
 - 为多个任务设定时间、颜色与循环规则
-- 在屏幕顶端显示 `1~10px` 高的全宽分段彩色进度条
+- 在屏幕任意一边显示分段彩色进度条
+- 自定义任务图标
 - 点击穿透、不抢焦点、不参与 Alt+Tab / Win+Tab
 - 悬停展示任务名与剩余时间
 - 系统托盘：暂停/继续、显示/隐藏、快速打开设置
@@ -54,10 +55,10 @@ A little hope for leaving work on time.
   ~~Q: Why white?~~  
   ~~A: I like it~~
 
-- **加速有什么用？**  
-  可以提醒用户时间紧迫。  
-  Q: What is "Speed up" for?  
-  A: Running faster makes you feel like you can go home early!
+- ~~**加速有什么用？**~~  
+  ~~可以提醒用户时间紧迫。~~  
+  ~~Q: What is "Speed up" for?~~  
+  ~~A: Running faster makes you feel like you can go home early!~~
 
 - **不是说过就算死，从这跳下去，死外面，都不写桌面程序吗？**  
   真香！  
