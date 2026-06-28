@@ -33,6 +33,8 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
     private readonly IpcClient _ipc;
     private readonly ObservableCollection<TaskRow> _rows = new();
     private string? _editingId;
+    // 当前编辑任务的到期提醒覆盖（表单不再暴露，保存时原样保留）；null = 继承全局。
+    private List<string>? _editingBehaviors;
     private SettingsDto _settings = new();
     private bool _loadingSettings;
     private DateTimeOffset _taskCreatedAt = DateTimeOffset.Now;
@@ -61,10 +63,9 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
         RefreshBox.ValueChanged += OnSliderValueChanged;
         BarHeightBox.ValueChanged += OnSliderValueChanged;
         ImageMaxHeightBox.ValueChanged += OnSliderValueChanged;
-        GlobalBlinkCheck.Checked += OnSettingsControlChanged;
-        GlobalBlinkCheck.Unchecked += OnSettingsControlChanged;
-        GlobalCelebrateCheck.Checked += OnSettingsControlChanged;
-        GlobalCelebrateCheck.Unchecked += OnSettingsControlChanged;
+        GlobalReminderNoneRadio.Checked += OnSettingsControlChanged;
+        GlobalBlinkRadio.Checked += OnSettingsControlChanged;
+        GlobalCelebrateRadio.Checked += OnSettingsControlChanged;
         GlobalNotifyCheck.Checked += OnSettingsControlChanged;
         GlobalNotifyCheck.Unchecked += OnSettingsControlChanged;
         AutostartCheck.Checked += OnSettingsControlChanged;
@@ -344,12 +345,12 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
 
     // ===== 到期提醒（默认自动显示，可叠加勾选：闪烁 / 全屏庆祝 / 系统通知）=====
 
-    // 全局到期提醒集合（可空）：按勾选追加 blink / celebrate / notify。
+    // 全局到期提醒集合（可空）：呼吸 / 全屏庆祝 互斥（radio），系统通知可独立叠加。
     private List<string> CollectGlobalBehaviors()
     {
         var list = new List<string>();
-        if (GlobalBlinkCheck.IsChecked == true) list.Add("blink");
-        if (GlobalCelebrateCheck.IsChecked == true) list.Add("celebrate");
+        if (GlobalBlinkRadio.IsChecked == true) list.Add("blink");
+        if (GlobalCelebrateRadio.IsChecked == true) list.Add("celebrate");
         if (GlobalNotifyCheck.IsChecked == true) list.Add("notify");
         return list;
     }
@@ -357,54 +358,16 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
     private void LoadGlobalBehaviors(List<string>? behaviors)
     {
         var set = behaviors ?? new List<string>();
-        GlobalBlinkCheck.IsChecked = set.Contains("blink");
-        GlobalCelebrateCheck.IsChecked = set.Contains("celebrate");
+        // 互斥：庆祝优先于呼吸；二者皆无则「仅自动显示」。兼容旧版可能同时含二者的数据。
+        if (set.Contains("celebrate")) GlobalCelebrateRadio.IsChecked = true;
+        else if (set.Contains("blink")) GlobalBlinkRadio.IsChecked = true;
+        else GlobalReminderNoneRadio.IsChecked = true;
         GlobalNotifyCheck.IsChecked = set.Contains("notify");
     }
 
-    // 「使用全局默认」勾选变化：切换本任务三项叠加勾选的可用性，并触发自动保存。
-    private void OnTaskUseGlobalChanged(object sender, RoutedEventArgs e)
-    {
-        UpdateTaskBehaviorEnabled();
-        TryAutoSaveTask();
-    }
-
-    private void UpdateTaskBehaviorEnabled()
-    {
-        if (TaskBehaviorPanel == null) return;
-        TaskBehaviorPanel.IsEnabled = TaskUseGlobalCheck.IsChecked != true;
-    }
-
-    // 任务级到期提醒集合：勾「使用全局默认」返回 null（继承全局）；否则按勾选追加（可能为空）。
-    private List<string>? CollectTaskBehaviors()
-    {
-        if (TaskUseGlobalCheck.IsChecked == true) return null;
-        var list = new List<string>();
-        if (TaskBlinkCheck.IsChecked == true) list.Add("blink");
-        if (TaskCelebrateCheck.IsChecked == true) list.Add("celebrate");
-        if (TaskNotifyCheck.IsChecked == true) list.Add("notify");
-        return list;
-    }
-
-    // 载入任务级到期提醒：为空（新建或旧数据）时勾「使用全局默认」。
-    private void LoadTaskBehaviors(List<string>? behaviors)
-    {
-        if (behaviors == null || behaviors.Count == 0)
-        {
-            TaskUseGlobalCheck.IsChecked = true;
-            TaskBlinkCheck.IsChecked = false;
-            TaskCelebrateCheck.IsChecked = false;
-            TaskNotifyCheck.IsChecked = false;
-        }
-        else
-        {
-            TaskUseGlobalCheck.IsChecked = false;
-            TaskBlinkCheck.IsChecked = behaviors.Contains("blink");
-            TaskCelebrateCheck.IsChecked = behaviors.Contains("celebrate");
-            TaskNotifyCheck.IsChecked = behaviors.Contains("notify");
-        }
-        UpdateTaskBehaviorEnabled();
-    }
+    // 任务级到期提醒：表单已不再暴露选项，统一沿用全局。
+    // 但保留每任务覆盖能力——编辑时原样保留任务已有的 ExpiredBehaviors（新任务为 null=继承全局）。
+    private List<string>? CollectTaskBehaviors() => _editingBehaviors;
 
     // ===== 循环（仅定时任务）=====
 
@@ -607,7 +570,7 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
         SetDateTime(StartDatePicker, StartHourBox, StartMinuteBox,
             row.StartAt?.LocalDateTime ?? DateTime.Now);
         SetDateTime(EndDatePicker, EndHourBox, EndMinuteBox, row.EndAt.LocalDateTime);
-        LoadTaskBehaviors(row.ExpiredBehaviors);
+        _editingBehaviors = row.ExpiredBehaviors; // 保留任务已有覆盖，表单不展示
         LoadRecurrence(row.Recurrence);
         SelectComboByTag(TaskPositionBox, row.Position);
         StatusText.Text = $"正在编辑：{row.Name}";
@@ -624,7 +587,7 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
         SelectType("scheduled");
         SetDateTime(StartDatePicker, StartHourBox, StartMinuteBox, DateTime.Now);
         SetDateTime(EndDatePicker, EndHourBox, EndMinuteBox, DateTime.Now.AddHours(1));
-        LoadTaskBehaviors(null); // 新任务默认沿用全局
+        _editingBehaviors = null; // 新任务默认沿用全局
         LoadRecurrence(null);    // 新任务默认不循环
         SelectComboByTag(TaskPositionBox, "");
         TaskGrid.SelectedItem = null;
@@ -707,12 +670,6 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
         NameBox.TextChanged += (_, _) => TryAutoSaveTask();
         ColorBox.TextChanged += (_, _) => TryAutoSaveTask();
         GifBox.TextChanged += (_, _) => TryAutoSaveTask();
-        TaskBlinkCheck.Checked += (_, _) => TryAutoSaveTask();
-        TaskBlinkCheck.Unchecked += (_, _) => TryAutoSaveTask();
-        TaskCelebrateCheck.Checked += (_, _) => TryAutoSaveTask();
-        TaskCelebrateCheck.Unchecked += (_, _) => TryAutoSaveTask();
-        TaskNotifyCheck.Checked += (_, _) => TryAutoSaveTask();
-        TaskNotifyCheck.Unchecked += (_, _) => TryAutoSaveTask();
         TypeBox.SelectionChanged += (_, _) => { UpdateStartVisibility(); TryAutoSaveTask(); };
         StartDatePicker.SelectedDateChanged += (_, _) => TryAutoSaveTask();
         StartHourBox.SelectionChanged += (_, _) => TryAutoSaveTask();
