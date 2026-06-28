@@ -37,7 +37,7 @@
 | Desktop 单实例 | ✅ | `Global\HopeDesktop` Mutex |
 | WPF-UI Fluent 主题（配置窗） | ✅ | `App.xaml` 合并主题字典；`FluentWindow` + `TitleBar`；首帧后延迟应用 Mica（Win11）/ Acrylic（Win10），托盘延迟打开 + 隐藏时 `UnWatch`，规避 `Show()` 卡死 |
 | CI 编译 & 单测 | ✅ | `.github/workflows/release.yml`：`go test` + `dotnet publish` |
-| Inno Setup 安装包 | ✅ | `setup.iss`（含可选开机自启任务）；需打 tag `v*` 触发 Release 上传 |
+| Inno Setup 安装包 | ✅ | `setup.iss`（含可选开机自启任务）；手动触发 release 工作流，按桌面端版本号生成 `v<版本>` Release |
 | VS Code 调试配置 | ✅ | `Hope.sln` + `.vscode/launch.json`（net10.0-windows） |
 | **进度条位置选择** | 🔲 | 全局设置：顶边/底边/左边/右边；默认顶边 |
 | **进度条方向选择** | ✅ | 高级设置内；默认智能设定（上下时左→右，左右时上→下） |
@@ -972,15 +972,16 @@ Hope/
 
 ## 8. CI/CD（Phase 1 简化版）✅
 
-**`release.yml` 步骤：**
+**`release.yml` 步骤（手动触发：Actions → release → Run workflow）：**
 
 1. [x] Checkout
-2. [x] Setup Go、.NET SDK
-3. [x] 编译 `hope-headless.exe`
-4. [x] `go test ./...`
-5. [x] 编译 `hope-desktop`（`dotnet publish`）
-6. [x] Inno Setup 打 `Hope_Setup.exe`
-7. [x] GitHub Release 上传（push tag `v*` 时）
+2. [x] Setup Go、.NET 10 SDK
+3. [x] 读取桌面端 `Hope.Desktop.csproj` 的 `<Version>` 作为**发布版本号**（后端 Go 版本独立维护、无需一致）
+4. [x] 编译 `hope-headless.exe`
+5. [x] `go test ./...`
+6. [x] 编译 `hope-desktop`（`dotnet publish`，自动内嵌 csproj 版本）
+7. [x] Inno Setup 打 `Hope_Setup.exe`（`/DAppVersion=<桌面端版本>` 注入安装包版本）
+8. [x] 以 `v<桌面端版本>` 创建 / 更新 GitHub Release 并上传安装包
 
 **首版不需要：**
 

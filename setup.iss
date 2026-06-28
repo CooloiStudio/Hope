@@ -8,8 +8,11 @@
 #ifndef OutputDir
   #define OutputDir "dist"
 #endif
+; AppVersion 由 CI 通过 /DAppVersion=<桌面端版本> 注入；本地直接 iscc 时回退到占位值。
+#ifndef AppVersion
+  #define AppVersion "0.0.0"
+#endif
 #define AppName "Hope"
-#define AppVersion "0.3.0"
 #define AppPublisher "Hope"
 #define DesktopExe "hope-desktop.exe"
 
