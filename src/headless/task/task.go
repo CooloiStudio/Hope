@@ -44,6 +44,14 @@ func KeepsVisibleWhenExpired(bs []string) bool {
 	return true
 }
 
+// Status 任务生命周期状态。使用字符串枚举，便于后续扩展新状态。
+type Status string
+
+const (
+	StatusActive    Status = "active"    // 进行中：正常参与渲染
+	StatusCompleted Status = "completed" // 已完成：仅由用户手动「完成」置入，不再渲染
+)
+
 // RecurMode 循环模式（仅定时任务可用，文档 §7.5）。
 type RecurMode string
 
@@ -73,7 +81,9 @@ type Task struct {
 	StartAt   *time.Time `json:"startAt,omitempty"`
 	EndAt     time.Time  `json:"endAt"`
 	CreatedAt time.Time  `json:"createdAt"`
-	// Completed 为 true 时该任务被用户手动标记为完成，不再渲染。
+	// Status 任务生命周期状态；空字符串视为「进行中」（向后兼容旧数据）。
+	Status Status `json:"status,omitempty"`
+	// Completed 为旧版完成标记，仅用于兼容历史数据解析（见 IsCompleted）。
 	Completed bool `json:"completed,omitempty"`
 	// CompletedAt 记录用户手动完成的时间（可选）。
 	CompletedAt *time.Time `json:"completedAt,omitempty"`
@@ -84,6 +94,39 @@ type Task struct {
 	ExpiredBehaviors []string `json:"expiredBehaviors,omitempty"`
 	// Recurrence 为循环规则；nil / Mode 为空表示单次任务。
 	Recurrence *Recurrence `json:"recurrence,omitempty"`
+}
+
+// IsCompleted 报告任务是否被用户标记为已完成。
+// 以 Status 为准；Status 为空时回退到旧版 Completed 布尔字段，保证兼容历史数据。
+func (t *Task) IsCompleted() bool {
+	if t.Status != "" {
+		return t.Status == StatusCompleted
+	}
+	return t.Completed
+}
+
+// Clone 返回任务的深拷贝（所有指针字段独立），用于循环任务完成时生成下一期副本。
+func (t *Task) Clone() *Task {
+	cp := *t
+	if t.StartAt != nil {
+		s := *t.StartAt
+		cp.StartAt = &s
+	}
+	if t.CompletedAt != nil {
+		c := *t.CompletedAt
+		cp.CompletedAt = &c
+	}
+	if t.Recurrence != nil {
+		r := *t.Recurrence
+		if t.Recurrence.Weekdays != nil {
+			r.Weekdays = append([]int(nil), t.Recurrence.Weekdays...)
+		}
+		cp.Recurrence = &r
+	}
+	if t.ExpiredBehaviors != nil {
+		cp.ExpiredBehaviors = append([]string(nil), t.ExpiredBehaviors...)
+	}
+	return &cp
 }
 
 // EffectiveStart 返回用于计算的有效开始时刻。
@@ -306,7 +349,7 @@ func BuildLayout(tasks []*Task, now time.Time, behaviorsOf func(*Task) []string,
 	}
 	items := make([]item, 0, len(tasks))
 	for _, t := range tasks {
-		if t.Completed {
+		if t.IsCompleted() {
 			continue // 用户手动完成的任务不渲染
 		}
 		bs := behaviorsOf(t)

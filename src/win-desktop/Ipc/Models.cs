@@ -61,6 +61,7 @@ public sealed class TaskDto
     [JsonPropertyName("startAt")] public DateTimeOffset? StartAt { get; set; }
     [JsonPropertyName("endAt")] public DateTimeOffset EndAt { get; set; }
     [JsonPropertyName("createdAt")] public DateTimeOffset? CreatedAt { get; set; }
+    [JsonPropertyName("status")] public string? Status { get; set; } // active / completed；空＝兼容旧数据
     [JsonPropertyName("completed")] public bool Completed { get; set; }
     [JsonPropertyName("completedAt")] public DateTimeOffset? CompletedAt { get; set; }
     // 任务级展示位置覆盖；空字符串表示沿用全局设置。

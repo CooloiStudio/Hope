@@ -79,8 +79,29 @@
                                Appearance="Primary" Icon="{ui:SymbolIcon Add24}"
                                Padding="12,4" Click="OnAddTask" />
                 </Grid>
-                <ui:Button DockPanel.Dock="Bottom" x:Name="DeleteButton" Content="删除选中任务"
-                           HorizontalAlignment="Stretch" Height="32" Margin="0,8,0,0" Click="OnDelete" />
+                <DockPanel DockPanel.Dock="Top" Margin="0,0,0,6">
+                    <TextBlock Text="筛选" VerticalAlignment="Center" Margin="0,0,8,0" />
+                    <ComboBox x:Name="FilterBox" Width="120" HorizontalAlignment="Left"
+                              SelectionChanged="OnFilterChanged">
+                        <ComboBoxItem Content="进行中" Tag="active" IsSelected="True" />
+                        <ComboBoxItem Content="已完成" Tag="completed" />
+                        <ComboBoxItem Content="全部" Tag="all" />
+                    </ComboBox>
+                </DockPanel>
+                <Grid DockPanel.Dock="Bottom" Margin="0,8,0,0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <ui:Button Grid.Column="0" x:Name="DeleteButton" Content="删除选中任务"
+                               HorizontalAlignment="Stretch" Height="32" Margin="0,0,6,0"
+                               Click="OnDelete" />
+                    <ui:Button Grid.Column="1" x:Name="DeleteCompletedButton"
+                               Content="一键删除所有已完成任务"
+                               HorizontalAlignment="Stretch" Height="32" Margin="6,0,0,0"
+                               Background="#D13438" Foreground="White"
+                               Click="OnDeleteCompleted" />
+                </Grid>
                 <ui:DataGrid x:Name="TaskGrid" AutoGenerateColumns="False" IsReadOnly="True"
                           SelectionMode="Single" HeadersVisibility="Column"
                           SelectionChanged="OnSelectTask" GridLinesVisibility="Horizontal"
@@ -99,6 +120,7 @@
                         </DataGridTemplateColumn>
                         <DataGridTextColumn Header="名称" Binding="{Binding Name}" Width="*" />
                         <DataGridTextColumn Header="类型" Binding="{Binding TypeLabel}" Width="60" />
+                        <DataGridTextColumn Header="状态" Binding="{Binding StateLabel}" Width="64" />
                         <DataGridTextColumn Header="截止" Binding="{Binding EndLabel}" Width="120" />
                         <DataGridTemplateColumn Header="操作" Width="72" MinWidth="72">
                             <DataGridTemplateColumn.CellTemplate>
@@ -190,7 +212,7 @@
                                 <CheckBox x:Name="AllFourCheck" Content="我全都要（四边环绕）"
                                           Margin="0,12,0,0"
                                           Checked="OnAllFourChanged" Unchecked="OnAllFourChanged"
-                                          ToolTip="从当前位置出发，沿当前方向环绕屏幕四边" />
+                                          ToolTip="从起始位置出发，沿前进方向环绕屏幕四边" />
 
                                 <CheckBox x:Name="AdvancedPositionCheck" Content="允许为单个任务指定展示位置"
                                           Margin="0,12,0,0"
@@ -214,7 +236,7 @@
                                            FontSize="12" />
                             </Grid>
 
-                            <TextBlock Text="到期提醒效果（默认自动显示）" Margin="0,12,0,2"
+                            <TextBlock Text="到期提醒效果" Margin="0,12,0,2"
                                        TextWrapping="Wrap" />
                             <!-- 呼吸提醒 / 全屏庆祝 互斥（含「无」复位项）；系统通知可独立叠加。左边距统一为 0 以对齐 -->
                             <RadioButton x:Name="GlobalReminderNoneRadio" GroupName="GlobalReminder" Content="无"
@@ -228,7 +250,7 @@
                                              Margin="11,0,0,0" VerticalAlignment="Center"
                                              ToolTip="到期时四边同步呼吸庆祝" />
                                 <TextBlock VerticalAlignment="Center"
-                                           Visibility="{Binding IsChecked, ElementName=GlobalCelebrateRadio, Converter={StaticResource BoolToVisibilityConverter}}"><Run Text="  ⚠️" /><Run Text="光敏性癫痫警告" Foreground="Red" FontWeight="Bold" /><Run Text="⚠️" /></TextBlock>
+                                           Visibility="{Binding IsChecked, ElementName=GlobalCelebrateRadio, Converter={StaticResource BoolToVisibilityConverter}}"><Run Text="⚠️" /><Run Text="光敏性癫痫警告" Foreground="Red" /><Run Text="⚠️" /></TextBlock>
                             </StackPanel>
                             <CheckBox x:Name="GlobalNotifyCheck" Content="系统通知"
                                       Margin="0,2,0,0"
@@ -438,6 +460,12 @@
                                 </WrapPanel>
                             </DockPanel>
 
+                            <ui:Button x:Name="DuplicateTaskButton" Content="创建为新任务"
+                                       HorizontalAlignment="Stretch" Height="30" Margin="0,14,0,0"
+                                       Click="OnDuplicateTask" Visibility="Collapsed" />
+                            <ui:Button x:Name="CompleteTaskButton" Content="完成任务"
+                                       HorizontalAlignment="Stretch" Height="30" Margin="0,14,0,0"
+                                       Click="OnCompleteTask" Visibility="Collapsed" />
                             <ui:Button x:Name="NewButton" Content="清空（新建）"
                                        HorizontalAlignment="Stretch" Height="30" Margin="0,14,0,0" Click="OnNew" />
                         </StackPanel>

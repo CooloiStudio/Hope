@@ -5,7 +5,7 @@
     <TargetFramework>net10.0-windows</TargetFramework>
     <RootNamespace>Hope.Desktop</RootNamespace>
     <AssemblyName>hope-desktop</AssemblyName>
-    <Version>0.8.35</Version>
+    <Version>0.9.37</Version>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>

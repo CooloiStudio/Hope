@@ -354,6 +354,16 @@ go build -ldflags="-s -w -H=windowsgui" -o hope-headless.exe .
 ```
 
 ```json
+{"action":"completeTask","taskId":"uuid"}
+```
+
+```json
+{"action":"deleteCompletedTasks"}
+```
+
+> **任务状态（v0.8）**：`task.status` 为枚举（`active` 进行中 / `completed` 已完成，使用字符串便于后续扩展），空值兼容旧数据并回退到旧 `completed` 布尔字段。仅 **进行中** 任务参与渲染；`completeTask` 仅在用户手动点击「完成」时将任务置为 `completed`。若被完成的任务为 **循环任务**，则先复制其全部参数生成一份新副本（全新 `id`、起止时间推进到下一发生窗口、状态 `active`）再把原任务标记为 `completed`。`deleteCompletedTasks` 一键删除全部已完成任务。
+
+```json
 {"action":"updateSettings","settings":{"barHeightPx":4,"imageMaxHeightPx":15,"expiredBehaviors":["blink","notify"]}}
 {"action":"screenSize","settings":{"screenWidth":1920,"screenHeight":1080}}
 ```

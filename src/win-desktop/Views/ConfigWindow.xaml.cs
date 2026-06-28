@@ -32,6 +32,9 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
 
     private readonly IpcClient _ipc;
     private readonly ObservableCollection<TaskRow> _rows = new();
+    private ICollectionView? _rowsView;
+    // 任务列表过滤模式：all=全部 / active=进行中 / completed=已完成。
+    private string _filterMode = "all";
     private string? _editingId;
     // 当前编辑任务的到期提醒覆盖（表单不再暴露，保存时原样保留）；null = 继承全局。
     private List<string>? _editingBehaviors;
@@ -54,6 +57,8 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
 
         _ipc = ipc;
         TaskGrid.ItemsSource = _rows;
+        _rowsView = System.Windows.Data.CollectionViewSource.GetDefaultView(_rows);
+        _rowsView.Filter = RowMatchesFilter;
         _ipc.TasksReceived += OnTasksReceived;
         _ipc.SettingsReceived += OnSettingsReceived;
 
@@ -554,8 +559,47 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
         {
             _rows.Clear();
             foreach (var t in tasks) _rows.Add(TaskRow.From(t));
+            _rowsView?.Refresh();
             DesktopLog.Info($"ConfigWindow.OnTasksReceived grid rows={_rows.Count}");
         });
+    }
+
+    // 任务列表过滤谓词：按 _filterMode 决定行是否显示。
+    private bool RowMatchesFilter(object item)
+    {
+        if (item is not TaskRow row) return true;
+        return _filterMode switch
+        {
+            "active" => !row.Completed,
+            "completed" => row.Completed,
+            _ => true,
+        };
+    }
+
+    private void OnFilterChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (sender is not ComboBox box || box.SelectedItem is not ComboBoxItem item) return;
+        _filterMode = item.Tag?.ToString() ?? "all";
+        _rowsView?.Refresh();
+    }
+
+    private void OnDeleteCompleted(object sender, RoutedEventArgs e)
+    {
+        var completed = _rows.Where(r => r.Completed).ToList();
+        if (completed.Count == 0) { StatusText.Text = "没有已完成的任务"; return; }
+
+        var result = System.Windows.MessageBox.Show(
+            $"确认删除全部 {completed.Count} 个已完成任务？此操作不可撤销。",
+            "删除已完成任务",
+            System.Windows.MessageBoxButton.YesNo,
+            System.Windows.MessageBoxImage.Warning);
+        if (result != System.Windows.MessageBoxResult.Yes) return;
+
+        _ipc.Send(new Command { Action = "deleteCompletedTasks" });
+        _ipc.Send(new Command { Action = "listTasks" });
+        if (_editingId != null && completed.Any(r => r.Id == _editingId))
+            OnNew(sender, e);
+        StatusText.Text = $"已删除 {completed.Count} 个已完成任务";
     }
 
     private void OnSelectTask(object sender, SelectionChangedEventArgs e)
@@ -573,6 +617,7 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
         _editingBehaviors = row.ExpiredBehaviors; // 保留任务已有覆盖，表单不展示
         LoadRecurrence(row.Recurrence);
         SelectComboByTag(TaskPositionBox, row.Position);
+        UpdateTaskActionButtons(row);
         StatusText.Text = $"正在编辑：{row.Name}";
         MainTabs.SelectedItem = TaskTab;
     }
@@ -591,6 +636,8 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
         LoadRecurrence(null);    // 新任务默认不循环
         SelectComboByTag(TaskPositionBox, "");
         TaskGrid.SelectedItem = null;
+        DuplicateTaskButton.Visibility = Visibility.Collapsed;
+        CompleteTaskButton.Visibility = Visibility.Collapsed;
         StatusText.Text = "新建任务";
     }
 
@@ -605,7 +652,16 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
 
     private void OnCompleteTask(object sender, RoutedEventArgs e)
     {
-        if (sender is not FrameworkElement el || el.Tag is not string id) return;
+        string? id = null;
+        if (sender is FrameworkElement el && el.Tag is string tag) id = tag;
+        else id = _editingId;
+
+        if (string.IsNullOrEmpty(id)) return;
+        CompleteTaskById(id);
+    }
+
+    private void CompleteTaskById(string id)
+    {
         if (_rows.FirstOrDefault(r => r.Id == id) is not TaskRow row) return;
         if (row.Completed) { StatusText.Text = "该任务已完成"; return; }
 
@@ -619,6 +675,85 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
         _ipc.Send(new Command { Action = "completeTask", TaskId = row.Id });
         _ipc.Send(new Command { Action = "listTasks" });
         StatusText.Text = row.Recurrence != null ? "任务已完成并进入下一循环" : "任务已完成";
+
+        if (_editingId == row.Id)
+        {
+            DuplicateTaskButton.Visibility = Visibility.Visible;
+            CompleteTaskButton.Visibility = Visibility.Collapsed;
+        }
+    }
+
+    private void UpdateTaskActionButtons(TaskRow row)
+    {
+        if (row.Completed)
+        {
+            DuplicateTaskButton.Visibility = Visibility.Visible;
+            CompleteTaskButton.Visibility = Visibility.Collapsed;
+        }
+        else
+        {
+            DuplicateTaskButton.Visibility = Visibility.Collapsed;
+            CompleteTaskButton.Visibility = Visibility.Visible;
+        }
+    }
+
+    private void OnDuplicateTask(object sender, RoutedEventArgs e)
+    {
+        if (_editingId == null) return;
+        if (_rows.FirstOrDefault(r => r.Id == _editingId) is not TaskRow row) return;
+
+        var result = System.Windows.MessageBox.Show(
+            $"确认将已完成的任务「{row.Name}」创建为新任务？\n\n开始日期将调整为今天，截止时间按原开始日期的差值顺延。",
+            "创建为新任务",
+            MessageBoxButton.OKCancel,
+            MessageBoxImage.Question);
+        if (result != MessageBoxResult.OK) return;
+
+        var today = DateTime.Today;
+        DateTimeOffset? newStart = null;
+        DateTimeOffset newEnd;
+
+        if (row.Type == "scheduled" && row.StartAt.HasValue)
+        {
+            var originalStartLocal = row.StartAt.Value.LocalDateTime;
+            var adjustedStart = new DateTime(today.Year, today.Month, today.Day,
+                originalStartLocal.Hour, originalStartLocal.Minute, 0, originalStartLocal.Kind);
+            newStart = new DateTimeOffset(adjustedStart, TimeZoneInfo.Local.GetUtcOffset(adjustedStart));
+
+            var dayOffset = today - originalStartLocal.Date;
+            var adjustedEndLocal = row.EndAt.LocalDateTime + dayOffset;
+            newEnd = new DateTimeOffset(adjustedEndLocal, TimeZoneInfo.Local.GetUtcOffset(adjustedEndLocal));
+        }
+        else
+        {
+            // 即时任务没有开始时间：以截止日期为锚点，将截止日期调整为今天。
+            var originalEndLocal = row.EndAt.LocalDateTime;
+            var adjustedEnd = new DateTime(today.Year, today.Month, today.Day,
+                originalEndLocal.Hour, originalEndLocal.Minute, 0, originalEndLocal.Kind);
+            newEnd = new DateTimeOffset(adjustedEnd, TimeZoneInfo.Local.GetUtcOffset(adjustedEnd));
+        }
+
+        var dto = new TaskDto
+        {
+            Id = Guid.NewGuid().ToString(),
+            Name = row.Name,
+            Type = row.Type,
+            Color = row.Color,
+            Gif = row.Gif,
+            Position = row.Position,
+            StartAt = newStart,
+            EndAt = newEnd,
+            ExpiredBehaviors = row.ExpiredBehaviors,
+            Recurrence = row.Recurrence,
+            Status = "active",
+            Completed = false,
+            CompletedAt = null,
+            CreatedAt = DateTimeOffset.Now,
+        };
+
+        _ipc.Send(new Command { Action = "createTask", Task = dto });
+        _ipc.Send(new Command { Action = "listTasks" });
+        StatusText.Text = $"已将「{row.Name}」创建为新任务";
     }
 
     private void OnBrowseGif(object sender, RoutedEventArgs e)
@@ -717,6 +852,9 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
             }
         }
 
+        // 保留正在编辑任务的完成状态，避免编辑表单把已完成任务重置为进行中。
+        var existing = _editingId != null ? _rows.FirstOrDefault(r => r.Id == _editingId) : null;
+
         var dto = new TaskDto
         {
             Id = _editingId ?? Guid.NewGuid().ToString(),
@@ -729,6 +867,9 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
             EndAt = TryComposeDateTime(EndDatePicker, EndHourBox, EndMinuteBox, out var end) ? end : default,
             ExpiredBehaviors = CollectTaskBehaviors(),
             Recurrence = recurrence,
+            Status = existing?.Status ?? "active",
+            Completed = existing?.Completed ?? false,
+            CompletedAt = existing?.CompletedAt,
         };
 
         if (!_ipc.IsConnected)
@@ -869,6 +1010,7 @@ public sealed class TaskRow
     public DateTimeOffset? StartAt { get; init; }
     public DateTimeOffset EndAt { get; init; }
     public DateTimeOffset? CreatedAt { get; init; }
+    public string Status { get; init; } = "active";
     public bool Completed { get; init; }
     public DateTimeOffset? CompletedAt { get; init; }
     public string Position { get; init; } = "";
@@ -878,6 +1020,7 @@ public sealed class TaskRow
     public string TypeLabel => Type == "instant" ? "即时" : "定时";
     public string EndLabel => EndAt.LocalDateTime.ToString("MM-dd HH:mm");
     public string StatusLabel => Completed ? "已完成" : TypeLabel;
+    public string StateLabel => Completed ? "已完成" : "进行中";
     public Brush ColorBrush
     {
         get
@@ -898,7 +1041,8 @@ public sealed class TaskRow
         StartAt = t.StartAt,
         EndAt = t.EndAt,
         CreatedAt = t.CreatedAt,
-        Completed = t.Completed,
+        Status = string.IsNullOrEmpty(t.Status) ? (t.Completed ? "completed" : "active") : t.Status,
+        Completed = t.Completed || t.Status == "completed",
         CompletedAt = t.CompletedAt,
         Position = t.Position,
         ExpiredBehaviors = t.ExpiredBehaviors,

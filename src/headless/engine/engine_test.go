@@ -357,6 +357,103 @@ func TestUpdateSettingsPersists(t *testing.T) {
 	}
 }
 
+// TestCompleteNonRecurringMarksCompleted 验证完成非循环任务会置为已完成且不再渲染。
+func TestCompleteNonRecurringMarksCompleted(t *testing.T) {
+	t.Setenv("APPDATA", t.TempDir())
+	store, err := config.Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	eng := New(store, nil)
+
+	start := mustTime("2026-06-25T08:00:00+08:00")
+	end := mustTime("2026-06-25T18:00:00+08:00")
+	tk := makeTask("t1", start, start, end)
+	eng.HandleCommand(ipc.Command{Action: "createTask", Task: tk})
+	eng.HandleCommand(ipc.Command{Action: "completeTask", TaskID: "t1"})
+
+	_, tasks := store.Snapshot()
+	if len(tasks) != 1 {
+		t.Fatalf("expected 1 task, got %d", len(tasks))
+	}
+	if !tasks[0].IsCompleted() || tasks[0].Status != task.StatusCompleted {
+		t.Errorf("task should be completed, got status=%q completed=%v", tasks[0].Status, tasks[0].Completed)
+	}
+	if tasks[0].CompletedAt == nil {
+		t.Errorf("completedAt should be set")
+	}
+}
+
+// TestCompleteRecurringSpawnsNextCopy 验证完成循环任务会生成下一期进行中副本，并把原任务置为已完成。
+func TestCompleteRecurringSpawnsNextCopy(t *testing.T) {
+	t.Setenv("APPDATA", t.TempDir())
+	store, err := config.Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	eng := New(store, nil)
+
+	start := mustTime("2026-06-25T08:00:00+08:00")
+	end := mustTime("2026-06-25T18:00:00+08:00")
+	tk := makeTask("r1", start, start, end)
+	tk.Recurrence = &task.Recurrence{Mode: task.RecurDaily}
+	eng.HandleCommand(ipc.Command{Action: "createTask", Task: tk})
+	eng.HandleCommand(ipc.Command{Action: "completeTask", TaskID: "r1"})
+
+	_, tasks := store.Snapshot()
+	if len(tasks) != 2 {
+		t.Fatalf("expected original + copy = 2 tasks, got %d", len(tasks))
+	}
+	var orig, copyT *task.Task
+	for _, tt := range tasks {
+		if tt.ID == "r1" {
+			orig = tt
+		} else {
+			copyT = tt
+		}
+	}
+	if orig == nil || !orig.IsCompleted() {
+		t.Fatalf("original task should be completed")
+	}
+	if copyT == nil {
+		t.Fatalf("a new active copy should exist")
+	}
+	if copyT.IsCompleted() || copyT.Status != task.StatusActive {
+		t.Errorf("copy should be active, got status=%q", copyT.Status)
+	}
+	if copyT.StartAt == nil || !copyT.StartAt.After(start) {
+		t.Errorf("copy start should be advanced past original start, got %v", copyT.StartAt)
+	}
+	// 副本保留全部参数（颜色、循环规则）。
+	if copyT.Color != orig.Color || copyT.Recurrence == nil || copyT.Recurrence.Mode != task.RecurDaily {
+		t.Errorf("copy should retain params: color=%q recurrence=%+v", copyT.Color, copyT.Recurrence)
+	}
+}
+
+// TestDeleteCompletedTasks 验证一键删除仅移除已完成任务。
+func TestDeleteCompletedTasks(t *testing.T) {
+	t.Setenv("APPDATA", t.TempDir())
+	store, err := config.Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	eng := New(store, nil)
+
+	start := mustTime("2026-06-25T08:00:00+08:00")
+	end := mustTime("2026-06-25T18:00:00+08:00")
+	a := makeTask("a", start, start, end)
+	b := makeTask("b", start, start, end)
+	eng.HandleCommand(ipc.Command{Action: "createTask", Task: a})
+	eng.HandleCommand(ipc.Command{Action: "createTask", Task: b})
+	eng.HandleCommand(ipc.Command{Action: "completeTask", TaskID: "a"})
+	eng.HandleCommand(ipc.Command{Action: "deleteCompletedTasks"})
+
+	_, tasks := store.Snapshot()
+	if len(tasks) != 1 || tasks[0].ID != "b" {
+		t.Fatalf("expected only active task b to remain, got %v", ids(tasks))
+	}
+}
+
 func ids(tasks []*task.Task) []string {
 	out := make([]string, len(tasks))
 	for i, t := range tasks {

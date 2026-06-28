@@ -2,6 +2,7 @@
 package engine
 
 import (
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -28,6 +29,18 @@ func SetVersion(v string) {
 	if v != "" {
 		buildVersion = v
 	}
+}
+
+// newTaskID 生成一个新的任务 ID（UUIDv4 格式），用于循环任务完成时创建副本。
+func newTaskID() string {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		// 退化为时间戳，极少触发；仅保证唯一性即可。
+		return fmt.Sprintf("task-%d", time.Now().UnixNano())
+	}
+	b[6] = (b[6] & 0x0f) | 0x40
+	b[8] = (b[8] & 0x3f) | 0x80
+	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
 }
 
 // Engine 持有运行期状态（暂停 / 隐藏 / 到期信号）。
@@ -124,7 +137,7 @@ func effectiveBehaviors(t *task.Task, s config.Settings) []string {
 // computeActivity 返回是否存在未手动完成的任务，以及是否存在未过期任务。
 func computeActivity(tasks []*task.Task, now time.Time) (hadAny, hasActive bool) {
 	for _, t := range tasks {
-		if t.Completed {
+		if t.IsCompleted() {
 			continue
 		}
 		hadAny = true
@@ -160,7 +173,7 @@ func collectPositions(tasks []*task.Task, settings config.Settings) []string {
 func filterTasksByPosition(tasks []*task.Task, position, globalPosition string, advanced bool) []*task.Task {
 	var out []*task.Task
 	for _, t := range tasks {
-		if t.Completed {
+		if t.IsCompleted() {
 			continue
 		}
 		taskPos := t.Position
@@ -224,7 +237,7 @@ func buildAllFourLayout(tasks []*task.Task, now time.Time, behaviorsOf func(*tas
 	}
 	var items []afItem
 	for _, t := range tasks {
-		if t.Completed {
+		if t.IsCompleted() {
 			continue
 		}
 		bs := behaviorsOf(t)
@@ -337,7 +350,7 @@ func writeAllFourDebugLog(screenW, screenH float64, sides []string, cum []float6
 	sb.WriteString(fmt.Sprintf("cum  =%v\n", cum))
 
 	for _, t := range tasks {
-		if t.Completed {
+		if t.IsCompleted() {
 			continue
 		}
 		pct := t.Percent(now)
@@ -505,6 +518,11 @@ func round1(v float64) float64 { return math.Round(v*10) / 10 }
 func (e *Engine) collectExpiredLocked(tasks []*task.Task, now time.Time, behaviorsOf func(*task.Task) []string) []ipc.ExpiredEvent {
 	var out []ipc.ExpiredEvent
 	for _, t := range tasks {
+		if t.IsCompleted() {
+			// 用户手动完成的任务不再触发到期通知与持续到期表现。
+			delete(e.signaled, t.ID)
+			continue
+		}
 		if !t.IsExpired(now) {
 			// 未到期（含循环任务回到进行中）：清除标记，使下次到期可再次提醒。
 			delete(e.signaled, t.ID)
@@ -544,18 +562,34 @@ func (e *Engine) HandleCommand(cmd ipc.Command) any {
 			for _, t := range tasks {
 				if t.ID == cmd.TaskID {
 					now := time.Now()
-					advanced := t.AdvanceIfRecurring(now)
-					if !advanced {
-						// 非循环任务：标记为完成，不再渲染。
-						t.Completed = true
-						completedAt := now
-						t.CompletedAt = &completedAt
+					// 循环任务：先生成下一期副本（复制全部参数，起止时间推进到下一发生窗口），
+					// 副本为「进行中」且拥有全新 ID；随后将当前任务标记为已完成。
+					if t.IsRecurring() {
+						next := t.Clone()
+						if next.AdvanceIfRecurring(now) {
+							next.ID = newTaskID()
+							next.CreatedAt = now
+							next.Status = task.StatusActive
+							next.Completed = false
+							next.CompletedAt = nil
+							e.store.UpsertTask(next)
+							e.clearSignal(next.ID)
+						}
 					}
+					// 当前任务标记为已完成，不再渲染。
+					t.Status = task.StatusCompleted
+					t.Completed = true
+					completedAt := now
+					t.CompletedAt = &completedAt
 					e.store.UpsertTask(t)
 					e.clearSignal(cmd.TaskID)
 					break
 				}
 			}
+		}
+	case "deleteCompletedTasks":
+		for _, id := range e.store.DeleteCompletedTasks() {
+			e.clearSignal(id)
 		}
 	case "listTasks":
 		_, tasks := e.store.Snapshot()

@@ -243,6 +243,24 @@ func (s *Store) DeleteTask(id string) {
 	_ = s.SaveTasks()
 }
 
+// DeleteCompletedTasks 删除所有已完成任务，返回被删除任务的 ID 列表。
+func (s *Store) DeleteCompletedTasks() []string {
+	s.mu.Lock()
+	var removed []string
+	out := s.Tasks[:0]
+	for _, t := range s.Tasks {
+		if t.IsCompleted() {
+			removed = append(removed, t.ID)
+		} else {
+			out = append(out, t)
+		}
+	}
+	s.Tasks = out
+	s.mu.Unlock()
+	_ = s.SaveTasks()
+	return removed
+}
+
 // UpdateSettings 覆盖设置并持久化。
 // 约定：Desktop 的 updateSettings 携带完整用户意图，故以下字段允许「显式置空/默认」覆盖，
 // 不再走「非零才覆盖」：ExpiredBehaviors（可清空＝无附加效果）、BarDirection（""＝自动）。
