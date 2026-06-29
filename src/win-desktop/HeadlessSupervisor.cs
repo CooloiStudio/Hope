@@ -12,20 +12,53 @@ namespace Hope.Desktop;
 /// </summary>
 public sealed class HeadlessSupervisor : IDisposable
 {
+    /// <summary>连续快速退出超过阈值后触发，参数为失败原因。</summary>
+    public event Action<string>? FatalFailure;
+
+    /// <summary>允许后端连续快速退出的最大次数；超过后桌面端自动放弃拉起并退出。</summary>
+    public int MaxRetryAttempts { get; set; } = 3;
+
+    /// <summary>可选：检查是否已存在可用的核心连接。若返回 true，则 supervisor 不再尝试拉起新进程。</summary>
+    public Func<bool>? IsCoreReachable { get; set; }
+
     private readonly CancellationTokenSource _cts = new();
     private volatile bool _quitting;
     private Process? _currentProcess;
+    private int _fatalReported;
 
     public void Start() => _ = Task.Run(LoopAsync);
+
+    private void ReportFatal(string reason)
+    {
+        if (Interlocked.Exchange(ref _fatalReported, 1) == 0)
+        {
+            Debug.WriteLine($"[HeadlessSupervisor] FATAL: {reason}");
+            FatalFailure?.Invoke(reason);
+        }
+    }
 
     private async Task LoopAsync()
     {
         var exe = ResolveHeadlessPath();
-        if (exe == null) return;
+        if (exe == null)
+        {
+            ReportFatal("未找到 hope-headless.exe，请检查程序目录是否完整。");
+            return;
+        }
 
         int consecutiveQuickExits = 0;
         while (!_quitting && !_cts.IsCancellationRequested)
         {
+            if (_fatalReported == 1) return;
+
+            // 若已存在可用的核心连接（如手动启动的 headless），无需再拉起新进程。
+            if (IsCoreReachable?.Invoke() == true)
+            {
+                consecutiveQuickExits = 0;
+                await Task.Delay(2000, CancellationToken.None).ConfigureAwait(false);
+                continue;
+            }
+
             try
             {
                 if (Process.GetProcessesByName("hope-headless").Length == 0)
@@ -75,6 +108,11 @@ public sealed class HeadlessSupervisor : IDisposable
                             {
                                 consecutiveQuickExits++;
                                 Debug.WriteLine($"[HeadlessSupervisor] headless exited quickly (ran {runtime.TotalSeconds:F1}s), possible mutex conflict. consecutiveQuickExits={consecutiveQuickExits}");
+                                if (consecutiveQuickExits > MaxRetryAttempts)
+                                {
+                                    ReportFatal($"hope-headless 连续 {MaxRetryAttempts} 次异常退出，桌面端将停止拉起并退出。请检查是否有其他实例冲突或程序文件损坏。");
+                                    return;
+                                }
                             }
                             else
                             {

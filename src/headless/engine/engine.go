@@ -43,14 +43,12 @@ func newTaskID() string {
 	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
 }
 
-// Engine 持有运行期状态（暂停 / 隐藏 / 到期信号）。
+// Engine 持有运行期状态（到期信号）。
 type Engine struct {
 	store *config.Store
 	log   *slog.Logger
 
 	mu       sync.Mutex
-	paused   bool
-	hidden   bool
 	signaled map[string]bool // taskID -> 是否已发送过到期事件
 
 	// OnQuit 在收到 quit 命令时被调用，由 main 注入以触发进程优雅退出。
@@ -92,7 +90,6 @@ func (e *Engine) ComputeState() ipc.State {
 	}
 
 	e.mu.Lock()
-	paused, hidden := e.paused, e.hidden
 	events := e.collectExpiredLocked(tasks, now, behaviorsOf)
 	e.mu.Unlock()
 
@@ -104,13 +101,10 @@ func (e *Engine) ComputeState() ipc.State {
 
 	hadAny, hasActive := computeActivity(tasks, now)
 	switch {
-	case paused:
-		st.State = "paused"
-		st.Visible = false
 	case len(segments) > 0:
 		// 含未过期段或「保持显示」的到期段时顶栏可见。
 		st.State = "running"
-		st.Visible = !hidden
+		st.Visible = true
 	case hadAny:
 		st.State = "expired"
 		st.Visible = false
@@ -119,8 +113,8 @@ func (e *Engine) ComputeState() ipc.State {
 		st.Visible = false
 	}
 
-	// 任意未过期任务存在时保持 running（即使当前没有可见段，如全被 hide）。
-	if hasActive && !paused {
+	// 任意未过期任务存在时保持 running。
+	if hasActive {
 		st.State = "running"
 	}
 	return st
@@ -614,14 +608,6 @@ func (e *Engine) HandleCommand(cmd ipc.Command) any {
 				e.store.SetScreen(ns.ScreenWidth, ns.ScreenHeight)
 			}
 		}
-	case "pause":
-		e.setPaused(true)
-	case "resume":
-		e.setPaused(false)
-	case "hide":
-		e.setHidden(true)
-	case "show":
-		e.setHidden(false)
 	case "quit":
 		if e.OnQuit != nil {
 			go e.OnQuit()
@@ -632,9 +618,6 @@ func (e *Engine) HandleCommand(cmd ipc.Command) any {
 	}
 	return nil
 }
-
-func (e *Engine) setPaused(v bool) { e.mu.Lock(); e.paused = v; e.mu.Unlock() }
-func (e *Engine) setHidden(v bool) { e.mu.Lock(); e.hidden = v; e.mu.Unlock() }
 
 func (e *Engine) clearSignal(id string) {
 	e.mu.Lock()

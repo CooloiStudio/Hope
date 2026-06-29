@@ -8,6 +8,7 @@ using System.Windows.Shapes;
 using System.Windows.Threading;
 using Hope.Desktop.Interop;
 using Hope.Desktop.Ipc;
+using Hope.Desktop.Services;
 using Color = System.Windows.Media.Color;
 using SolidColorBrush = System.Windows.Media.SolidColorBrush;
 using ColorConverter = System.Windows.Media.ColorConverter;
@@ -46,6 +47,9 @@ public partial class OverlayWindow : Window
 
     public string Position { get; set; } = PositionTop;
     public string Direction { get; set; } = "forward";
+
+    /// <summary>当前屏幕布局；变更后需调用 RefreshLayout() 或等待 UpdateState 重算。</summary>
+    public ScreenLayoutInfo? ScreenLayout { get; set; }
 
     private bool IsVertical => Position is PositionLeft or PositionRight;
     private bool IsReverse => Direction == "reverse";
@@ -166,7 +170,7 @@ public partial class OverlayWindow : Window
 
     private void UpdateWindowBounds()
     {
-        var screen = SystemParameters.WorkArea;
+        var screen = ScreenLayout?.EffectiveArea(Position) ?? SystemParameters.WorkArea;
         if (IsVertical)
         {
             Width = _barHeightPx + _imageMaxThickness;
@@ -181,6 +185,14 @@ public partial class OverlayWindow : Window
             Left = screen.Left;
             Top = Position == PositionTop ? screen.Top : screen.Bottom - Height;
         }
+    }
+
+    /// <summary>在屏幕布局变化时立即重算窗口位置与尺寸，并触发一次重绘。</summary>
+    public void RefreshLayout()
+    {
+        UpdateWindowBounds();
+        Render();
+        UpdateSprites(IsVisible);
     }
 
     // 用「颜色序列」驱动本边共享画刷的轮换呼吸：在 seq 各颜色间循环平滑过渡（正弦缓动），

@@ -30,7 +30,7 @@ import (
 //
 // 构建时可通过 -ldflags "-X main.Version=vX.Y.Z" 覆盖（CI/CD 场景）。
 // 修改版本号时，请同步更新：CHANGELOG.md 中对应的 headless 相关条目。
-var Version = "0.8.19"
+var Version = "0.8.20"
 
 func main() {
 	debug := flag.Bool("debug", false, "输出日志到控制台并启用 debug 级别")

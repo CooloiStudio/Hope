@@ -44,10 +44,18 @@ public sealed class IpcClient : IDisposable
     /// <summary>连接状态变化。</summary>
     public event Action<bool>? ConnectionChanged;
 
+    /// <summary>长时间无法连接到后端管道时触发，参数为失败原因。</summary>
+    public event Action<string>? FatalDisconnected;
+
+    /// <summary>允许连续连接失败的最大次数；超过后桌面端放弃并提示用户。</summary>
+    public int MaxConnectFailures { get; set; } = 3;
+
     public void Start() => _ = Task.Run(RunLoopAsync);
 
     private async Task RunLoopAsync()
     {
+        int consecutiveFailures = 0;
+        bool fatalReported = false;
         while (!_cts.IsCancellationRequested)
         {
             try
@@ -59,6 +67,8 @@ public sealed class IpcClient : IDisposable
                 {
                     _writer = new StreamWriter(pipe) { AutoFlush = true };
                 }
+                consecutiveFailures = 0;
+                fatalReported = false;
                 ConnectionChanged?.Invoke(true);
                 DesktopLog.Info("IPC connected to hope-headless pipe");
 
@@ -72,7 +82,16 @@ public sealed class IpcClient : IDisposable
                 }
             }
             catch (OperationCanceledException) { break; }
-            catch (Exception ex) { DesktopLog.Warn($"IPC connect/read error: {ex.Message}"); }
+            catch (Exception ex)
+            {
+                DesktopLog.Warn($"IPC connect/read error: {ex.Message}");
+                consecutiveFailures++;
+                if (consecutiveFailures > MaxConnectFailures && !fatalReported)
+                {
+                    fatalReported = true;
+                    FatalDisconnected?.Invoke($"无法连接到 hope-headless 核心进程（连续失败 {consecutiveFailures} 次）。请检查后端是否被安全软件阻止，或尝试重启软件。");
+                }
+            }
             finally
             {
                 ConnectionChanged?.Invoke(false);

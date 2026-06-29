@@ -3,8 +3,10 @@ using System.Drawing;
 using System.Linq;
 using System.Windows;
 using System.Windows.Forms;
+using System.Windows.Threading;
 using Hope.Desktop.Ipc;
 using Hope.Desktop.Overlay;
+using Hope.Desktop.Services;
 using Hope.Desktop.Views;
 using Microsoft.Win32;
 using Wpf.Ui.Appearance;
@@ -29,9 +31,16 @@ public partial class App : Application
     private readonly HashSet<string> _notifiedTaskIds = new();
 
     private System.Threading.Mutex? _instanceMutex;
-    private bool _paused;
-    private bool _hidden;
     private int _barHeightPx = 4;
+
+    private ScreenLayoutInfo? _currentScreenLayout;
+    private DispatcherTimer? _layoutTimer;
+
+    /// <summary>启动后是否已检查过空任务列表；仅第一次为空时自动打开设置窗口。</summary>
+    private bool _checkedEmptyTasks;
+
+    /// <summary>是否已经因致命错误进入退出流程，避免重复弹窗。</summary>
+    private bool _fatalExiting;
 
     protected override void OnStartup(StartupEventArgs e)
     {
@@ -55,7 +64,7 @@ public partial class App : Application
         SystemEvents.UserPreferenceChanged += OnUserPreferenceChanged;
 
         _supervisor = new HeadlessSupervisor();
-        _supervisor.Start();
+        _supervisor.FatalFailure += OnHeadlessFatalFailure;
 
         EnsureOverlays();
 
@@ -64,7 +73,26 @@ public partial class App : Application
         _ipc.SettingsReceived += OnSettingsReceived;
         _ipc.VersionReceived += OnVersionReceived;
         _ipc.ConnectionChanged += OnConnectionChanged;
+        _ipc.TasksReceived += OnTasksReceivedForEmptyCheck;
+        _ipc.FatalDisconnected += OnIpcFatalDisconnected;
+
+        // 当已存在可连接的 headless（如开发时手动启动）时，supervisor 不再重复拉起，避免 mutex 冲突。
+        _supervisor.IsCoreReachable = () => _ipc.IsConnected;
+
+        _supervisor.Start();
         _ipc.Start();
+
+        // 初始化一次屏幕布局，避免启动时因 DPI/任务栏差异导致首帧位置错误。
+        RefreshScreenLayout();
+
+        _layoutTimer = new DispatcherTimer(DispatcherPriority.Background)
+        {
+            Interval = TimeSpan.FromSeconds(1),
+        };
+        _layoutTimer.Tick += (_, _) => RefreshScreenLayout();
+        _layoutTimer.Start();
+
+        SystemEvents.DisplaySettingsChanged += OnDisplaySettingsChanged;
 
         SetupTray();
     }
@@ -77,8 +105,46 @@ public partial class App : Application
         {
             _ipc.Send(new Command { Action = "getSettings" });
             _ipc.Send(new Command { Action = "getVersion" });
+            _ipc.Send(new Command { Action = "listTasks" });
             SendScreenSize();
         }
+    }
+
+    private void OnTasksReceivedForEmptyCheck(List<TaskDto> tasks)
+    {
+        Dispatcher.BeginInvoke(() =>
+        {
+            if (_checkedEmptyTasks) return;
+            _checkedEmptyTasks = true;
+            if (tasks.Count == 0)
+            {
+                DesktopLog.Info("No tasks found at startup, opening config window automatically");
+                ShowConfig();
+            }
+        });
+    }
+
+    private void OnHeadlessFatalFailure(string reason)
+    {
+        Dispatcher.BeginInvoke(() => FatalExit("Hope · 后端启动失败", reason));
+    }
+
+    private void OnIpcFatalDisconnected(string reason)
+    {
+        Dispatcher.BeginInvoke(() => FatalExit("Hope · 通讯异常", reason));
+    }
+
+    private void FatalExit(string caption, string message)
+    {
+        if (_fatalExiting) return;
+        _fatalExiting = true;
+        DesktopLog.Error($"FatalExit: {caption} - {message}");
+        System.Windows.MessageBox.Show(
+            message + "\n\n点击确定后将关闭 Hope。",
+            caption,
+            MessageBoxButton.OK,
+            MessageBoxImage.Error);
+        QuitAll();
     }
 
     // 仅上报屏幕尺寸，使用独立的 screenSize 命令；切勿走 updateSettings，
@@ -86,7 +152,7 @@ public partial class App : Application
     // 会经服务端 mergeSettings 把用户已保存的全局设置覆盖为默认值（启动即丢设置）。
     private void SendScreenSize()
     {
-        var rect = SystemParameters.WorkArea;
+        var rect = _currentScreenLayout?.EffectiveArea(_currentBarPosition) ?? SystemParameters.WorkArea;
         _ipc.Send(new Command
         {
             Action = "screenSize",
@@ -99,6 +165,44 @@ public partial class App : Application
     }
 
     private bool _startupConfigHandled;
+
+    /// <summary>检测主屏布局变化；变化时同步后端尺寸并让各 Overlay 立即重算位置。</summary>
+    private void RefreshScreenLayout()
+    {
+        var layout = ScreenLayoutService.GetCurrent();
+        bool changed = _currentScreenLayout == null ||
+                       !RectsEqual(_currentScreenLayout.WorkArea, layout.WorkArea) ||
+                       !RectsEqual(_currentScreenLayout.Bounds, layout.Bounds) ||
+                       _currentScreenLayout.TaskbarEdge != layout.TaskbarEdge ||
+                       _currentScreenLayout.TaskbarAutoHide != layout.TaskbarAutoHide ||
+                       _currentScreenLayout.HasFullScreenOnPrimary != layout.HasFullScreenOnPrimary;
+        if (!changed) return;
+
+        _currentScreenLayout = layout;
+        DesktopLog.Info($"Screen layout changed workArea={layout.WorkArea} bounds={layout.Bounds} " +
+                        $"edge={layout.TaskbarEdge} autoHide={layout.TaskbarAutoHide} fullScreen={layout.HasFullScreenOnPrimary}");
+
+        foreach (var overlay in _overlays.Values)
+        {
+            overlay.ScreenLayout = layout;
+            overlay.RefreshLayout();
+        }
+
+        if (_ipc.IsConnected) SendScreenSize();
+    }
+
+    private static bool RectsEqual(System.Windows.Rect a, System.Windows.Rect b)
+    {
+        return Math.Abs(a.X - b.X) < 0.01 &&
+               Math.Abs(a.Y - b.Y) < 0.01 &&
+               Math.Abs(a.Width - b.Width) < 0.01 &&
+               Math.Abs(a.Height - b.Height) < 0.01;
+    }
+
+    private void OnDisplaySettingsChanged(object? sender, EventArgs e)
+    {
+        Dispatcher.BeginInvoke(() => RefreshScreenLayout());
+    }
 
     private void OnSettingsReceived(SettingsDto s)
     {
@@ -189,6 +293,7 @@ public partial class App : Application
                 {
                     Position = pos,
                     Direction = dir,
+                    ScreenLayout = _currentScreenLayout,
                 };
                 DesktopLog.Info($"EnsureOverlays created pos={pos} direction={dir}");
             }
@@ -289,24 +394,6 @@ public partial class App : Application
     {
         var menu = new ContextMenuStrip();
         menu.Items.Add("打开设置", null, (_, _) => ShowConfig());
-        var pauseItem = new ToolStripMenuItem("暂停");
-        pauseItem.Click += (_, _) =>
-        {
-            _paused = !_paused;
-            pauseItem.Text = _paused ? "继续" : "暂停";
-            _ipc.Send(new Command { Action = _paused ? "pause" : "resume" });
-        };
-        menu.Items.Add(pauseItem);
-
-        var hideItem = new ToolStripMenuItem("隐藏进度条");
-        hideItem.Click += (_, _) =>
-        {
-            _hidden = !_hidden;
-            hideItem.Text = _hidden ? "显示进度条" : "隐藏进度条";
-            _ipc.Send(new Command { Action = _hidden ? "hide" : "show" });
-        };
-        menu.Items.Add(hideItem);
-
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("退出", null, (_, _) => QuitAll());
 
@@ -426,6 +513,9 @@ public partial class App : Application
 
         ApplicationThemeManager.Changed -= OnAppThemeChanged;
         SystemEvents.UserPreferenceChanged -= OnUserPreferenceChanged;
+        SystemEvents.DisplaySettingsChanged -= OnDisplaySettingsChanged;
+
+        _layoutTimer?.Stop();
 
         // 须先隐藏托盘再释放 Icon；否则 set_Visible 会访问已 Dispose 的 Icon.Handle。
         var tray = _tray;

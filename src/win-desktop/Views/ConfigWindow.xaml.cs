@@ -40,6 +40,8 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
     private List<string>? _editingBehaviors;
     private SettingsDto _settings = new();
     private bool _loadingSettings;
+    private bool _loadingTask;
+    private TaskDto? _lastSavedDto;
     private DateTimeOffset _taskCreatedAt = DateTimeOffset.Now;
     private bool _layoutReady;
     private readonly DispatcherTimer _autoSaveTimer;
@@ -557,9 +559,18 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
         DesktopLog.Info($"ConfigWindow.OnTasksReceived count={tasks.Count}");
         Dispatcher.BeginInvoke(() =>
         {
+            var editingId = _editingId;
             _rows.Clear();
             foreach (var t in tasks) _rows.Add(TaskRow.From(t));
             _rowsView?.Refresh();
+
+            // 刷新后恢复当前编辑任务的选中状态，避免编辑过程中高亮丢失。
+            if (editingId != null)
+            {
+                var row = _rows.FirstOrDefault(r => r.Id == editingId);
+                if (row != null) TaskGrid.SelectedItem = row;
+            }
+
             DesktopLog.Info($"ConfigWindow.OnTasksReceived grid rows={_rows.Count}");
         });
     }
@@ -605,6 +616,9 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
     private void OnSelectTask(object sender, SelectionChangedEventArgs e)
     {
         if (TaskGrid.SelectedItem is not TaskRow row) return;
+        _loadingTask = true;
+        _autoSaveTimer?.Stop();
+
         _editingId = row.Id;
         _taskCreatedAt = row.CreatedAt ?? DateTimeOffset.Now;
         NameBox.Text = row.Name;
@@ -620,12 +634,19 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
         UpdateTaskActionButtons(row);
         StatusText.Text = $"正在编辑：{row.Name}";
         MainTabs.SelectedItem = TaskTab;
+
+        _lastSavedDto = BuildCurrentDto();
+        _loadingTask = false;
     }
 
     private void OnNew(object sender, RoutedEventArgs e)
     {
+        // 先保存当前编辑的修改，再清空表单进入新建状态。
+        AutoSaveTask();
+
         _editingId = null;
         _taskCreatedAt = DateTimeOffset.Now;
+        _lastSavedDto = null;
         NameBox.Text = "";
         ColorBox.Text = SuggestUnusedColor();
         GifBox.Text = "";
@@ -801,7 +822,7 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
         e.Handled = true;
     }
 
-    private void OnTypeChanged(object sender, SelectionChangedEventArgs e) => UpdateStartVisibility();
+    private void OnTypeChanged(object sender, RoutedEventArgs e) => UpdateStartVisibility();
 
     private void OnColorChanged(object sender, TextChangedEventArgs e)
     {
@@ -817,7 +838,8 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
         NameBox.TextChanged += (_, _) => TryAutoSaveTask();
         ColorBox.TextChanged += (_, _) => TryAutoSaveTask();
         GifBox.TextChanged += (_, _) => TryAutoSaveTask();
-        TypeBox.SelectionChanged += (_, _) => { UpdateStartVisibility(); TryAutoSaveTask(); };
+        TypeScheduledRadio.Checked += (_, _) => { UpdateStartVisibility(); TryAutoSaveTask(); };
+        TypeInstantRadio.Checked += (_, _) => { UpdateStartVisibility(); TryAutoSaveTask(); };
         StartDatePicker.SelectedDateChanged += (_, _) => TryAutoSaveTask();
         StartHourBox.SelectionChanged += (_, _) => TryAutoSaveTask();
         StartMinuteBox.SelectionChanged += (_, _) => TryAutoSaveTask();
@@ -837,6 +859,7 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
     private void TryAutoSaveTask()
     {
         if (_loadingSettings) return;
+        if (_loadingTask) return;
         if (_autoSaveTimer == null) return;
         _autoSaveTimer.Stop();
         _autoSaveTimer.Start();
@@ -845,10 +868,34 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
     private void AutoSaveTask()
     {
         if (_loadingSettings) return;
+        if (_loadingTask) return;
+
+        var dto = BuildCurrentDto();
+        if (dto == null) return;
+
+        // 表单无实际变化时不触发保存，避免选中/加载阶段误报“已更新”。
+        if (_lastSavedDto != null && TaskDtoEquals(dto, _lastSavedDto)) return;
+
+        if (!_ipc.IsConnected)
+        {
+            StatusText.Text = "未连接到核心进程，无法保存";
+            return;
+        }
+
+        bool isNew = _editingId == null;
+        _ipc.Send(new Command { Action = isNew ? "createTask" : "updateTask", Task = dto });
+        _ipc.Send(new Command { Action = "listTasks" });
+        StatusText.Text = isNew ? "已创建" : "已更新";
+        _editingId = dto.Id;
+        _lastSavedDto = dto;
+    }
+
+    private TaskDto? BuildCurrentDto()
+    {
         var name = NameBox.Text.Trim();
-        if (string.IsNullOrEmpty(name)) return;
-        if (!TryParseColor(ColorBox.Text, out var color)) return;
-        if (!TryComposeDateTime(EndDatePicker, EndHourBox, EndMinuteBox, out _)) return;
+        if (string.IsNullOrEmpty(name)) return null;
+        if (!TryParseColor(ColorBox.Text, out var color)) return null;
+        if (!TryComposeDateTime(EndDatePicker, EndHourBox, EndMinuteBox, out _)) return null;
 
         var gif = GifBox.Text.Trim();
         var position = (TaskPositionBox.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? "";
@@ -867,7 +914,7 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
         // 保留正在编辑任务的完成状态，避免编辑表单把已完成任务重置为进行中。
         var existing = _editingId != null ? _rows.FirstOrDefault(r => r.Id == _editingId) : null;
 
-        var dto = new TaskDto
+        return new TaskDto
         {
             Id = _editingId ?? Guid.NewGuid().ToString(),
             Name = name,
@@ -883,18 +930,43 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
             Completed = existing?.Completed ?? false,
             CompletedAt = existing?.CompletedAt,
         };
+    }
 
-        if (!_ipc.IsConnected)
-        {
-            StatusText.Text = "未连接到核心进程，无法保存";
-            return;
-        }
+    private static bool TaskDtoEquals(TaskDto a, TaskDto b)
+    {
+        if (a.Id != b.Id) return false;
+        if (a.Name != b.Name) return false;
+        if (a.Type != b.Type) return false;
+        if (a.Color != b.Color) return false;
+        if (a.Gif != b.Gif) return false;
+        if (a.Position != b.Position) return false;
+        if (a.StartAt != b.StartAt) return false;
+        if (a.EndAt != b.EndAt) return false;
+        if (a.Status != b.Status) return false;
+        if (a.Completed != b.Completed) return false;
+        if (!SequenceEqual(a.ExpiredBehaviors, b.ExpiredBehaviors)) return false;
+        if (!RecurrenceEquals(a.Recurrence, b.Recurrence)) return false;
+        return true;
+    }
 
-        bool isNew = _editingId == null;
-        _ipc.Send(new Command { Action = isNew ? "createTask" : "updateTask", Task = dto });
-        _ipc.Send(new Command { Action = "listTasks" });
-        StatusText.Text = isNew ? "已创建" : "已更新";
-        _editingId = dto.Id;
+    private static bool SequenceEqual<T>(IList<T>? a, IList<T>? b)
+    {
+        if (a == null && b == null) return true;
+        if (a == null || b == null) return false;
+        if (a.Count != b.Count) return false;
+        for (int i = 0; i < a.Count; i++)
+            if (!EqualityComparer<T>.Default.Equals(a[i], b[i])) return false;
+        return true;
+    }
+
+    private static bool RecurrenceEquals(RecurrenceDto? a, RecurrenceDto? b)
+    {
+        if (a == null && b == null) return true;
+        if (a == null || b == null) return false;
+        if (a.Mode != b.Mode) return false;
+        if (a.Interval != b.Interval) return false;
+        if (!SequenceEqual(a.Weekdays, b.Weekdays)) return false;
+        return true;
     }
 
     private static string FormatCountdown(DateTimeOffset endAt)
@@ -973,14 +1045,17 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
         return true;
     }
 
-    private string SelectedType() =>
-        (TypeBox.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? "scheduled";
+    private string SelectedType() => TypeScheduledRadio.IsChecked == true ? "scheduled" : "instant";
 
     private void SelectType(string type)
     {
-        foreach (ComboBoxItem item in TypeBox.Items)
+        if (type == "instant")
         {
-            if (item.Tag?.ToString() == type) { item.IsSelected = true; break; }
+            TypeInstantRadio.IsChecked = true;
+        }
+        else
+        {
+            TypeScheduledRadio.IsChecked = true;
         }
         UpdateStartVisibility();
     }

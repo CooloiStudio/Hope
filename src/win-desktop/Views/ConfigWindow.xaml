@@ -71,23 +71,25 @@
             <DockPanel Grid.Column="0" Margin="0,0,12,0">
                 <Grid DockPanel.Dock="Top" Margin="0,0,0,6">
                     <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
                         <ColumnDefinition Width="*" />
                         <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
-                    <TextBlock Text="任务列表" FontWeight="Bold" VerticalAlignment="Center" />
-                    <ui:Button Grid.Column="1" x:Name="AddTaskButton" Content="添加任务"
-                               Appearance="Primary" Icon="{ui:SymbolIcon Add24}"
+                    <TextBlock Grid.Column="0" Text="任务列表" FontWeight="Bold" VerticalAlignment="Center" />
+                    <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center">
+                        <TextBlock Text="筛选" VerticalAlignment="Center" Margin="0,0,8,0" />
+                        <ComboBox x:Name="FilterBox" Width="120" VerticalAlignment="Center"
+                                  SelectionChanged="OnFilterChanged">
+                            <ComboBoxItem Content="进行中" Tag="active" IsSelected="True" />
+                            <ComboBoxItem Content="已完成" Tag="completed" />
+                            <ComboBoxItem Content="全部" Tag="all" />
+                        </ComboBox>
+                    </StackPanel>
+                    <ui:Button Grid.Column="2" x:Name="AddTaskButton" Content="添加任务"
+                               Background="#107C10" Foreground="White"
+                               Icon="{ui:SymbolIcon Add24}"
                                Padding="12,4" Click="OnAddTask" />
                 </Grid>
-                <DockPanel DockPanel.Dock="Top" Margin="0,0,0,6">
-                    <TextBlock Text="筛选" VerticalAlignment="Center" Margin="0,0,8,0" />
-                    <ComboBox x:Name="FilterBox" Width="120" HorizontalAlignment="Left"
-                              SelectionChanged="OnFilterChanged">
-                        <ComboBoxItem Content="进行中" Tag="active" IsSelected="True" />
-                        <ComboBoxItem Content="已完成" Tag="completed" />
-                        <ComboBoxItem Content="全部" Tag="all" />
-                    </ComboBox>
-                </DockPanel>
                 <Grid DockPanel.Dock="Bottom" Margin="0,8,0,0">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*" />
@@ -104,16 +106,70 @@
                 </Grid>
                 <ui:DataGrid x:Name="TaskGrid" AutoGenerateColumns="False" IsReadOnly="True"
                           SelectionMode="Single" HeadersVisibility="Column"
-                          SelectionChanged="OnSelectTask" GridLinesVisibility="Horizontal"
+                          SelectionChanged="OnSelectTask" GridLinesVisibility="None"
                           Background="{DynamicResource ControlFillColorDefaultBrush}"
                           Foreground="{DynamicResource TextFillColorPrimaryBrush}"
                           BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}">
+                    <DataGrid.Resources>
+                        <!-- 提高选中行对比度：普通行无额外背景，选中行使用主题主色并反白文字。 -->
+                        <Style TargetType="{x:Type DataGridRow}" BasedOn="{StaticResource {x:Type DataGridRow}}">
+                            <Setter Property="Margin" Value="0" />
+                            <Style.Triggers>
+                                <Trigger Property="IsSelected" Value="True">
+                                    <Setter Property="Background" Value="{DynamicResource SystemAccentColorLight2}" />
+                                    <Setter Property="Foreground" Value="{DynamicResource TextOnAccentFillColorPrimaryBrush}" />
+                                </Trigger>
+                            </Style.Triggers>
+                        </Style>
+                        <Style TargetType="{x:Type DataGridCell}" BasedOn="{StaticResource {x:Type DataGridCell}}">
+                            <Setter Property="Padding" Value="0,2" />
+                            <!-- 方案 A：关闭 DataGrid 网格线后，由单元格统一画一条底边描边，各列粗细一致。 -->
+                            <Setter Property="BorderThickness" Value="0,0,0,1" />
+                            <Setter Property="BorderBrush" Value="{DynamicResource ControlStrokeColorDefaultBrush}" />
+                            <!-- 单元格撑满整行，底边描边才会在各列对齐到统一的行底部；内容仍居中。 -->
+                            <Setter Property="VerticalAlignment" Value="Stretch" />
+                            <Setter Property="VerticalContentAlignment" Value="Center" />
+                            <Setter Property="Template">
+                                <Setter.Value>
+                                    <ControlTemplate TargetType="{x:Type DataGridCell}">
+                                        <Border Background="{TemplateBinding Background}"
+                                                BorderBrush="{TemplateBinding BorderBrush}"
+                                                BorderThickness="{TemplateBinding BorderThickness}"
+                                                Padding="{TemplateBinding Padding}"
+                                                SnapsToDevicePixels="True">
+                                            <ContentPresenter ContentTemplate="{TemplateBinding ContentTemplate}"
+                                                              Content="{TemplateBinding Content}"
+                                                              ContentStringFormat="{TemplateBinding ContentStringFormat}"
+                                                              HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                                              VerticalAlignment="{TemplateBinding VerticalContentAlignment}">
+                                                <ContentPresenter.Resources>
+                                                    <!-- 确保操作列按钮在选中行上保持原色，不被反白文字影响可读性。 -->
+                                                    <Style TargetType="ui:Button" BasedOn="{StaticResource {x:Type ui:Button}}">
+                                                        <Setter Property="Foreground" Value="{DynamicResource TextFillColorPrimaryBrush}" />
+                                                    </Style>
+                                                </ContentPresenter.Resources>
+                                            </ContentPresenter>
+                                        </Border>
+                                    </ControlTemplate>
+                                </Setter.Value>
+                            </Setter>
+                            <Style.Triggers>
+                                <Trigger Property="IsSelected" Value="True">
+                                    <Setter Property="Background" Value="Transparent" />
+                                    <Setter Property="Foreground" Value="{DynamicResource TextOnAccentFillColorPrimaryBrush}" />
+                                    <!-- 选中单元格不改变边框色（避免主题把边框变黑），仅由选中行背景区分。 -->
+                                    <Setter Property="BorderBrush" Value="{DynamicResource ControlStrokeColorDefaultBrush}" />
+                                </Trigger>
+                            </Style.Triggers>
+                        </Style>
+                    </DataGrid.Resources>
                     <DataGrid.Columns>
                         <DataGridTemplateColumn Header="颜色" Width="56" MinWidth="56">
                             <DataGridTemplateColumn.CellTemplate>
                                 <DataTemplate>
                                     <Border Width="16" Height="16" CornerRadius="3"
                                             HorizontalAlignment="Center"
+                                            VerticalAlignment="Center"
                                             Background="{Binding ColorBrush}" />
                                 </DataTemplate>
                             </DataGridTemplateColumn.CellTemplate>
@@ -125,14 +181,16 @@
                         <DataGridTemplateColumn Header="操作" Width="72" MinWidth="72">
                             <DataGridTemplateColumn.CellTemplate>
                                 <DataTemplate>
-                                    <Grid>
+                                    <Grid VerticalAlignment="Center">
                                         <ui:Button Content="完成" Padding="6,2" FontSize="12"
                                                    HorizontalAlignment="Center"
+                                                   VerticalAlignment="Center"
                                                    Tag="{Binding Id}"
                                                    Click="OnCompleteTask"
                                                    Visibility="{Binding Completed, Converter={StaticResource InvertedBoolToVisibilityConverter}}" />
                                         <ui:Button Content="重建" Padding="6,2" FontSize="12"
                                                    HorizontalAlignment="Center"
+                                                   VerticalAlignment="Center"
                                                    Tag="{Binding Id}"
                                                    Click="OnRecreateTask"
                                                    Visibility="{Binding Completed, Converter={StaticResource BoolToVisibilityConverter}}" />
@@ -338,10 +396,16 @@
                             <!-- 类型 -->
                             <DockPanel>
                                 <TextBlock Style="{StaticResource FieldLabel}" Text="类型" />
-                                <ComboBox x:Name="TypeBox" SelectionChanged="OnTypeChanged" HorizontalAlignment="Stretch">
-                                    <ComboBoxItem Content="定时任务（含开始时间）" Tag="scheduled" IsSelected="True" />
-                                    <ComboBoxItem Content="即时任务（仅截止时间）" Tag="instant" />
-                                </ComboBox>
+                                <StackPanel Orientation="Horizontal">
+                                    <RadioButton x:Name="TypeScheduledRadio" GroupName="TaskType"
+                                                 Content="定时任务（含开始时间）"
+                                                 IsChecked="True"
+                                                 VerticalAlignment="Center" />
+                                    <RadioButton x:Name="TypeInstantRadio" GroupName="TaskType"
+                                                 Content="即时任务（仅截止时间）"
+                                                 Margin="12,0,0,0"
+                                                 VerticalAlignment="Center" />
+                                </StackPanel>
                             </DockPanel>
 
                             <!-- 循环（仅定时任务；即时任务隐藏）。开始/截止的时分定义每个发生日窗口，开始日期为锚点 -->
@@ -467,7 +531,8 @@
                             <ui:Button x:Name="CompleteTaskButton" Content="完成任务"
                                        HorizontalAlignment="Stretch" Height="30" Margin="0,14,0,0"
                                        Click="OnCompleteTask" Visibility="Collapsed" />
-                            <ui:Button x:Name="NewButton" Content="清空（新建）"
+                            <ui:Button x:Name="NewButton" Content="新建"
+                                       Background="#107C10" Foreground="White"
                                        HorizontalAlignment="Stretch" Height="30" Margin="0,14,0,0" Click="OnNew" />
                         </StackPanel>
                 </TabItem>

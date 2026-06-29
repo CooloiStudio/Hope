@@ -2,13 +2,15 @@ name: release
 
 # Phase 1 简化流水线：编译 Go 核心 + WPF 桌面端，用 Inno Setup 打成单个安装包。
 # 发布版本号取自桌面端 Hope.Desktop.csproj 的 <Version>（后端版本独立、无需一致）。
+# Release 正文取自 CHANGELOG.md 中与该版本号匹配的小节（### v<版本>）。
 # 不含 UWP / MSIX 签名（见方案文档 §8）。
 #
-# 触发方式：在 GitHub 仓库 → Actions → release → Run workflow 手动触发即可，
-# 流水线会自动读取桌面端版本、构建安装包，并以 v<桌面端版本> 创建/更新 Release。
+# 触发方式：代码合并 / 推送到 release 分支时自动发版。
 
 on:
-  workflow_dispatch:
+  push:
+    branches:
+      - release
 
 permissions:
   contents: write
@@ -40,6 +42,37 @@ jobs:
           "tag=v$v" >> $env:GITHUB_OUTPUT
           Write-Host "Desktop (release) version: $v"
 
+      - name: Extract release notes from CHANGELOG
+        id: notes
+        shell: pwsh
+        run: |
+          $version = "${{ steps.ver.outputs.version }}"
+          $found = $false
+          if (Test-Path CHANGELOG.md) {
+            $lines = Get-Content CHANGELOG.md -Encoding utf8
+            $pattern = '^###\s+v' + [regex]::Escape($version) + '(\s|\(|$)'
+            $start = -1
+            for ($i = 0; $i -lt $lines.Count; $i++) {
+              if ($lines[$i] -match $pattern) { $start = $i; break }
+            }
+            if ($start -ge 0) {
+              $end = $lines.Count
+              for ($j = $start + 1; $j -lt $lines.Count; $j++) {
+                if ($lines[$j] -match '^(##|###)\s') { $end = $j; break }
+              }
+              $body = if ($end -gt $start + 1) { ($lines[($start + 1)..($end - 1)] -join "`n").Trim() } else { "" }
+              if (-not [string]::IsNullOrWhiteSpace($body)) {
+                Set-Content -Path release-notes.md -Value $body -Encoding utf8
+                $found = $true
+                Write-Host "已抽取 CHANGELOG v$version 小节作为 Release 正文"
+              }
+            }
+          }
+          if (-not $found) {
+            Write-Host "未能在 CHANGELOG.md 找到 v$version 小节，回退到自动生成说明"
+          }
+          "found=$($found.ToString().ToLower())" >> $env:GITHUB_OUTPUT
+
       - name: Build headless (Go)
         working-directory: src/headless
         run: go build -ldflags="-s -w -H=windowsgui" -o "${{ github.workspace }}\stage\hope-headless.exe" .
@@ -69,4 +102,6 @@ jobs:
         with:
           tag_name: ${{ steps.ver.outputs.tag }}
           name: Hope ${{ steps.ver.outputs.tag }}
+          body_path: ${{ steps.notes.outputs.found == 'true' && 'release-notes.md' || '' }}
+          generate_release_notes: ${{ steps.notes.outputs.found != 'true' }}
           files: dist/*.exe

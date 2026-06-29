@@ -117,6 +117,9 @@ $RECYCLE.BIN/
 
 .DS_Store
 .AppleDouble
+
+# WorkBuddy 自动生成的工作概览文件
+/overview.md
 .LSOverride
 ._*
 
