@@ -140,7 +140,7 @@
                                             <ContentPresenter ContentTemplate="{TemplateBinding ContentTemplate}"
                                                               Content="{TemplateBinding Content}"
                                                               ContentStringFormat="{TemplateBinding ContentStringFormat}"
-                                                              HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                                              HorizontalAlignment="Stretch"
                                                               VerticalAlignment="{TemplateBinding VerticalContentAlignment}">
                                                 <ContentPresenter.Resources>
                                                     <!-- 确保操作列按钮在选中行上保持原色，不被反白文字影响可读性。 -->
