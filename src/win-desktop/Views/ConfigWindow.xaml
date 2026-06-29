@@ -381,7 +381,8 @@
                             </DockPanel>
 
                             <!-- 图片 / 动图：预览框，展示 30px 高度的图片预览（动图可动） -->
-                            <DockPanel Margin="0,6,0,0">
+                            <DockPanel Margin="0,6,0,0"
+                                        ToolTip="支持任意图片格式&#x0a;图片跟随该任务进度移动&#x0a;动图循环播放&#x0a;超过全局预设自动缩放">
                                 <TextBlock Style="{StaticResource FieldLabel}" Text="图片" />
                                 <ui:Button DockPanel.Dock="Right" Content="清除" Width="52" Margin="6,0,0,0" Click="OnClearGif" />
                                 <ui:Button DockPanel.Dock="Right" Content="选择" Width="52" Margin="6,0,0,0" Click="OnBrowseGif" />
@@ -389,10 +390,9 @@
                                         Background="{DynamicResource ControlFillColorDefaultBrush}"
                                         BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}"
                                         BorderThickness="1" CornerRadius="4"
-                                        AllowDrop="True" PreviewDragOver="OnGifDragOver" Drop="OnGifDrop"
-                                        ToolTip="支持任意图片格式；可直接拖放图片文件到此。图片挂在进度条下方，跟随该任务进度前沿移动，动图循环播放（超过 15px 自动缩放）">
+                                        AllowDrop="True" PreviewDragOver="OnGifDragOver" Drop="OnGifDrop">
                                     <Grid Margin="8,0">
-                                        <TextBlock x:Name="GifPlaceholder" Text="（可拖放图片到此）"
+                                        <TextBlock x:Name="GifPlaceholder" Text="可拖拽图片或动图到此处"
                                                    VerticalAlignment="Center" HorizontalAlignment="Left"
                                                    Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
                                         <ContentControl x:Name="GifPreviewHost" IsTabStop="False"
