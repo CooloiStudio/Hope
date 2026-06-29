@@ -36,6 +36,11 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
     // 任务列表过滤模式：all=全部 / active=进行中 / completed=已完成。
     private string _filterMode = "all";
     private string? _editingId;
+    // 当前编辑任务图片路径（取代原图片地址输入框，作为数据来源）；空串表示无图片。
+    private string _gifPath = "";
+    // 图片预览精灵（复用 Overlay 的 ImageSprite，支持动图逐帧播放）。
+    private Overlay.ImageSprite? _gifPreviewSprite;
+    private DispatcherTimer? _gifPreviewTimer;
     // 当前编辑任务的到期提醒覆盖（表单不再暴露，保存时原样保留）；null = 继承全局。
     private List<string>? _editingBehaviors;
     private SettingsDto _settings = new();
@@ -87,6 +92,13 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
         AdvancedPositionCheck.Unchecked += OnSettingsControlChanged;
         AdvancedPositionCheck.Checked += OnAdvancedPositionChanged;
         AdvancedPositionCheck.Unchecked += OnAdvancedPositionChanged;
+
+        // 隐藏到托盘时暂停预览动画，重新显示时按需恢复，避免后台空耗。
+        IsVisibleChanged += (_, _) =>
+        {
+            if (IsVisible && _gifPreviewSprite != null) _gifPreviewTimer?.Start();
+            else _gifPreviewTimer?.Stop();
+        };
 
         StatusText.SizeChanged += (_, _) => ScheduleFitHeightToTaskEditor();
         Loaded += (_, _) =>
@@ -623,7 +635,7 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
         _taskCreatedAt = row.CreatedAt ?? DateTimeOffset.Now;
         NameBox.Text = row.Name;
         ColorBox.Text = row.Color;
-        GifBox.Text = row.Gif ?? "";
+        SetGifPath(row.Gif, autoSave: false);
         SelectType(row.Type);
         SetDateTime(StartDatePicker, StartHourBox, StartMinuteBox,
             row.StartAt?.LocalDateTime ?? DateTime.Now);
@@ -649,7 +661,7 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
         _lastSavedDto = null;
         NameBox.Text = "";
         ColorBox.Text = SuggestUnusedColor();
-        GifBox.Text = "";
+        SetGifPath("", autoSave: false);
         SelectType("scheduled");
         SetDateTime(StartDatePicker, StartHourBox, StartMinuteBox, DateTime.Now);
         SetDateTime(EndDatePicker, EndHourBox, EndMinuteBox, DateTime.Now.AddHours(1));
@@ -798,10 +810,64 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
                      "|*.gif;*.png;*.jpg;*.jpeg;*.bmp;*.webp;*.tif;*.tiff|所有文件 (*.*)|*.*",
             CheckFileExists = true,
         };
-        if (dlg.ShowDialog() == true) { GifBox.Text = dlg.FileName; TryAutoSaveTask(); }
+        if (dlg.ShowDialog() == true) SetGifPath(dlg.FileName, autoSave: true);
     }
 
-    private void OnClearGif(object sender, RoutedEventArgs e) { GifBox.Text = ""; TryAutoSaveTask(); }
+    private void OnClearGif(object sender, RoutedEventArgs e) => SetGifPath("", autoSave: true);
+
+    // 设置当前图片路径：更新预览，并按需触发自动保存。
+    private void SetGifPath(string? path, bool autoSave)
+    {
+        _gifPath = path ?? "";
+        RefreshGifPreview();
+        if (autoSave) TryAutoSaveTask();
+    }
+
+    // 刷新图片预览框：释放旧精灵，按需创建新精灵（30px 高，动图可动），并切换占位文字。
+    private void RefreshGifPreview()
+    {
+        if (_gifPreviewSprite != null)
+        {
+            GifPreviewHost.Content = null;
+            _gifPreviewSprite.Dispose();
+            _gifPreviewSprite = null;
+        }
+
+        bool hasImage = Overlay.ImageSprite.IsUsable(_gifPath);
+        if (hasImage)
+        {
+            try
+            {
+                _gifPreviewSprite = new Overlay.ImageSprite(_gifPath, 30);
+                GifPreviewHost.Content = _gifPreviewSprite.Element;
+            }
+            catch
+            {
+                _gifPreviewSprite = null;
+                hasImage = false;
+            }
+        }
+
+        GifPlaceholder.Visibility = hasImage ? Visibility.Collapsed : Visibility.Visible;
+
+        // 仅在存在（可能为动图的）精灵时驱动定时器逐帧推进。
+        if (_gifPreviewSprite != null)
+        {
+            if (_gifPreviewTimer == null)
+            {
+                _gifPreviewTimer = new DispatcherTimer(DispatcherPriority.Background)
+                {
+                    Interval = TimeSpan.FromMilliseconds(50),
+                };
+                _gifPreviewTimer.Tick += (_, _) => _gifPreviewSprite?.Advance();
+            }
+            _gifPreviewTimer.Start();
+        }
+        else
+        {
+            _gifPreviewTimer?.Stop();
+        }
+    }
 
     private void OnGifDragOver(object sender, System.Windows.DragEventArgs e)
     {
@@ -816,8 +882,7 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
         if (e.Data.GetDataPresent(System.Windows.DataFormats.FileDrop) &&
             e.Data.GetData(System.Windows.DataFormats.FileDrop) is string[] files && files.Length > 0)
         {
-            GifBox.Text = files[0];
-            TryAutoSaveTask();
+            SetGifPath(files[0], autoSave: true);
         }
         e.Handled = true;
     }
@@ -837,7 +902,6 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
     {
         NameBox.TextChanged += (_, _) => TryAutoSaveTask();
         ColorBox.TextChanged += (_, _) => TryAutoSaveTask();
-        GifBox.TextChanged += (_, _) => TryAutoSaveTask();
         TypeScheduledRadio.Checked += (_, _) => { UpdateStartVisibility(); TryAutoSaveTask(); };
         TypeInstantRadio.Checked += (_, _) => { UpdateStartVisibility(); TryAutoSaveTask(); };
         StartDatePicker.SelectedDateChanged += (_, _) => TryAutoSaveTask();
@@ -897,7 +961,7 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
         if (!TryParseColor(ColorBox.Text, out var color)) return null;
         if (!TryComposeDateTime(EndDatePicker, EndHourBox, EndMinuteBox, out _)) return null;
 
-        var gif = GifBox.Text.Trim();
+        var gif = _gifPath.Trim();
         var position = (TaskPositionBox.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? "";
         var type = SelectedType();
         DateTimeOffset? start = null;

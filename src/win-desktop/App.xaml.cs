@@ -1,6 +1,8 @@
 using System.Collections.Generic;
 using System.Drawing;
 using System.Linq;
+using System.Reflection;
+using System.Text;
 using System.Windows;
 using System.Windows.Forms;
 using System.Windows.Threading;
@@ -224,14 +226,95 @@ public partial class App : Application
 
     private void OnVersionReceived(string version)
     {
+        // 托盘 tooltip 的版本号取自桌面端程序自身（见 TrayHeader），此处仅记录后端版本。
         DesktopLog.Info($"App.OnVersionReceived headlessVersion={version}");
-        Dispatcher.BeginInvoke(() =>
+    }
+
+    // 托盘标题行：Hope·盼头 v<桌面端版本>（版本号取自程序配置/程序集）。
+    private static string TrayHeader()
+    {
+        var v = Assembly.GetExecutingAssembly().GetName().Version;
+        string ver = v != null ? $"{v.Major}.{v.Minor}.{v.Build}" : "";
+        return $"Hope·盼头 v{ver}";
+    }
+
+    // 根据当前渲染的任务段刷新托盘 tooltip：任务按进度升序、每行「名称 倒计时」。
+    // 受 NotifyIcon.Text 长度限制（≤127），超出时截断并以省略行提示。
+    private void UpdateTrayTooltip(List<Segment> segments)
+    {
+        if (_tray == null) return;
+
+        var now = DateTimeOffset.Now;
+        var tasks = segments
+            .Where(s => !string.IsNullOrEmpty(s.TaskId))
+            .GroupBy(s => s.TaskId)
+            .Select(g => g.First())
+            .OrderBy(s => s.Percent)
+            .ToList();
+
+        const int maxLen = 127;
+        const string nl = "\r\n";
+        var text = new StringBuilder(TrayHeader());
+        if (tasks.Count > 0)
         {
-            if (_tray != null)
+            // 名称按显示宽度（中文/全角=2，半角=1）补齐到统一宽度，使倒计时列对齐。
+            int nameWidth = tasks.Max(s => DisplayWidth(s.Name ?? ""));
+            text.Append(nl).Append("————");
+            foreach (var s in tasks)
             {
-                _tray.Text = $"Hope v{version}";
+                string line = $"{PadToWidth(s.Name ?? "", nameWidth)} {FormatTrayCountdown(s.EndAt, now)}";
+                // 预留省略行（nl + '…' = 3 字符）的空间，超出则截断。
+                if (text.Length + nl.Length + line.Length > maxLen - 3)
+                {
+                    text.Append(nl).Append('…');
+                    break;
+                }
+                text.Append(nl).Append(line);
             }
-        });
+        }
+
+        string final = text.ToString();
+        if (final.Length > maxLen) final = final.Substring(0, maxLen);
+        _tray.Text = final;
+    }
+
+    // 显示宽度：中文/全角字符按 2 列，半角字符按 1 列（近似 wcwidth）。
+    private static int DisplayWidth(string s)
+    {
+        int w = 0;
+        foreach (var ch in s) w += IsWideChar(ch) ? 2 : 1;
+        return w;
+    }
+
+    private static bool IsWideChar(char c)
+    {
+        return c >= 0x1100 && (
+            c <= 0x115F ||                          // Hangul Jamo
+            (c >= 0x2E80 && c <= 0xA4CF && c != 0x303F) || // CJK 部首…彝文
+            (c >= 0xAC00 && c <= 0xD7A3) ||         // Hangul 音节
+            (c >= 0xF900 && c <= 0xFAFF) ||         // CJK 兼容表意
+            (c >= 0xFE30 && c <= 0xFE4F) ||         // CJK 兼容形式
+            (c >= 0xFF00 && c <= 0xFF60) ||         // 全角 ASCII / 标点
+            (c >= 0xFFE0 && c <= 0xFFE6));          // 全角符号
+    }
+
+    // 用全角空格（U+3000，占 2 列）+ 半角空格（占 1 列）把名称补齐到目标显示宽度。
+    private static string PadToWidth(string name, int targetWidth)
+    {
+        int deficit = targetWidth - DisplayWidth(name);
+        if (deficit <= 0) return name;
+        int full = deficit / 2;
+        int half = deficit % 2;
+        return name + new string('\u3000', full) + new string(' ', half);
+    }
+
+    private static string FormatTrayCountdown(DateTimeOffset endAt, DateTimeOffset now)
+    {
+        var remaining = endAt - now;
+        if (remaining <= TimeSpan.Zero) return "已到期";
+        return remaining.TotalDays >= 1
+            ? $"{(int)remaining.TotalDays}天 {remaining.Hours:00}:{remaining.Minutes:00}:{remaining.Seconds:00}"
+            : $"{remaining.Hours:00}:{remaining.Minutes:00}:{remaining.Seconds:00}";
     }
 
     private void OnStateReceived(StateMessage msg)
@@ -243,6 +326,7 @@ public partial class App : Application
             bool wantAllFour = _allFour || celebrate;
             EnsureOverlays(wantAllFour);
             DispatchState(msg, celebrate);
+            UpdateTrayTooltip(all);
 
             // 清除已不在当前到期列表中的 taskId，允许下个周期再次通知
             var currentExpiredIds = new HashSet<string>(
@@ -401,7 +485,7 @@ public partial class App : Application
         {
             Icon = CreateTrayIconSafe(),
             Visible = true,
-            Text = "Hope · 盼头",
+            Text = TrayHeader(),
             ContextMenuStrip = menu,
         };
         _tray.DoubleClick += (_, _) => ShowConfig();
