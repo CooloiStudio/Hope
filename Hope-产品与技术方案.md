@@ -37,7 +37,8 @@
 | Desktop 单实例 | ✅ | `Global\HopeDesktop` Mutex |
 | WPF-UI Fluent 主题（配置窗） | ✅ | `App.xaml` 合并主题字典；`FluentWindow` + `TitleBar`；首帧后延迟应用 Mica（Win11）/ Acrylic（Win10），托盘延迟打开 + 隐藏时 `UnWatch`，规避 `Show()` 卡死 |
 | CI 编译 & 单测 | ✅ | `.github/workflows/release.yml`：`go test` + `dotnet publish` |
-| Inno Setup 安装包 | ✅ | `setup.iss`（含可选开机自启任务）；合并到 `release` 分支触发，按桌面端版本号生成 `v<版本>` Release，正文取自 `CHANGELOG.md` |
+| Inno Setup 安装包 | ✅ | `setup.iss`（含可选开机自启任务、`AppMutex` 静默升级）；合并到 `release` 分支触发，按桌面端版本号生成 `v<版本>` Release，正文取自 `CHANGELOG.md`，附 `Hope_Setup.exe.sha256` |
+| 自动更新（全量） | ✅ | `Services/UpdateService` + `UpdateCoordinator`：多通道检测（GitHub API/网页 + Gitee 兜底）、GitHub/Gitee 下载、SHA-256 校验、静默就地升级；全局「自动下载更新」开关（默认开）、每日检查，详见 §8.1 |
 | VS Code 调试配置 | ✅ | `Hope.sln` + `.vscode/launch.json`（net10.0-windows） |
 | **进度条位置选择** | 🔲 | 全局设置：顶边/底边/左边/右边；默认顶边 |
 | **进度条方向选择** | ✅ | 高级设置内；默认智能设定（上下时左→右，左右时上→下） |
@@ -981,14 +982,45 @@ Hope/
 5. [x] 编译 `hope-headless.exe`
 6. [x] `go test ./...`
 7. [x] 编译 `hope-desktop`（`dotnet publish`，自动内嵌 csproj 版本）
-8. [x] Inno Setup 打 `Hope_Setup.exe`（`/DAppVersion=<桌面端版本>` 注入安装包版本）
-9. [x] 以 `v<桌面端版本>` 创建 / 更新 GitHub Release 并上传安装包
+8. [x] Inno Setup 打 `Hope_Setup.exe`（`/DAppVersion=<桌面端版本>` 注入安装包版本；`setup.iss` 设 `AppMutex=Global\HopeDesktop` + `CloseApplications=yes` 以支持静默就地升级）
+9. [x] 计算 `Hope_Setup.exe.sha256`（小写十六进制摘要，供自动更新器校验）
+10. [x] 以 `v<桌面端版本>` 创建 / 更新 GitHub Release 并上传安装包与 `.sha256`
 
 **首版不需要：**
 
 - UWP / MSIX 签名
 - 自签名证书注入脚本
 - `Add-AppDevPackage.ps1`
+
+---
+
+## 8.1 自动更新（全量）✅
+
+桌面端内置全量更新流程：检测最新版本 → 提示 → 下载校验 → 静默就地升级 → 自动重启。
+
+**版本检测（多通道兜底，应对大陆网络）：** `Services/UpdateService.cs` 依次尝试
+
+1. GitHub API `repos/CooloiStudio/Hope/releases/latest`（信息最全：tag + body + 资产直链）
+2. GitHub 网页 `releases/latest` 的 302 重定向解析 tag（API 被墙但网页可达时）
+3. Gitee API `gitee.com/api/v5/repos/CooloiStudio/Hope/releases/latest`（大陆可达兜底）
+
+**下载与校验：** 安装包优先从 GitHub 直链下载，失败时切换到 Gitee Release 资产直链（主通道为 GitHub 时，会经「Gitee 最新版本与主通道一致」校验后追加为兜底）。下载后比对 `Hope_Setup.exe.sha256`，不匹配则换通道重试；取不到校验文件时退化为体积下限检查。
+
+> 前提：需在 Gitee 同名仓库 `gitee.com/CooloiStudio/Hope` 同步对应 Release，并附 `Hope_Setup.exe` 与 `Hope_Setup.exe.sha256` 资产。
+
+**安装：** 经用户确认后，以 `Hope_Setup.exe /SILENT /SUPPRESSMSGBOXES /NORESTART /CLOSEAPPLICATIONS` 静默升级，并由 `cmd` 串联 `start` 在安装完成后重新拉起桌面端（`setup.iss` 设 `RestartApplications=no` 避免重复拉起）。安装永远需要用户显式点击，不会无提示重启。
+
+**全局开关：** `config.Settings.AutoUpdate`（默认开，指针类型向后兼容旧配置）。
+
+- 开：发现新版本后自动后台下载，就绪后提示安装。
+- 关：仅检测并提示，不自动下载；用户可在「关于」页手动「下载并更新」。
+
+**状态机（`Services/UpdateCoordinator.cs`）：** `Idle / Checking / UpToDate / Available / Downloading / Ready / Failed`，由托盘（气泡 + 「检查更新」菜单）与「关于」页（状态、进度、检查/下载/安装/跳过/发布页按钮）共享。
+
+- 检查频率：启动后 ~25s 首检，之后每天一次；托盘菜单可手动触发。
+- 「跳过此版本」记录于桌面端本地 `%APPDATA%\Hope\update.json`，自动检查时不再提示该版本（手动检查仍提示）。
+
+**许可证：** 「关于」页「许可证」按钮弹出第三方 SDK / 库 / 组件清单与许可证（WPF-UI、.NET/WPF/WinForms、Go 标准库、`Microsoft/go-winio`、`golang.org/x/sys`、Inno Setup），并附 MIT 与 BSD-3-Clause 全文。所引用组件均为宽松型许可（MIT / BSD-3-Clause），与本项目 MIT 许可证兼容。
 
 ---
 

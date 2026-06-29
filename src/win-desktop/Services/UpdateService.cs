@@ -1,0 +1,365 @@
+using System.IO;
+using System.Net.Http;
+using System.Security.Cryptography;
+using System.Text.Json;
+using System.Text.RegularExpressions;
+
+namespace Hope.Desktop.Services;
+
+/// <summary>一次版本检测的结果：最新版本号、tag、更新说明，以及安装包 / 校验文件的候选下载地址。</summary>
+public sealed record UpdateInfo(
+    Version LatestVersion,
+    string Tag,
+    string Notes,
+    IReadOnlyList<string> InstallerUrls,
+    IReadOnlyList<string> Sha256Urls,
+    string Source);
+
+/// <summary>
+/// 全量更新服务：检测最新版本并下载安装包，校验 SHA-256，再静默就地升级。
+/// 数据源优先 GitHub（API / 网页重定向），并以 Gitee（gitee.com/CooloiStudio/Hope）的 Release 作为大陆兜底。
+/// </summary>
+public sealed class UpdateService
+{
+    private const string Owner = "CooloiStudio";
+    private const string Repo = "Hope";
+    private const string AssetName = "Hope_Setup.exe";
+    private const string Sha256Name = AssetName + ".sha256";
+
+    private static readonly HttpClient Http = CreateClient(autoRedirect: true);
+    private static readonly HttpClient HttpNoRedirect = CreateClient(autoRedirect: false);
+
+    private static HttpClient CreateClient(bool autoRedirect)
+    {
+        var handler = new HttpClientHandler { AllowAutoRedirect = autoRedirect };
+        var c = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(20) };
+        c.DefaultRequestHeaders.UserAgent.ParseAdd("Hope-Updater");
+        c.DefaultRequestHeaders.Accept.ParseAdd("application/vnd.github+json");
+        return c;
+    }
+
+    /// <summary>当前桌面端版本（取程序集 Major.Minor.Build）。</summary>
+    public static Version CurrentVersion
+    {
+        get
+        {
+            var v = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version;
+            return v == null ? new Version(0, 0, 0) : new Version(v.Major, v.Minor, v.Build);
+        }
+    }
+
+    /// <summary>
+    /// 检测最新版本。依次尝试：①GitHub API ②GitHub 网页 302 重定向 ③Gitee API（大陆兜底）。
+    /// 任一通道成功即返回，并尽量补齐 Gitee 下载地址作为下载兜底；全部失败返回 null。
+    /// </summary>
+    public async Task<UpdateInfo?> CheckLatestAsync(CancellationToken ct)
+    {
+        UpdateInfo? primary = null;
+        foreach (var strategy in new Func<CancellationToken, Task<UpdateInfo?>>[]
+                 {
+                     TryGitHubApiAsync,
+                     TryGitHubWebRedirectAsync,
+                     TryGiteeApiAsync,
+                 })
+        {
+            try
+            {
+                primary = await strategy(ct).ConfigureAwait(false);
+                if (primary != null)
+                {
+                    DesktopLog.Info($"UpdateService: latest={primary.LatestVersion} via {primary.Source}");
+                    break;
+                }
+            }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex) { DesktopLog.Warn($"UpdateService strategy failed: {ex.Message}"); }
+        }
+
+        if (primary == null)
+        {
+            DesktopLog.Warn("UpdateService: all version-check strategies failed");
+            return null;
+        }
+
+        return await WithGiteeFallbackAsync(primary, ct).ConfigureAwait(false);
+    }
+
+    // 通道①：GitHub API releases/latest（信息最全：tag + body + 资产直链）。
+    private async Task<UpdateInfo?> TryGitHubApiAsync(CancellationToken ct)
+    {
+        var url = $"https://api.github.com/repos/{Owner}/{Repo}/releases/latest";
+        using var resp = await Http.GetAsync(url, ct).ConfigureAwait(false);
+        if (!resp.IsSuccessStatusCode) return null;
+
+        var json = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+        using var doc = JsonDocument.Parse(json);
+        var root = doc.RootElement;
+
+        var tag = root.TryGetProperty("tag_name", out var tg) ? tg.GetString() : null;
+        if (string.IsNullOrWhiteSpace(tag) || !TryParseTag(tag, out var ver)) return null;
+
+        var notes = root.TryGetProperty("body", out var b) ? (b.GetString() ?? "") : "";
+        var (installer, sha) = ExtractAssets(root, BuildGitHubDownloadUrl(tag, AssetName), BuildGitHubDownloadUrl(tag, Sha256Name));
+
+        return new UpdateInfo(ver, tag, notes.Trim(), new[] { installer }, new[] { sha }, "github-api");
+    }
+
+    // 通道②：GitHub 网页 releases/latest 的 302 重定向，从 Location 解析 tag（API 被墙但网页可达时）。
+    private async Task<UpdateInfo?> TryGitHubWebRedirectAsync(CancellationToken ct)
+    {
+        var url = $"https://github.com/{Owner}/{Repo}/releases/latest";
+        using var resp = await HttpNoRedirect.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
+
+        // 期望 302 重定向到 /releases/tag/vX.Y.Z；从 Location 解析 tag。
+        string? location = resp.Headers.Location?.ToString();
+        if (string.IsNullOrWhiteSpace(location))
+            location = resp.RequestMessage?.RequestUri?.ToString();
+        if (string.IsNullOrWhiteSpace(location)) return null;
+
+        var m = Regex.Match(location, @"/releases/tag/(v?\d+\.\d+\.\d+)", RegexOptions.IgnoreCase);
+        if (!m.Success) return null;
+        var tag = m.Groups[1].Value;
+        if (!TryParseTag(tag, out var ver)) return null;
+
+        return new UpdateInfo(ver, tag, "",
+            new[] { BuildGitHubDownloadUrl(tag, AssetName) },
+            new[] { BuildGitHubDownloadUrl(tag, Sha256Name) },
+            "github-web");
+    }
+
+    // 通道③：Gitee API releases/latest（大陆可达兜底；要求 Gitee 同名仓库已同步对应 Release 与资产）。
+    private async Task<UpdateInfo?> TryGiteeApiAsync(CancellationToken ct)
+    {
+        var (ver, tag, notes, installer, sha) = await FetchGiteeLatestAsync(ct).ConfigureAwait(false);
+        if (ver == null || tag == null) return null;
+
+        var installers = new List<string>();
+        if (installer != null) installers.Add(installer);
+        installers.Add(BuildGitHubDownloadUrl(tag, AssetName)); // GitHub 作为次选
+
+        var shas = new List<string>();
+        if (sha != null) shas.Add(sha);
+        shas.Add(BuildGitHubDownloadUrl(tag, Sha256Name));
+
+        return new UpdateInfo(ver, tag, notes, installers, shas, "gitee-api");
+    }
+
+    // 当主通道来自 GitHub 时，best-effort 追加 Gitee 资产地址作为下载兜底。
+    private async Task<UpdateInfo> WithGiteeFallbackAsync(UpdateInfo primary, CancellationToken ct)
+    {
+        if (primary.Source.StartsWith("gitee")) return primary;
+
+        try
+        {
+            var (ver, tag, _, installer, sha) = await FetchGiteeLatestAsync(ct).ConfigureAwait(false);
+            // 仅当 Gitee 最新版与主通道一致时才追加，避免版本错配。
+            if (ver != null && ver == primary.LatestVersion)
+            {
+                var installers = new List<string>(primary.InstallerUrls);
+                var shas = new List<string>(primary.Sha256Urls);
+                if (installer != null && !installers.Contains(installer)) installers.Add(installer);
+                if (sha != null && !shas.Contains(sha)) shas.Add(sha);
+                return primary with { InstallerUrls = installers, Sha256Urls = shas };
+            }
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex) { DesktopLog.Warn($"UpdateService: gitee fallback resolve failed: {ex.Message}"); }
+
+        return primary;
+    }
+
+    // 调 Gitee API 取最新发布的 版本/tag/说明/安装包URL/校验URL（任一缺失返回 null 对应项）。
+    private async Task<(Version?, string?, string, string?, string?)> FetchGiteeLatestAsync(CancellationToken ct)
+    {
+        var url = $"https://gitee.com/api/v5/repos/{Owner}/{Repo}/releases/latest";
+        using var resp = await Http.GetAsync(url, ct).ConfigureAwait(false);
+        if (!resp.IsSuccessStatusCode) return (null, null, "", null, null);
+
+        var json = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+        using var doc = JsonDocument.Parse(json);
+        var root = doc.RootElement;
+
+        var tag = root.TryGetProperty("tag_name", out var tg) ? tg.GetString() : null;
+        if (string.IsNullOrWhiteSpace(tag) || !TryParseTag(tag, out var ver)) return (null, null, "", null, null);
+
+        var notes = root.TryGetProperty("body", out var b) ? (b.GetString() ?? "").Trim() : "";
+
+        string? installer = null, sha = null;
+        if (root.TryGetProperty("assets", out var assets) && assets.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var a in assets.EnumerateArray())
+            {
+                var dl = a.TryGetProperty("browser_download_url", out var d) ? d.GetString() : null;
+                if (string.IsNullOrEmpty(dl)) continue;
+                var name = a.TryGetProperty("name", out var n) ? n.GetString() : null;
+                name ??= LastPathSegment(dl);
+                if (name.Equals(AssetName, StringComparison.OrdinalIgnoreCase) ||
+                    dl.EndsWith("/" + AssetName, StringComparison.OrdinalIgnoreCase)) installer = dl;
+                else if (name.Equals(Sha256Name, StringComparison.OrdinalIgnoreCase) ||
+                         dl.EndsWith("/" + Sha256Name, StringComparison.OrdinalIgnoreCase)) sha = dl;
+            }
+        }
+        return (ver, tag, notes, installer, sha);
+    }
+
+    // 从 GitHub release JSON 的 assets 中提取安装包与校验文件直链，缺失时回退到约定 URL。
+    private static (string installer, string sha) ExtractAssets(JsonElement root, string fallbackInstaller, string fallbackSha)
+    {
+        string? installer = null, sha = null;
+        if (root.TryGetProperty("assets", out var assets) && assets.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var a in assets.EnumerateArray())
+            {
+                var name = a.TryGetProperty("name", out var n) ? n.GetString() : null;
+                var dl = a.TryGetProperty("browser_download_url", out var d) ? d.GetString() : null;
+                if (name == null || dl == null) continue;
+                if (name.Equals(AssetName, StringComparison.OrdinalIgnoreCase)) installer = dl;
+                else if (name.Equals(Sha256Name, StringComparison.OrdinalIgnoreCase)) sha = dl;
+            }
+        }
+        return (installer ?? fallbackInstaller, sha ?? fallbackSha);
+    }
+
+    /// <summary>
+    /// 下载安装包到本地（按候选地址顺序兜底 + SHA-256 校验）。成功返回安装包本地路径，失败抛异常。
+    /// </summary>
+    public async Task<string> DownloadInstallerAsync(UpdateInfo info, IProgress<double>? progress, CancellationToken ct)
+    {
+        var dir = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+            "Hope", "updates");
+        Directory.CreateDirectory(dir);
+        var target = Path.Combine(dir, $"Hope_Setup_{info.Tag}.exe");
+
+        string? expectedSha = await TryFetchSha256Async(info.Sha256Urls, ct).ConfigureAwait(false);
+
+        Exception? last = null;
+        foreach (var url in info.InstallerUrls)
+        {
+            try
+            {
+                var tmp = target + ".part";
+                await DownloadToFileAsync(url, tmp, progress, ct).ConfigureAwait(false);
+
+                if (expectedSha != null)
+                {
+                    var actual = ComputeSha256(tmp);
+                    if (!actual.Equals(expectedSha, StringComparison.OrdinalIgnoreCase))
+                    {
+                        File.Delete(tmp);
+                        last = new InvalidOperationException($"SHA-256 校验不通过（{url}）");
+                        DesktopLog.Warn($"UpdateService: sha256 mismatch from {url}");
+                        continue;
+                    }
+                    DesktopLog.Info("UpdateService: sha256 verified");
+                }
+                else if (new FileInfo(tmp).Length < 512 * 1024)
+                {
+                    File.Delete(tmp);
+                    last = new InvalidOperationException($"下载内容过小，疑似无效（{url}）");
+                    continue;
+                }
+
+                if (File.Exists(target)) File.Delete(target);
+                File.Move(tmp, target);
+                DesktopLog.Info($"UpdateService: downloaded installer to {target} via {url}");
+                return target;
+            }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex)
+            {
+                last = ex;
+                DesktopLog.Warn($"UpdateService: download failed from {url}: {ex.Message}");
+            }
+        }
+        throw last ?? new InvalidOperationException("所有下载通道均失败");
+    }
+
+    private static async Task DownloadToFileAsync(string url, string path, IProgress<double>? progress, CancellationToken ct)
+    {
+        using var resp = await Http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
+        resp.EnsureSuccessStatusCode();
+
+        long? total = resp.Content.Headers.ContentLength;
+        await using var src = await resp.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
+        await using var dst = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.None);
+
+        var buffer = new byte[81920];
+        long read = 0;
+        int n;
+        while ((n = await src.ReadAsync(buffer, ct).ConfigureAwait(false)) > 0)
+        {
+            await dst.WriteAsync(buffer.AsMemory(0, n), ct).ConfigureAwait(false);
+            read += n;
+            if (total is > 0) progress?.Report((double)read / total.Value);
+        }
+    }
+
+    private async Task<string?> TryFetchSha256Async(IReadOnlyList<string> urls, CancellationToken ct)
+    {
+        foreach (var url in urls)
+        {
+            try
+            {
+                using var resp = await Http.GetAsync(url, ct).ConfigureAwait(false);
+                if (!resp.IsSuccessStatusCode) continue;
+                var text = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+                var m = Regex.Match(text, @"\b([A-Fa-f0-9]{64})\b");
+                if (m.Success) return m.Groups[1].Value;
+            }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex) { DesktopLog.Warn($"UpdateService: fetch sha256 failed {url}: {ex.Message}"); }
+        }
+        DesktopLog.Warn("UpdateService: no sha256 available, will fall back to size check");
+        return null;
+    }
+
+    private static string ComputeSha256(string path)
+    {
+        using var stream = File.OpenRead(path);
+        using var sha = SHA256.Create();
+        var hash = sha.ComputeHash(stream);
+        return Convert.ToHexString(hash);
+    }
+
+    /// <summary>
+    /// 启动安装包静默就地升级，并在安装完成后重新拉起桌面端，随后退出当前进程。
+    /// 通过 cmd 串联「安装 → 重新启动」，不依赖安装器的重启管理器，最稳妥。
+    /// </summary>
+    public static void LaunchInstallerAndExit(string installerPath, Action quit)
+    {
+        var exePath = Environment.ProcessPath
+                      ?? System.Reflection.Assembly.GetExecutingAssembly().Location;
+
+        // /SILENT 显示进度但无交互；/CLOSEAPPLICATIONS 配合 setup.iss 的 AppMutex 关闭运行中的实例。
+        // 重启交由下面的 cmd `start` 负责（setup.iss 设 RestartApplications=no，避免重复拉起）。
+        var innoArgs = "/SILENT /SUPPRESSMSGBOXES /NORESTART /CLOSEAPPLICATIONS";
+        var cmdArgs = $"/c \"\"{installerPath}\" {innoArgs} && start \"\" \"{exePath}\"\"";
+
+        DesktopLog.Info($"UpdateService: launching installer {installerPath}");
+        System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+        {
+            FileName = "cmd.exe",
+            Arguments = cmdArgs,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+        });
+
+        quit();
+    }
+
+    private static string BuildGitHubDownloadUrl(string tag, string asset) =>
+        $"https://github.com/{Owner}/{Repo}/releases/download/{tag}/{asset}";
+
+    private static string LastPathSegment(string url)
+    {
+        var i = url.LastIndexOf('/');
+        return i >= 0 && i < url.Length - 1 ? url[(i + 1)..] : url;
+    }
+
+    private static bool TryParseTag(string tag, out Version version)
+    {
+        var t = tag.TrimStart('v', 'V').Trim();
+        return Version.TryParse(t, out version!);
+    }
+}

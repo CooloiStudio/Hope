@@ -17,6 +17,9 @@ var utf8BOM = []byte{0xEF, 0xBB, 0xBF}
 
 func stripBOM(b []byte) []byte { return bytes.TrimPrefix(b, utf8BOM) }
 
+// boolPtr 返回指向给定布尔值的指针，用于带默认值的可选布尔设置。
+func boolPtr(b bool) *bool { return &b }
+
 // Settings 为用户可配置项，对应文档 §7.4。
 // ExpiredBehaviors 为「全局默认」到期提醒（多选）；任务可在 task.Task.ExpiredBehaviors 单独覆盖。
 type Settings struct {
@@ -38,6 +41,9 @@ type Settings struct {
 	AdvancedPosition bool `json:"advancedPosition"`
 	// AllFour 为 true 时启用四边环绕（我全都要）。从 BarPosition 出发沿 BarDirection 方向环绕。
 	AllFour bool `json:"allFour"`
+	// AutoUpdate 是否自动下载更新（默认开）；关闭后仅检测并提示，不自动下载。
+	// 用指针区分「旧配置未写该字段」(nil→采用默认开) 与「用户显式关闭」(指向 false)。
+	AutoUpdate *bool `json:"autoUpdate,omitempty"`
 	// ScreenWidth 主屏幕工作区宽度（像素），四边模式下用于计算物理周长。
 	ScreenWidth float64 `json:"screenWidth"`
 	// ScreenHeight 主屏幕工作区高度（像素），四边模式下用于计算物理周长。
@@ -62,6 +68,7 @@ func DefaultSettings() Settings {
 		BarDirection:        "forward",
 		AdvancedPosition:    false,
 		AllFour:             false,
+		AutoUpdate:          boolPtr(true),
 		ScreenWidth:         0,
 		ScreenHeight:        0,
 	}
@@ -150,6 +157,9 @@ func mergeSettings(def, loaded Settings) Settings {
 	out.ShowConfigAtRuntime = loaded.ShowConfigAtRuntime
 	out.AdvancedPosition = loaded.AdvancedPosition
 	out.AllFour = loaded.AllFour
+	if loaded.AutoUpdate != nil {
+		out.AutoUpdate = loaded.AutoUpdate
+	}
 	// 兼容旧版 BarPosition="allFour"：迁移为 top + AllFour=true
 	// 必须在读取 loaded.AllFour 之后执行，以确保旧配置（无 AllFour 字段）能正确迁移。
 	if out.BarPosition == "allFour" {

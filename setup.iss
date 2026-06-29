@@ -21,6 +21,10 @@ AppId={{B7E4F2A1-9C3D-4E5F-8A6B-1D2C3E4F5A6B}}
 AppName={#AppName}
 AppVersion={#AppVersion}
 AppPublisher={#AppPublisher}
+; AppMutex 与桌面端单实例互斥量同名：静默升级（/CLOSEAPPLICATIONS）时安装器能检测并关闭运行中的实例。
+AppMutex=Global\HopeDesktop
+CloseApplications=yes
+RestartApplications=no
 DefaultDirName={autopf}\Hope
 DefaultGroupName=Hope
 DisableProgramGroupPage=yes

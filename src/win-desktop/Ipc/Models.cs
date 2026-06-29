@@ -97,6 +97,8 @@ public sealed class SettingsDto
     [JsonPropertyName("barDirection")] public string BarDirection { get; set; } = "forward";
     [JsonPropertyName("advancedPosition")] public bool AdvancedPosition { get; set; }
     [JsonPropertyName("allFour")] public bool AllFour { get; set; }
+    // 是否自动下载更新（默认开）；关闭后仅检测并提示，不自动下载。
+    [JsonPropertyName("autoUpdate")] public bool AutoUpdate { get; set; } = true;
     [JsonPropertyName("screenWidth")] public double ScreenWidth { get; set; }
     [JsonPropertyName("screenHeight")] public double ScreenHeight { get; set; }
 }

@@ -35,6 +35,9 @@ public partial class App : Application
     private System.Threading.Mutex? _instanceMutex;
     private int _barHeightPx = 4;
 
+    private UpdateCoordinator _updates = null!;
+    private DispatcherTimer? _updateTimer;
+
     private ScreenLayoutInfo? _currentScreenLayout;
     private DispatcherTimer? _layoutTimer;
 
@@ -97,6 +100,38 @@ public partial class App : Application
         SystemEvents.DisplaySettingsChanged += OnDisplaySettingsChanged;
 
         SetupTray();
+        SetupUpdates();
+    }
+
+    // 初始化自动更新：启动后延迟首检，之后每天检查一次；是否自动下载由全局设置控制。
+    private void SetupUpdates()
+    {
+        _updates = new UpdateCoordinator(() => Dispatcher.Invoke(QuitAll));
+        _updates.NewVersionAnnounced += OnNewVersionAnnounced;
+
+        var initial = new DispatcherTimer { Interval = TimeSpan.FromSeconds(25) };
+        initial.Tick += (_, _) =>
+        {
+            initial.Stop();
+            _ = _updates.CheckAsync(manual: false);
+        };
+        initial.Start();
+
+        _updateTimer = new DispatcherTimer { Interval = TimeSpan.FromDays(1) };
+        _updateTimer.Tick += (_, _) => _ = _updates.CheckAsync(manual: false);
+        _updateTimer.Start();
+    }
+
+    private void OnNewVersionAnnounced(string tag)
+    {
+        Dispatcher.BeginInvoke(() =>
+        {
+            if (_tray == null) return;
+            string msg = _updates.Status == UpdateStatus.Ready
+                ? $"新版本 {tag} 已下载，打开「设置 · 关于」即可安装"
+                : $"发现新版本 {tag}，可在「设置 · 关于」中更新";
+            _tray.ShowBalloonTip(5000, "Hope · 有可用更新", msg, ToolTipIcon.Info);
+        });
     }
 
     // 连接建立后拉取一次全局设置，使进度条高度等即时生效，并上报当前主屏幕工作区尺寸。
@@ -215,6 +250,7 @@ public partial class App : Application
             _currentBarPosition = string.IsNullOrWhiteSpace(s.BarPosition) ? OverlayWindow.PositionTop : s.BarPosition;
             _currentBarDirection = s.BarDirection ?? "";
             _allFour = s.AllFour;
+            if (_updates != null) _updates.AutoUpdateEnabled = s.AutoUpdate;
             EnsureOverlays();
             if (!_startupConfigHandled)
             {
@@ -478,6 +514,7 @@ public partial class App : Application
     {
         var menu = new ContextMenuStrip();
         menu.Items.Add("打开设置", null, (_, _) => ShowConfig());
+        menu.Items.Add("检查更新", null, (_, _) => _ = _updates.CheckAsync(manual: true));
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("退出", null, (_, _) => QuitAll());
 
@@ -548,7 +585,7 @@ public partial class App : Application
             if (_config == null)
             {
                 DesktopLog.Info("ShowConfigCore: creating ConfigWindow");
-                _config = new ConfigWindow(_ipc);
+                _config = new ConfigWindow(_ipc, _updates);
             }
 
             if (_config == null)
@@ -600,6 +637,7 @@ public partial class App : Application
         SystemEvents.DisplaySettingsChanged -= OnDisplaySettingsChanged;
 
         _layoutTimer?.Stop();
+        _updateTimer?.Stop();
 
         // 须先隐藏托盘再释放 Icon；否则 set_Visible 会访问已 Dispose 的 Icon.Handle。
         var tray = _tray;

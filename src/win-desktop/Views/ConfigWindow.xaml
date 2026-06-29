@@ -86,7 +86,7 @@
                         </ComboBox>
                     </StackPanel>
                     <ui:Button Grid.Column="2" x:Name="AddTaskButton" Content="添加任务"
-                               Background="#107C10" Foreground="White"
+                               Appearance="Success"
                                Icon="{ui:SymbolIcon Add24}"
                                Padding="12,4" Click="OnAddTask" />
                 </Grid>
@@ -206,11 +206,9 @@
             <TabControl Grid.Column="1" x:Name="MainTabs"
                         Background="{DynamicResource ApplicationBackgroundBrush}"
                         Foreground="{DynamicResource TextFillColorPrimaryBrush}">
-                <!-- 全局设置（默认 Tab） -->
+                <!-- 全局设置（默认 Tab）：不使用 ScrollViewer，窗口高度自适应内容，保证表单完整展示 -->
                 <TabItem Header="全局设置">
-                    <ScrollViewer VerticalScrollBarVisibility="Auto"
-                                  HorizontalScrollBarVisibility="Disabled" Padding="4,8,8,4">
-                        <StackPanel>
+                        <StackPanel x:Name="SettingsPanel" Margin="4,8,8,4">
                             <TextBlock Text="全局设置" FontWeight="Bold" Margin="0,0,0,8" />
 
                             <!-- 进度条设置分组 -->
@@ -329,6 +327,9 @@
                                       Margin="0,12,0,0"
                                       ToolTip="开启后，下次启动 Hope 时自动打开本配置窗口（默认仅托盘驻留）" />
 
+                            <CheckBox x:Name="AutoUpdateCheck" Content="自动下载更新" Margin="0,12,0,0"
+                                      ToolTip="开启后发现新版本将自动下载，下载完成后提示安装；关闭后仅检测并提示，不自动下载" />
+
                             <ui:Button x:Name="ResetWindowHeightButton" Content="重置窗口高度"
                                        HorizontalAlignment="Stretch" Height="32" Margin="0,12,0,0"
                                        Click="OnResetWindowHeight" />
@@ -336,7 +337,6 @@
                             <TextBlock x:Name="SettingsStatus" Foreground="{DynamicResource TextFillColorSecondaryBrush}"
                                        Margin="0,10,0,4" TextWrapping="Wrap" />
                         </StackPanel>
-                    </ScrollViewer>
                 </TabItem>
 
                 <!-- 任务编辑 -->
@@ -537,15 +537,15 @@
                                 </WrapPanel>
                             </DockPanel>
 
-                            <ui:Button x:Name="DuplicateTaskButton" Content="重建为新任务"
-                                       HorizontalAlignment="Stretch" Height="30" Margin="0,14,0,0"
-                                       Click="OnDuplicateTask" Visibility="Collapsed" />
-                            <ui:Button x:Name="CompleteTaskButton" Content="完成任务"
-                                       HorizontalAlignment="Stretch" Height="30" Margin="0,14,0,0"
-                                       Click="OnCompleteTask" Visibility="Collapsed" />
-                            <ui:Button x:Name="NewButton" Content="新建"
-                                       Background="#107C10" Foreground="White"
-                                       HorizontalAlignment="Stretch" Height="30" Margin="0,14,0,0" Click="OnNew" />
+                            <!-- 操作按钮：可见者在同一行等宽并排（UniformGrid 自动按可见数量分列） -->
+                            <UniformGrid Rows="1" Margin="0,14,0,0">
+                                <ui:Button x:Name="DuplicateTaskButton" Content="重建为新任务"
+                                           HorizontalAlignment="Stretch" Height="30" Margin="3,0"
+                                           Click="OnDuplicateTask" Visibility="Collapsed" />
+                                <ui:Button x:Name="CompleteTaskButton" Content="完成任务"
+                                           HorizontalAlignment="Stretch" Height="30" Margin="3,0"
+                                           Click="OnCompleteTask" Visibility="Collapsed" />
+                            </UniformGrid>
                         </StackPanel>
                 </TabItem>
 
@@ -555,19 +555,74 @@
                                   HorizontalScrollBarVisibility="Disabled" Padding="4,8,8,4">
                         <Grid>
                             <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
                                 <RowDefinition Height="*" />
                                 <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
                             </Grid.RowDefinitions>
+
+                            <!-- 标题 + 简介 -->
                             <StackPanel Grid.Row="0">
                                 <TextBlock Text="Hope · 盼头" FontWeight="Bold" FontSize="18" Margin="0,4,0,2" />
                                 <TextBlock x:Name="AboutVersionText" Text="v0.0.0"
                                            FontSize="14" Margin="0,0,0,12"
                                            Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+
                                 <TextBlock TextWrapping="Wrap" Margin="0,0,0,12"
                                            Foreground="{DynamicResource TextFillColorSecondaryBrush}"
                                            Text="Hope（盼头）会在屏幕最上方显示一根分段彩色进度条，提示距离死线已经消耗了多少时间。&#x0a;简洁、非侵入式占屏，十分友好。及时提醒用户注意时间，提高效率，充满正能量。&#x0a;&#x0a;A lightweight tool that reminds you when you can go home.&#x0a;A little hope for leaving work on time." />
                             </StackPanel>
-                            <StackPanel Grid.Row="1" Margin="0,16,0,4"
+
+                            <!-- 空白占位：将「其他功能」与彩蛋一同顶到底部 -->
+
+                            <!-- 其他功能：上下横向分割线包夹，无边框；置底（彩蛋之上） -->
+                            <StackPanel Grid.Row="2">
+                                <Grid Margin="0,4,0,8">
+                                    <Border Height="1" VerticalAlignment="Center" Background="{DynamicResource ControlStrokeColorDefaultBrush}" />
+                                    <TextBlock Text="其他功能" HorizontalAlignment="Center"
+                                               Background="{DynamicResource ApplicationBackgroundBrush}"
+                                               Padding="8,0" Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                                               FontSize="12" />
+                                </Grid>
+
+                                <TextBlock x:Name="BackendVersionText" Margin="0,0,0,6"
+                                           FontSize="12"
+                                           Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                                           Text="核心版本 获取中…" />
+
+                                <TextBlock x:Name="UpdateStatusText" TextWrapping="Wrap"
+                                           Text="点击「检查更新」获取最新版本。"
+                                           Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
+                                <ProgressBar x:Name="UpdateProgress" Height="6" Margin="0,8,0,0"
+                                             Minimum="0" Maximum="100" Visibility="Collapsed" />
+                                <TextBox x:Name="UpdateNotesBox" Margin="0,8,0,0"
+                                         IsReadOnly="True" TextWrapping="Wrap" MaxHeight="140"
+                                         VerticalScrollBarVisibility="Auto"
+                                         BorderThickness="0" Background="Transparent"
+                                         Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                                         Visibility="Collapsed" />
+                                <WrapPanel Margin="0,10,0,0">
+                                    <ui:Button x:Name="CheckUpdateButton" Content="检查更新"
+                                               Margin="0,0,8,8" Click="OnCheckUpdate" />
+                                    <ui:Button x:Name="DownloadUpdateButton" Content="下载并更新"
+                                               Appearance="Primary" Margin="0,0,8,8"
+                                               Visibility="Collapsed" Click="OnDownloadUpdate" />
+                                    <ui:Button x:Name="InstallUpdateButton" Content="立即安装"
+                                               Appearance="Primary" Margin="0,0,8,8"
+                                               Visibility="Collapsed" Click="OnInstallUpdate" />
+                                    <ui:Button x:Name="SkipVersionButton" Content="跳过此版本"
+                                               Margin="0,0,8,8" Visibility="Collapsed"
+                                               Click="OnSkipVersion" />
+                                    <ui:Button x:Name="LicensesButton" Content="许可证"
+                                               Margin="0,0,8,8" Click="OnShowLicenses"
+                                               ToolTip="查看本项目使用的第三方组件及其许可证信息" />
+                                </WrapPanel>
+
+                                <Border Height="1" Margin="0,8,0,0"
+                                        Background="{DynamicResource ControlStrokeColorDefaultBrush}" />
+                            </StackPanel>
+
+                            <StackPanel Grid.Row="3" Margin="0,16,0,4"
                                         MouseLeftButtonDown="OnEasterEggClick"
                                         Cursor="Hand">
                                 <TextBlock Text="八小时工作，八小时休息，八小时归自己！"

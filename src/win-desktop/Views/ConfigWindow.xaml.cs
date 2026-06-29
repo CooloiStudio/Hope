@@ -31,6 +31,7 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
     private const double FluentTitleBarFallbackHeight = 48;
 
     private readonly IpcClient _ipc;
+    private readonly Services.UpdateCoordinator? _updates;
     private readonly ObservableCollection<TaskRow> _rows = new();
     private ICollectionView? _rowsView;
     // 任务列表过滤模式：all=全部 / active=进行中 / completed=已完成。
@@ -51,7 +52,9 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
     private bool _layoutReady;
     private readonly DispatcherTimer _autoSaveTimer;
 
-    public ConfigWindow(IpcClient ipc)
+    public ConfigWindow(IpcClient ipc) : this(ipc, null) { }
+
+    public ConfigWindow(IpcClient ipc, Services.UpdateCoordinator? updates)
     {
         DesktopLog.Info("ConfigWindow ctor: before InitializeComponent");
         // 必须在 InitializeComponent 之前初始化，因为 XAML 事件在加载期间就可能触发 TryAutoSaveTask
@@ -63,11 +66,14 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
         AppIconHelper.ApplyWindowIcon(this);
 
         _ipc = ipc;
+        _updates = updates;
+        if (_updates != null) _updates.StateChanged += OnUpdateStateChanged;
         TaskGrid.ItemsSource = _rows;
         _rowsView = System.Windows.Data.CollectionViewSource.GetDefaultView(_rows);
         _rowsView.Filter = RowMatchesFilter;
         _ipc.TasksReceived += OnTasksReceived;
         _ipc.SettingsReceived += OnSettingsReceived;
+        _ipc.VersionReceived += OnBackendVersionReceived;
 
         PopulateTimeBoxes(StartHourBox, StartMinuteBox);
         PopulateTimeBoxes(EndHourBox, EndMinuteBox);
@@ -84,6 +90,8 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
         AutostartCheck.Unchecked += OnSettingsControlChanged;
         ShowConfigAtRuntimeCheck.Checked += OnSettingsControlChanged;
         ShowConfigAtRuntimeCheck.Unchecked += OnSettingsControlChanged;
+        AutoUpdateCheck.Checked += OnSettingsControlChanged;
+        AutoUpdateCheck.Unchecked += OnSettingsControlChanged;
         BarPositionBox.SelectionChanged += OnSettingsSelectionChanged;
         BarDirectionBox.SelectionChanged += OnSettingsSelectionChanged;
         AllFourCheck.Checked += OnSettingsControlChanged;
@@ -108,6 +116,7 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
         };
 
         AboutVersionText.Text = FormatAppVersion();
+        RenderUpdateUi();
 
         ContentRendered += (_, _) => EnsureFluentBackdrop();
         HookTaskFieldEvents();
@@ -164,6 +173,17 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
         DesktopLog.Info("ConfigWindow RequestRefresh");
         _ipc.Send(new Command { Action = "listTasks" });
         _ipc.Send(new Command { Action = "getSettings" });
+        _ipc.Send(new Command { Action = "getVersion" });
+    }
+
+    // 后端（核心）版本来自 IPC 的 getVersion 响应；展示在「关于 · 其他功能」区。
+    private void OnBackendVersionReceived(string version)
+    {
+        Dispatcher.BeginInvoke(() =>
+        {
+            var v = string.IsNullOrWhiteSpace(version) ? "未知" : version.TrimStart('v', 'V');
+            BackendVersionText.Text = $"核心版本 v{v}";
+        });
     }
 
     private void OnSettingsReceived(SettingsDto s)
@@ -182,6 +202,7 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
             LoadGlobalBehaviors(s.ExpiredBehaviors);
             AutostartCheck.IsChecked = s.Autostart;
             ShowConfigAtRuntimeCheck.IsChecked = s.ShowConfigAtRuntime;
+            AutoUpdateCheck.IsChecked = s.AutoUpdate;
             SelectComboByTag(BarPositionBox, s.BarPosition);
             AdvancedPositionCheck.IsChecked = s.AdvancedPosition;
             TaskPositionRow.Visibility = s.AdvancedPosition ? Visibility.Visible : Visibility.Collapsed;
@@ -226,6 +247,7 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
         _settings.ExpiredBehaviors = CollectGlobalBehaviors();
         _settings.Autostart = AutostartCheck.IsChecked == true;
         _settings.ShowConfigAtRuntime = ShowConfigAtRuntimeCheck.IsChecked == true;
+        _settings.AutoUpdate = AutoUpdateCheck.IsChecked == true;
         _settings.BarPosition = (BarPositionBox.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? "top";
         _settings.BarDirection = (BarDirectionBox.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? "";
         _settings.AdvancedPosition = AdvancedPositionCheck.IsChecked == true;
@@ -233,6 +255,8 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
         var rect = SystemParameters.WorkArea;
         _settings.ScreenWidth = rect.Width;
         _settings.ScreenHeight = rect.Height;
+
+        if (_updates != null) _updates.AutoUpdateEnabled = _settings.AutoUpdate;
 
         _ipc.Send(new Command { Action = "updateSettings", Settings = _settings });
         _ipc.Send(new Command { Action = "getSettings" });
@@ -300,6 +324,8 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
     {
         if (AdvancedOptionsPanel != null)
             AdvancedOptionsPanel.Visibility = ShowAdvancedSettingsCheck.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
+        // 高级设置展开/收起会改变设置面板高度，重算窗口高度以保持表单完整、无滚动条。
+        ScheduleFitHeightToTaskEditor();
     }
 
     private void OnResetWindowHeight(object sender, RoutedEventArgs e)
@@ -331,15 +357,17 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
         }
     }
 
-    /// <summary>按任务编辑区实测高度调整窗体高度（§5.3.3 新增 7）。</summary>
+    /// <summary>
+    /// 按右侧 Tab 内容实测高度调整窗体高度（§5.3.3 新增 7）。
+    /// 取「任务编辑」与「全局设置」两个面板的较大高度，确保两个 Tab 都无需滚动条即可完整展示。
+    /// </summary>
     public void FitHeightToTaskEditor()
     {
         if (!_layoutReady || TaskEditPanel == null) return;
 
-        TaskEditPanel.UpdateLayout();
-        double panelWidth = TaskEditPanel.ActualWidth > 0 ? TaskEditPanel.ActualWidth : EditPanelMeasureWidth;
-        TaskEditPanel.Measure(new System.Windows.Size(panelWidth, double.PositiveInfinity));
-        double editContentH = TaskEditPanel.DesiredSize.Height;
+        double editContentH = MeasurePanelHeight(TaskEditPanel);
+        double settingsContentH = MeasurePanelHeight(SettingsPanel);
+        double contentH = Math.Max(editContentH, settingsContentH);
 
         const double tabHeaderH = 28;
         double panelMarginV = TaskEditPanel.Margin.Top + TaskEditPanel.Margin.Bottom;
@@ -349,8 +377,18 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
             ? AppTitleBar.ActualHeight
             : FluentTitleBarFallbackHeight;
 
-        double clientH = Math.Max(editContentH + tabHeaderH + panelMarginV, leftMinH) + gridMarginV + titleBarH;
+        double clientH = Math.Max(contentH + tabHeaderH + panelMarginV, leftMinH) + gridMarginV + titleBarH;
         Height = Math.Max(MinFitWindowHeight, clientH);
+    }
+
+    // 在无限高度约束下测量面板内容的期望高度；面板未排布时退回到约定测量宽度。
+    private static double MeasurePanelHeight(FrameworkElement? panel)
+    {
+        if (panel == null) return 0;
+        panel.UpdateLayout();
+        double w = panel.ActualWidth > 0 ? panel.ActualWidth : EditPanelMeasureWidth;
+        panel.Measure(new System.Windows.Size(w, double.PositiveInfinity));
+        return panel.DesiredSize.Height;
     }
 
     private void ScheduleFitHeightToTaskEditor()
@@ -487,6 +525,186 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
         }
         catch { /* 注册表不可写时静默；设置仍持久化在 config.json */ }
     }
+
+    // ============ 自动更新（关于页） ============
+
+    private void OnUpdateStateChanged() => Dispatcher.BeginInvoke(RenderUpdateUi);
+
+    // 根据协调器状态刷新「关于」页的更新区：状态文本、进度、按钮与更新说明的可见性。
+    private void RenderUpdateUi()
+    {
+        if (_updates == null) return;
+        var st = _updates.Status;
+
+        UpdateStatusText.Text = string.IsNullOrEmpty(_updates.Message)
+            ? "点击「检查更新」获取最新版本。"
+            : _updates.Message;
+
+        bool downloading = st == Services.UpdateStatus.Downloading;
+        UpdateProgress.Visibility = downloading ? Visibility.Visible : Visibility.Collapsed;
+        UpdateProgress.Value = Math.Clamp(_updates.DownloadProgress * 100.0, 0, 100);
+
+        CheckUpdateButton.IsEnabled = st != Services.UpdateStatus.Checking && !downloading;
+
+        bool hasNew = st is Services.UpdateStatus.Available or Services.UpdateStatus.Ready;
+        DownloadUpdateButton.Visibility = st == Services.UpdateStatus.Available ? Visibility.Visible : Visibility.Collapsed;
+        InstallUpdateButton.Visibility = st == Services.UpdateStatus.Ready ? Visibility.Visible : Visibility.Collapsed;
+        SkipVersionButton.Visibility = hasNew ? Visibility.Visible : Visibility.Collapsed;
+
+        var notes = _updates.Latest?.Notes ?? "";
+        if (hasNew && !string.IsNullOrWhiteSpace(notes))
+        {
+            UpdateNotesBox.Text = notes;
+            UpdateNotesBox.Visibility = Visibility.Visible;
+        }
+        else
+        {
+            UpdateNotesBox.Visibility = Visibility.Collapsed;
+        }
+    }
+
+    private void OnCheckUpdate(object sender, RoutedEventArgs e) =>
+        _ = _updates?.CheckAsync(manual: true);
+
+    private void OnDownloadUpdate(object sender, RoutedEventArgs e) =>
+        _ = _updates?.DownloadAsync();
+
+    private void OnInstallUpdate(object sender, RoutedEventArgs e)
+    {
+        if (_updates == null) return;
+        var r = System.Windows.MessageBox.Show(
+            "将关闭 Hope 并安装新版本，安装完成后会自动重新启动。是否继续？",
+            "Hope · 安装更新", MessageBoxButton.OKCancel, MessageBoxImage.Question);
+        if (r == MessageBoxResult.OK) _updates.InstallNow();
+    }
+
+    private void OnSkipVersion(object sender, RoutedEventArgs e) => _updates?.SkipCurrent();
+
+    // 弹出第三方组件引用与许可证信息（只读、可滚动、可复制）。
+    private void OnShowLicenses(object sender, RoutedEventArgs e)
+    {
+        var box = new System.Windows.Controls.TextBox
+        {
+            Text = LicensesText,
+            IsReadOnly = true,
+            TextWrapping = TextWrapping.Wrap,
+            BorderThickness = new Thickness(0),
+            Background = Brushes.Transparent,
+            Foreground = TryFindResource("TextFillColorPrimaryBrush") as Brush ?? Brushes.Black,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            FontSize = 12,
+            Margin = new Thickness(16),
+        };
+
+        var win = new Window
+        {
+            Title = "Hope · 开源许可证",
+            Width = 600,
+            Height = 620,
+            Owner = this,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            Background = TryFindResource("ApplicationBackgroundBrush") as Brush ?? Brushes.White,
+            Content = box,
+        };
+        win.ShowDialog();
+    }
+
+    // 本项目使用的第三方 SDK / 库 / 组件及其许可证（均为宽松型，与 MIT 兼容）。
+    private const string LicensesText =
+@"Hope（盼头）— 开源组件与许可证
+
+本软件以 MIT 许可证发布。下列第三方 SDK / 库 / 组件按其各自许可证使用，特此致谢并保留其版权声明。
+
+────────────────────────────────────────
+桌面端（C# / .NET）
+────────────────────────────────────────
+
+• .NET 10 运行时、WPF、Windows Forms（System.Drawing 等）
+  作者：.NET Foundation 与贡献者
+  许可证：MIT License
+  https://github.com/dotnet
+
+• WPF-UI  v4.2.0
+  作者：lepo.co（lepoco）
+  许可证：MIT License
+  https://github.com/lepoco/wpfui
+
+────────────────────────────────────────
+核心后端（Go）
+────────────────────────────────────────
+
+• Go 标准库与工具链
+  作者：The Go Authors / Google
+  许可证：BSD-3-Clause License
+  https://go.dev/LICENSE
+
+• github.com/Microsoft/go-winio  v0.6.2
+  作者：Microsoft
+  许可证：MIT License
+  https://github.com/microsoft/go-winio
+
+• golang.org/x/sys  v0.46.0
+  作者：The Go Authors
+  许可证：BSD-3-Clause License
+  https://cs.opensource.google/go/x/sys
+
+────────────────────────────────────────
+构建 / 打包工具（不随程序分发其源码）
+────────────────────────────────────────
+
+• Inno Setup（生成安装包）
+  作者：Jordan Russell / Martijn Laan
+  许可证：Inno Setup License（类 BSD，允许为任意软件制作安装程序）
+  https://jrsoftware.org/isinfo.php
+
+════════════════════════════════════════
+MIT License（全文）
+════════════════════════════════════════
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the ""Software""), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED ""AS IS"", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+════════════════════════════════════════
+BSD-3-Clause License（全文）
+════════════════════════════════════════
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice,
+   this list of conditions and the following disclaimer.
+2. Redistributions in binary form must reproduce the above copyright notice,
+   this list of conditions and the following disclaimer in the documentation
+   and/or other materials provided with the distribution.
+3. Neither the name of the copyright holder nor the names of its contributors
+   may be used to endorse or promote products derived from this software
+   without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS ""AS IS""
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.";
 
     private void OnAddTask(object sender, RoutedEventArgs e)
     {

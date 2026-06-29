@@ -91,11 +91,23 @@ jobs:
       - name: Build installer
         run: iscc /DStageDir="${{ github.workspace }}\stage" /DOutputDir="${{ github.workspace }}\dist" /DAppVersion="${{ steps.ver.outputs.version }}" setup.iss
 
+      - name: Compute installer SHA-256
+        shell: pwsh
+        run: |
+          $exe = Join-Path "${{ github.workspace }}\dist" "Hope_Setup.exe"
+          if (-not (Test-Path $exe)) { throw "未找到安装包 $exe" }
+          $hash = (Get-FileHash -Algorithm SHA256 -Path $exe).Hash.ToLower()
+          # 写出小写十六进制摘要，供自动更新器校验（格式：<sha256>  Hope_Setup.exe）。
+          "$hash  Hope_Setup.exe" | Set-Content -Path "$exe.sha256" -Encoding ascii -NoNewline
+          Write-Host "SHA-256: $hash"
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: Hope_Setup
-          path: dist/*.exe
+          path: |
+            dist/*.exe
+            dist/*.sha256
 
       - name: Create release
         uses: softprops/action-gh-release@v2
@@ -104,4 +116,6 @@ jobs:
           name: Hope ${{ steps.ver.outputs.tag }}
           body_path: ${{ steps.notes.outputs.found == 'true' && 'release-notes.md' || '' }}
           generate_release_notes: ${{ steps.notes.outputs.found != 'true' }}
-          files: dist/*.exe
+          files: |
+            dist/*.exe
+            dist/*.sha256

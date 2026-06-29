@@ -1,5 +1,34 @@
 # Hope 更新日志
 
+## v0.11 (2026-06-29)
+
+### v0.11.62 (2026-06-29)
+
+#### 变更
+
+- **检查更新频率改为每天 1 次**：周期检查由每 6 小时改为每天一次（启动后约 25s 仍做一次首检，托盘菜单可随时手动检查）。
+- **下载兜底改用 Gitee Release**：放弃公共反代镜像兜底，改为 `gitee.com/CooloiStudio/Hope` 的 Release 作为大陆兜底通道。
+  - 版本检测：①GitHub API ②GitHub 网页 302 重定向 ③Gitee API（`/api/v5/repos/.../releases/latest`）。
+  - 安装包下载：GitHub 直链优先，Gitee 资产直链兜底（经主通道版本一致校验后追加），SHA-256 校验逻辑不变。
+  - 注意：需在 Gitee 同名仓库同步对应 Release 及 `Hope_Setup.exe` / `Hope_Setup.exe.sha256` 资产。
+
+#### 新增
+
+- **关于页「许可证」按钮**：弹出本项目使用的第三方 SDK / 库 / 组件及其许可证（WPF-UI、.NET/WPF/WinForms、Go 标准库、go-winio、golang.org/x/sys、Inno Setup），并附 MIT 与 BSD-3-Clause 全文。
+- **版本号**：前端版本更新至 `v0.11.62`。
+
+### v0.11.61 (2026-06-29)
+
+#### 新增
+
+- **自动检测与全量更新**：新增更新服务，从 GitHub Releases 检测最新版本（tag 取自桌面端 `<Version>`），下载安装包并以静默就地升级方式更新，安装完成后自动重启。
+  - **多通道兜底**：版本检测依次尝试 ①GitHub API ②GitHub 网页 302 重定向 ③jsDelivr CDN 读取 `CHANGELOG.md`（大陆可达）；安装包下载在 GitHub 直链失败时自动切换多个加速镜像（ghfast/ghproxy/gh-proxy 等）。
+  - **SHA-256 校验**：CI 额外产出 `Hope_Setup.exe.sha256` 资产；更新器下载后比对哈希，校验不通过则换通道重试。
+  - **全局开关**：设置页新增「自动下载更新」开关（默认开）。关闭后仅检测并提示、不自动下载，由用户手动「下载并更新」。
+  - **关于页更新区**：显示检查状态、下载进度、更新说明，并提供「检查更新 / 下载并更新 / 立即安装 / 跳过此版本 / 发布页」操作；托盘菜单新增「检查更新」，发现新版本时弹出气泡提示。
+- **安装器支持静默升级**：`setup.iss` 增加 `AppMutex=Global\HopeDesktop` 与 `CloseApplications=yes`，使 `/CLOSEAPPLICATIONS` 静默升级时能正确关闭运行中的实例。
+- **版本号**：前端版本更新至 `v0.11.61`，后端 `v0.8.21`。
+
 ## v0.10 (2026-06-29)
 
 ### v0.10.60 (2026-06-29)
