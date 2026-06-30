@@ -67,6 +67,15 @@ public sealed class UpdateCoordinator
                 return;
             }
 
+            // 本会话已在下载/已就绪同一（或更旧）版本时，跳过重复处理：
+            // 否则「手动检查」与「启动后 25s 自动首检」等相继触发会把已下载好的版本再下一遍。
+            if ((Status == UpdateStatus.Downloading || Status == UpdateStatus.Ready) &&
+                Latest != null && info.LatestVersion <= Latest.LatestVersion)
+            {
+                DesktopLog.Info($"UpdateCoordinator: 跳过重复处理，已处于 {Status}（{Latest.Tag}）");
+                return;
+            }
+
             Latest = info;
             if (info.LatestVersion <= CurrentVersion)
             {
@@ -117,7 +126,10 @@ public sealed class UpdateCoordinator
         {
             SetState(UpdateStatus.Downloading, $"正在下载 {info.Tag}…");
             DownloadProgress = 0;
-            _cts ??= new CancellationTokenSource();
+            // 不复用检查用的 CTS：检查那个带 2 分钟自动取消，复用会导致超 2 分钟后下载一进来就被取消。
+            // 下载需独立、更宽松的超时（大文件 + 慢网络 + 多通道兜底）。
+            _cts?.Dispose();
+            _cts = new CancellationTokenSource(TimeSpan.FromMinutes(15));
 
             var progress = new Progress<double>(p =>
             {
@@ -134,7 +146,9 @@ public sealed class UpdateCoordinator
             });
             NewVersionAnnounced?.Invoke(info.Tag);
         }
-        catch (OperationCanceledException)
+        // 仅当我们主动取消（如退出）才算"已取消"；HttpClient.Timeout 抛的 TaskCanceledException
+        // （token 未取消）属于网络超时/失败，应按"下载失败"提示并上报，而非误报"已取消"。
+        catch (OperationCanceledException) when (_cts?.IsCancellationRequested == true)
         {
             SetState(UpdateStatus.Failed, "下载已取消。");
         }

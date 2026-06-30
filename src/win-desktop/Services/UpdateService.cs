@@ -25,6 +25,8 @@ public sealed class UpdateService
     private const string Repo = "Hope";
     private const string AssetName = "Hope_Setup.exe";
     private const string Sha256Name = AssetName + ".sha256";
+    // 单个 URL 网络操作的尝试次数（首次 + 重试）；用于缓解大陆网络下 GitHub CDN 的瞬时连接失败。
+    private const int NetworkAttempts = 3;
 
     private static readonly HttpClient Http = CreateClient(autoRedirect: true);
     private static readonly HttpClient HttpNoRedirect = CreateClient(autoRedirect: false);
@@ -37,6 +39,33 @@ public sealed class UpdateService
         c.DefaultRequestHeaders.Accept.ParseAdd("application/vnd.github+json");
         return c;
     }
+
+    /// <summary>
+    /// 单个 URL 网络操作的重试包装：仅对「非主动取消」的瞬时异常（连接重置/超时/TLS 抖动等）重试，
+    /// 真取消立即抛出。重试间隔指数退避（0.8s / 1.6s …）。注意：明确的非 2xx 响应应由 <paramref name="op"/>
+    /// 自行返回（如 null）而非抛异常，以免对确定性的 404 做无谓重试。
+    /// </summary>
+    private static async Task<T> WithRetryAsync<T>(Func<Task<T>> op, string what, CancellationToken ct, int attempts = NetworkAttempts)
+    {
+        Exception? last = null;
+        for (int attempt = 1; attempt <= attempts; attempt++)
+        {
+            ct.ThrowIfCancellationRequested();
+            try { return await op().ConfigureAwait(false); }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+            catch (Exception ex)
+            {
+                last = ex;
+                DesktopLog.Warn($"UpdateService: {what} 第 {attempt}/{attempts} 次失败：{ex.Message}");
+                if (attempt < attempts)
+                    await Task.Delay(TimeSpan.FromMilliseconds(800 * attempt), ct).ConfigureAwait(false);
+            }
+        }
+        throw last ?? new InvalidOperationException($"{what} 失败");
+    }
+
+    private static Task WithRetryAsync(Func<Task> op, string what, CancellationToken ct, int attempts = NetworkAttempts) =>
+        WithRetryAsync(async () => { await op().ConfigureAwait(false); return true; }, what, ct, attempts);
 
     /// <summary>当前桌面端版本（取程序集 Major.Minor.Build）。</summary>
     public static Version CurrentVersion
@@ -71,7 +100,9 @@ public sealed class UpdateService
                     break;
                 }
             }
-            catch (OperationCanceledException) { throw; }
+            // 仅当我们的 token 真被取消才中止；HttpClient.Timeout 抛的 TaskCanceledException
+            // （ct 未取消）按普通失败处理，继续尝试下一通道（如 Gitee），否则一个超时就会废掉兜底。
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
             catch (Exception ex) { DesktopLog.Warn($"UpdateService strategy failed: {ex.Message}"); }
         }
 
@@ -162,7 +193,7 @@ public sealed class UpdateService
                 return primary with { InstallerUrls = installers, Sha256Urls = shas };
             }
         }
-        catch (OperationCanceledException) { throw; }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
         catch (Exception ex) { DesktopLog.Warn($"UpdateService: gitee fallback resolve failed: {ex.Message}"); }
 
         return primary;
@@ -233,13 +264,26 @@ public sealed class UpdateService
 
         string? expectedSha = await TryFetchSha256Async(info.Sha256Urls, ct).ConfigureAwait(false);
 
+        // 复用本地缓存：若已存在该版本安装包（如上次会话已下载但未安装），用 SHA-256 校验，
+        // 通过则直接复用、跳过下载；校验不通过或无法校验则删除后重新下载，避免使用损坏/半截文件。
+        if (File.Exists(target))
+        {
+            if (expectedSha != null && ComputeSha256(target).Equals(expectedSha, StringComparison.OrdinalIgnoreCase))
+            {
+                DesktopLog.Info($"UpdateService: 复用本地已校验缓存安装包 {target}");
+                return target;
+            }
+            DesktopLog.Warn($"UpdateService: 本地缓存安装包校验不通过/无法校验，删除后重新下载：{target}");
+            try { File.Delete(target); } catch (Exception ex) { DesktopLog.Warn($"UpdateService: 删除缓存失败 {ex.Message}"); }
+        }
+
         Exception? last = null;
         foreach (var url in info.InstallerUrls)
         {
             try
             {
                 var tmp = target + ".part";
-                await DownloadToFileAsync(url, tmp, progress, ct).ConfigureAwait(false);
+                await WithRetryAsync(() => DownloadToFileAsync(url, tmp, progress, ct), $"下载安装包 {url}", ct).ConfigureAwait(false);
 
                 if (expectedSha != null)
                 {
@@ -265,7 +309,9 @@ public sealed class UpdateService
                 DesktopLog.Info($"UpdateService: downloaded installer to {target} via {url}");
                 return target;
             }
-            catch (OperationCanceledException) { throw; }
+            // 仅真取消才中止；超时（HttpClient.Timeout→TaskCanceledException，ct 未取消）当作该通道失败，
+            // 记录后继续尝试下一候选地址（GitHub→Gitee），不让一次超时废掉整个兜底。
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
             catch (Exception ex)
             {
                 last = ex;
@@ -301,13 +347,17 @@ public sealed class UpdateService
         {
             try
             {
-                using var resp = await Http.GetAsync(url, ct).ConfigureAwait(false);
-                if (!resp.IsSuccessStatusCode) continue;
-                var text = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
-                var m = Regex.Match(text, @"\b([A-Fa-f0-9]{64})\b");
-                if (m.Success) return m.Groups[1].Value;
+                var hash = await WithRetryAsync<string?>(async () =>
+                {
+                    using var resp = await Http.GetAsync(url, ct).ConfigureAwait(false);
+                    if (!resp.IsSuccessStatusCode) return null; // 明确响应：此 URL 无该文件，不重试，换下一通道
+                    var text = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+                    var m = Regex.Match(text, @"\b([A-Fa-f0-9]{64})\b");
+                    return m.Success ? m.Groups[1].Value : null;
+                }, $"获取 sha256 {url}", ct).ConfigureAwait(false);
+                if (hash != null) return hash;
             }
-            catch (OperationCanceledException) { throw; }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
             catch (Exception ex) { DesktopLog.Warn($"UpdateService: fetch sha256 failed {url}: {ex.Message}"); }
         }
         DesktopLog.Warn("UpdateService: no sha256 available, will fall back to size check");
