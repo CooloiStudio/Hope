@@ -44,6 +44,9 @@ type Settings struct {
 	// AutoUpdate 是否自动下载更新（默认开）；关闭后仅检测并提示，不自动下载。
 	// 用指针区分「旧配置未写该字段」(nil→采用默认开) 与「用户显式关闭」(指向 false)。
 	AutoUpdate *bool `json:"autoUpdate,omitempty"`
+	// AllowTelemetry 是否允许发送匿名软件活跃信息（默认开）；关闭后桌面端不再发送任何遥测。
+	// 同样用指针区分「旧配置未写该字段」(nil→采用默认开) 与「用户显式关闭」(指向 false)。
+	AllowTelemetry *bool `json:"allowTelemetry,omitempty"`
 	// ScreenWidth 主屏幕工作区宽度（像素），四边模式下用于计算物理周长。
 	ScreenWidth float64 `json:"screenWidth"`
 	// ScreenHeight 主屏幕工作区高度（像素），四边模式下用于计算物理周长。
@@ -69,6 +72,7 @@ func DefaultSettings() Settings {
 		AdvancedPosition:    false,
 		AllFour:             false,
 		AutoUpdate:          boolPtr(true),
+		AllowTelemetry:      boolPtr(true),
 		ScreenWidth:         0,
 		ScreenHeight:        0,
 	}
@@ -159,6 +163,9 @@ func mergeSettings(def, loaded Settings) Settings {
 	out.AllFour = loaded.AllFour
 	if loaded.AutoUpdate != nil {
 		out.AutoUpdate = loaded.AutoUpdate
+	}
+	if loaded.AllowTelemetry != nil {
+		out.AllowTelemetry = loaded.AllowTelemetry
 	}
 	// 兼容旧版 BarPosition="allFour"：迁移为 top + AllFour=true
 	// 必须在读取 loaded.AllFour 之后执行，以确保旧配置（无 AllFour 字段）能正确迁移。

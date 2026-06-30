@@ -38,6 +38,10 @@ public partial class App : Application
     private UpdateCoordinator _updates = null!;
     private DispatcherTimer? _updateTimer;
 
+    private readonly TelemetryService _telemetry = new();
+    /// <summary>是否已上报过启动事件（首次读取到设置且允许时上报一次，避免重复）。</summary>
+    private bool _telemetryStarted;
+
     private ScreenLayoutInfo? _currentScreenLayout;
     private DispatcherTimer? _layoutTimer;
 
@@ -101,12 +105,16 @@ public partial class App : Application
 
         SetupTray();
         SetupUpdates();
+
+        // 遥测不在此处发送：启动事件延迟到首次读取到全局设置（allowTelemetry）后再决定，
+        // 见 OnSettingsReceived，确保用户取消勾选时不发送任何信息。
     }
 
     // 初始化自动更新：启动后延迟首检，之后每天检查一次；是否自动下载由全局设置控制。
+    // 每日定时器同时承载匿名「日活心跳」app_active（受 allowTelemetry 开关控制）。
     private void SetupUpdates()
     {
-        _updates = new UpdateCoordinator(() => Dispatcher.Invoke(QuitAll));
+        _updates = new UpdateCoordinator(() => Dispatcher.Invoke(QuitAll), _telemetry);
         _updates.NewVersionAnnounced += OnNewVersionAnnounced;
 
         var initial = new DispatcherTimer { Interval = TimeSpan.FromSeconds(25) };
@@ -118,7 +126,11 @@ public partial class App : Application
         initial.Start();
 
         _updateTimer = new DispatcherTimer { Interval = TimeSpan.FromDays(1) };
-        _updateTimer.Tick += (_, _) => _ = _updates.CheckAsync(manual: false);
+        _updateTimer.Tick += (_, _) =>
+        {
+            _telemetry.TrackEvent("app_active"); // 日活心跳：长期挂托盘不重启的用户也能被正确计入
+            _ = _updates.CheckAsync(manual: false);
+        };
         _updateTimer.Start();
     }
 
@@ -251,6 +263,15 @@ public partial class App : Application
             _currentBarDirection = s.BarDirection ?? "";
             _allFour = s.AllFour;
             if (_updates != null) _updates.AutoUpdateEnabled = s.AutoUpdate;
+
+            // 遥测开关：用户取消勾选后关闭上报，不再发送任何事件。
+            _telemetry.Enabled = s.AllowTelemetry;
+            if (!_telemetryStarted && s.AllowTelemetry)
+            {
+                _telemetryStarted = true;
+                _telemetry.TrackEvent("app_started");
+            }
+
             EnsureOverlays();
             if (!_startupConfigHandled)
             {

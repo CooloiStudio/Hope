@@ -19,11 +19,16 @@ public sealed class UpdateCoordinator
 {
     private readonly UpdateService _service = new();
     private readonly Action _quitAction;
+    private readonly TelemetryService? _telemetry;
     private CancellationTokenSource? _cts;
     private string? _installerPath;
     private bool _busy;
 
-    public UpdateCoordinator(Action quitAction) => _quitAction = quitAction;
+    public UpdateCoordinator(Action quitAction, TelemetryService? telemetry = null)
+    {
+        _quitAction = quitAction;
+        _telemetry = telemetry;
+    }
 
     /// <summary>是否自动下载更新（来自全局设置，默认开）。关闭后仅检测并提示，不自动下载。</summary>
     public bool AutoUpdateEnabled { get; set; } = true;
@@ -48,6 +53,10 @@ public sealed class UpdateCoordinator
         _busy = true;
         try
         {
+            // 漏斗：手动检查上报一次（自动检查每天发生，量大故不计入，以可用/下载/安装等稀有事件为主）。
+            if (manual)
+                _telemetry?.TrackEvent("update_check", new Dictionary<string, object> { ["trigger"] = "manual" });
+
             SetState(UpdateStatus.Checking, "正在检查更新…");
             _cts = new CancellationTokenSource(TimeSpan.FromMinutes(2));
 
@@ -77,6 +86,11 @@ public sealed class UpdateCoordinator
             }
 
             SetState(UpdateStatus.Available, $"发现新版本 {info.Tag}。");
+            _telemetry?.TrackEvent("update_available", new Dictionary<string, object>
+            {
+                ["tag"] = info.Tag,
+                ["source"] = info.Source,
+            });
             NewVersionAnnounced?.Invoke(info.Tag);
 
             if (AutoUpdateEnabled)
@@ -113,6 +127,11 @@ public sealed class UpdateCoordinator
 
             _installerPath = await _service.DownloadInstallerAsync(info, progress, _cts.Token).ConfigureAwait(false);
             SetState(UpdateStatus.Ready, $"新版本 {info.Tag} 已就绪，可立即安装。");
+            _telemetry?.TrackEvent("update_download", new Dictionary<string, object>
+            {
+                ["ok"] = "true",
+                ["source"] = info.Source,
+            });
             NewVersionAnnounced?.Invoke(info.Tag);
         }
         catch (OperationCanceledException)
@@ -123,6 +142,12 @@ public sealed class UpdateCoordinator
         {
             DesktopLog.Error("UpdateCoordinator.DownloadAsync failed", ex);
             SetState(UpdateStatus.Failed, $"下载失败：{ex.Message}");
+            // 仅上报阶段与异常类型，不含具体路径/URL 等可识别信息。
+            _telemetry?.TrackEvent("update_failed", new Dictionary<string, object>
+            {
+                ["stage"] = "download",
+                ["reason"] = ex.GetType().Name,
+            });
         }
     }
 
@@ -130,6 +155,10 @@ public sealed class UpdateCoordinator
     public void InstallNow()
     {
         if (Status != UpdateStatus.Ready || string.IsNullOrEmpty(_installerPath)) return;
+        _telemetry?.TrackEvent("update_install", new Dictionary<string, object>
+        {
+            ["tag"] = Latest?.Tag ?? "",
+        });
         UpdateService.LaunchInstallerAndExit(_installerPath, _quitAction);
     }
 

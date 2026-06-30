@@ -330,6 +330,9 @@
                             <CheckBox x:Name="AutoUpdateCheck" Content="自动下载更新" Margin="0,12,0,0"
                                       ToolTip="开启后发现新版本将自动下载，下载完成后提示安装；关闭后仅检测并提示，不自动下载" />
 
+                            <CheckBox x:Name="AllowTelemetryCheck" Content="允许发送软件活跃信息" Margin="0,12,0,0"
+                                      ToolTip="开启后会匿名上报启动/每日活跃与更新结果，仅用于了解装机量、活跃与更新成功率，不含任何可识别个人信息；取消勾选后不发送任何信息" />
+
                             <ui:Button x:Name="ResetWindowHeightButton" Content="重置窗口高度"
                                        HorizontalAlignment="Stretch" Height="32" Margin="0,12,0,0"
                                        Click="OnResetWindowHeight" />

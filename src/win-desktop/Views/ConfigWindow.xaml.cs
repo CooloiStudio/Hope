@@ -92,6 +92,8 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
         ShowConfigAtRuntimeCheck.Unchecked += OnSettingsControlChanged;
         AutoUpdateCheck.Checked += OnSettingsControlChanged;
         AutoUpdateCheck.Unchecked += OnSettingsControlChanged;
+        AllowTelemetryCheck.Checked += OnSettingsControlChanged;
+        AllowTelemetryCheck.Unchecked += OnSettingsControlChanged;
         BarPositionBox.SelectionChanged += OnSettingsSelectionChanged;
         BarDirectionBox.SelectionChanged += OnSettingsSelectionChanged;
         AllFourCheck.Checked += OnSettingsControlChanged;
@@ -203,6 +205,7 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
             AutostartCheck.IsChecked = s.Autostart;
             ShowConfigAtRuntimeCheck.IsChecked = s.ShowConfigAtRuntime;
             AutoUpdateCheck.IsChecked = s.AutoUpdate;
+            AllowTelemetryCheck.IsChecked = s.AllowTelemetry;
             SelectComboByTag(BarPositionBox, s.BarPosition);
             AdvancedPositionCheck.IsChecked = s.AdvancedPosition;
             TaskPositionRow.Visibility = s.AdvancedPosition ? Visibility.Visible : Visibility.Collapsed;
@@ -248,6 +251,7 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
         _settings.Autostart = AutostartCheck.IsChecked == true;
         _settings.ShowConfigAtRuntime = ShowConfigAtRuntimeCheck.IsChecked == true;
         _settings.AutoUpdate = AutoUpdateCheck.IsChecked == true;
+        _settings.AllowTelemetry = AllowTelemetryCheck.IsChecked == true;
         _settings.BarPosition = (BarPositionBox.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? "top";
         _settings.BarDirection = (BarDirectionBox.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? "";
         _settings.AdvancedPosition = AdvancedPositionCheck.IsChecked == true;
