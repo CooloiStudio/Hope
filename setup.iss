@@ -41,14 +41,19 @@ WizardStyle=modern
 Name: "chinesesimplified"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
+Name: "desktopicon"; Description: "创建桌面快捷方式"; GroupDescription: "快捷方式:"
+Name: "startmenuicon"; Description: "添加到开始菜单"; GroupDescription: "快捷方式:"
 Name: "autostart"; Description: "开机自动启动 Hope"; GroupDescription: "启动选项:"
 
 [Files]
 Source: "{#StageDir}\*"; DestDir: "{app}"; Flags: recursesubdirs ignoreversion
 
 [Icons]
-Name: "{group}\Hope"; Filename: "{app}\{#DesktopExe}"
-Name: "{group}\卸载 Hope"; Filename: "{uninstallexe}"
+; 开始菜单（可选，默认勾选）
+Name: "{group}\Hope"; Filename: "{app}\{#DesktopExe}"; Tasks: startmenuicon
+Name: "{group}\卸载 Hope"; Filename: "{uninstallexe}"; Tasks: startmenuicon
+; 桌面快捷方式（可选，默认勾选）
+Name: "{autodesktop}\Hope"; Filename: "{app}\{#DesktopExe}"; Tasks: desktopicon
 
 [Registry]
 ; 开机自启（HKCU，免管理员）

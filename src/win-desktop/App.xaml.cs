@@ -41,6 +41,8 @@ public partial class App : Application
     private readonly TelemetryService _telemetry = new();
     /// <summary>是否已上报过启动事件（首次读取到设置且允许时上报一次，避免重复）。</summary>
     private bool _telemetryStarted;
+    /// <summary>是否已在本次启动对齐过「开机自启」配置与注册表实际状态（仅做一次）。</summary>
+    private bool _autostartReconciled;
 
     private ScreenLayoutInfo? _currentScreenLayout;
     private DispatcherTimer? _layoutTimer;
@@ -240,6 +242,18 @@ public partial class App : Application
         if (_ipc.IsConnected) SendScreenSize();
     }
 
+    /// <summary>读取 HKCU Run\Hope 是否存在，判断系统层面是否已配置开机自启。</summary>
+    private static bool IsAutostartInRegistry()
+    {
+        try
+        {
+            using var key = Registry.CurrentUser.OpenSubKey(
+                @"Software\Microsoft\Windows\CurrentVersion\Run", writable: false);
+            return key?.GetValue("Hope") != null;
+        }
+        catch { return false; }
+    }
+
     private static bool RectsEqual(System.Windows.Rect a, System.Windows.Rect b)
     {
         return Math.Abs(a.X - b.X) < 0.01 &&
@@ -270,6 +284,22 @@ public partial class App : Application
             {
                 _telemetryStarted = true;
                 _telemetry.TrackEvent("app_started");
+            }
+
+            // 开机自启对齐：安装程序可能已写入注册表自启项，而配置仍为关闭，
+            // 导致 UI 与系统实际不一致，且任意改设置都会误删该自启项。
+            // 首次读到设置时以注册表实际状态为准，回写配置一次。
+            if (!_autostartReconciled)
+            {
+                _autostartReconciled = true;
+                bool regOn = IsAutostartInRegistry();
+                if (regOn != s.Autostart)
+                {
+                    DesktopLog.Info($"Autostart reconcile: registry={regOn} config={s.Autostart} → 以注册表为准对齐配置");
+                    s.Autostart = regOn;
+                    _ipc.Send(new Command { Action = "updateSettings", Settings = s });
+                    _ipc.Send(new Command { Action = "getSettings" });
+                }
             }
 
             EnsureOverlays();
