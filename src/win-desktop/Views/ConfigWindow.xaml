@@ -564,34 +564,62 @@
                                 <RowDefinition Height="Auto" />
                             </Grid.RowDefinitions>
 
-                            <!-- 标题 + 简介 -->
+                            <!-- 标题 + 分割线 -->
                             <StackPanel Grid.Row="0">
-                                <TextBlock Text="Hope · 盼头" FontWeight="Bold" FontSize="18" Margin="0,4,0,2" />
-                                <TextBlock x:Name="AboutVersionText" Text="v0.0.0"
-                                           FontSize="14" Margin="0,0,0,12"
-                                           Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
-
-                                <TextBlock TextWrapping="Wrap" Margin="0,0,0,12"
-                                           Foreground="{DynamicResource TextFillColorSecondaryBrush}"
-                                           Text="Hope（盼头）会在屏幕最上方显示一根分段彩色进度条，提示距离死线已经消耗了多少时间。&#x0a;简洁、非侵入式占屏，十分友好。及时提醒用户注意时间，提高效率，充满正能量。&#x0a;&#x0a;A lightweight tool that reminds you when you can go home.&#x0a;A little hope for leaving work on time." />
+                                <TextBlock Text="Hope · 盼头" FontWeight="Bold" FontSize="18"
+                                           HorizontalAlignment="Center" TextAlignment="Center"
+                                           Margin="0,4,0,8" />
+                                <Border Height="1" Margin="0,0,0,12"
+                                        Background="{DynamicResource ControlStrokeColorDefaultBrush}" />
                             </StackPanel>
 
-                            <!-- 空白占位：将「其他功能」与彩蛋一同顶到底部 -->
+                            <!-- 简介（顶）+ 彩蛋（底），同一块、无分割线 -->
+                            <Grid Grid.Row="1" Margin="0,0,0,12">
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="*" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
 
-                            <!-- 其他功能：上下横向分割线包夹，无边框；置底（彩蛋之上） -->
-                            <StackPanel Grid.Row="2">
-                                <Grid Margin="0,4,0,8">
-                                    <Border Height="1" VerticalAlignment="Center" Background="{DynamicResource ControlStrokeColorDefaultBrush}" />
-                                    <TextBlock Text="其他功能" HorizontalAlignment="Center"
-                                               Background="{DynamicResource ApplicationBackgroundBrush}"
-                                               Padding="8,0" Foreground="{DynamicResource TextFillColorSecondaryBrush}"
-                                               FontSize="12" />
-                                </Grid>
-
-                                <TextBlock x:Name="BackendVersionText" Margin="0,0,0,6"
-                                           FontSize="12"
+                                <TextBlock Grid.Row="0" TextWrapping="Wrap"
                                            Foreground="{DynamicResource TextFillColorSecondaryBrush}"
-                                           Text="核心版本 获取中…" />
+                                           Text="Hope（盼头）会在屏幕最上方显示一根分段彩色进度条，提示距离死线已经消耗了多少时间。&#x0a;简洁、非侵入式占屏，十分友好。及时提醒用户注意时间，提高效率，充满正能量。&#x0a;&#x0a;A lightweight tool that reminds you when you can go home.&#x0a;A little hope for leaving work on time." />
+
+                                <StackPanel Grid.Row="2" Margin="0,16,0,4"
+                                            MouseLeftButtonDown="OnEasterEggClick"
+                                            Cursor="Hand">
+                                    <TextBlock Text="八小时工作，八小时休息，八小时归自己！"
+                                               TextWrapping="Wrap"
+                                               Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                                    <TextBlock Text="——《八小时之歌》（1878）"
+                                               TextWrapping="Wrap"
+                                               TextAlignment="Right"
+                                               Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                                </StackPanel>
+                            </Grid>
+
+                            <!-- 分割线：更新和许可证 -->
+                            <Grid Grid.Row="2" Margin="0,4,0,8">
+                                <Border Height="1" VerticalAlignment="Center"
+                                        Background="{DynamicResource ControlStrokeColorDefaultBrush}" />
+                                <TextBlock Text="更新和许可证" HorizontalAlignment="Center"
+                                           Background="{DynamicResource ApplicationBackgroundBrush}"
+                                           Padding="8,0" Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                                           FontSize="12" />
+                            </Grid>
+
+                            <!-- 更新和许可证区域 -->
+                            <StackPanel Grid.Row="3">
+                                <Grid Margin="0,0,0,12">
+                                    <TextBlock x:Name="AboutVersionText" Text="应用程序版本号 v0.0.0"
+                                               HorizontalAlignment="Left"
+                                               FontSize="12"
+                                               Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                                    <TextBlock x:Name="BackendVersionText" Text="内核版本号 获取中…"
+                                               HorizontalAlignment="Right"
+                                               FontSize="12"
+                                               Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                                </Grid>
 
                                 <TextBlock x:Name="UpdateStatusText" TextWrapping="Wrap"
                                            Text="点击「检查更新」获取最新版本。"
@@ -620,21 +648,6 @@
                                                Margin="0,0,8,8" Click="OnShowLicenses"
                                                ToolTip="查看本项目使用的第三方组件及其许可证信息" />
                                 </WrapPanel>
-
-                                <Border Height="1" Margin="0,8,0,0"
-                                        Background="{DynamicResource ControlStrokeColorDefaultBrush}" />
-                            </StackPanel>
-
-                            <StackPanel Grid.Row="3" Margin="0,16,0,4"
-                                        MouseLeftButtonDown="OnEasterEggClick"
-                                        Cursor="Hand">
-                                <TextBlock Text="八小时工作，八小时休息，八小时归自己！"
-                                           TextWrapping="Wrap"
-                                           Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
-                                <TextBlock Text="——《八小时之歌》（1878）"
-                                           TextWrapping="Wrap"
-                                           TextAlignment="Right"
-                                           Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
                             </StackPanel>
                         </Grid>
                     </ScrollViewer>

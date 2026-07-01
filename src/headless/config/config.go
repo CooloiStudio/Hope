@@ -235,7 +235,11 @@ func (s *Store) UpsertTask(t *task.Task) {
 	s.mu.Lock()
 	for i, ex := range s.Tasks {
 		if ex.ID == t.ID {
-			s.Tasks[i] = t
+			merged := *t
+			if merged.CreatedAt.IsZero() {
+				merged.CreatedAt = ex.CreatedAt
+			}
+			s.Tasks[i] = &merged
 			s.mu.Unlock()
 			_ = s.SaveTasks()
 			return

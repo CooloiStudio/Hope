@@ -569,7 +569,18 @@ func (e *Engine) HandleCommand(cmd ipc.Command) any {
 	case "createTask", "updateTask":
 		if cmd.Task != nil {
 			if cmd.Task.CreatedAt.IsZero() {
-				cmd.Task.CreatedAt = time.Now()
+				if cmd.Action == "updateTask" {
+					_, tasks := e.store.Snapshot()
+					for _, ex := range tasks {
+						if ex.ID == cmd.Task.ID && !ex.CreatedAt.IsZero() {
+							cmd.Task.CreatedAt = ex.CreatedAt
+							break
+						}
+					}
+				}
+				if cmd.Task.CreatedAt.IsZero() {
+					cmd.Task.CreatedAt = time.Now()
+				}
 			}
 			e.store.UpsertTask(cmd.Task)
 			e.clearSignal(cmd.Task.ID)

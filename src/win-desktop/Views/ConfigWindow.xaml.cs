@@ -47,6 +47,8 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
     private SettingsDto _settings = new();
     private bool _loadingSettings;
     private bool _loadingTask;
+    // listTasks 刷新后恢复选中行时抑制 OnSelectTask，避免用服务端快照覆盖正在编辑的表单（含图片路径）。
+    private bool _suppressTaskSelectionReload;
     private TaskDto? _lastSavedDto;
     private string? _buildDtoError;
     private DateTimeOffset _taskCreatedAt = DateTimeOffset.Now;
@@ -173,7 +175,7 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
         _nowClockTimer.Start();
     }
 
-    /// <summary>读取程序集版本信息并格式化为 vX.Y.Z。</summary>
+    /// <summary>读取程序集版本信息并格式化为「应用程序版本号 vX.Y.Z」。</summary>
     private static string FormatAppVersion()
     {
         var assembly = System.Reflection.Assembly.GetExecutingAssembly();
@@ -187,11 +189,11 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
             // 去掉 commit hash（如 0.8.1+abcd1234 → 0.8.1）
             var plus = v.IndexOf('+');
             if (plus > 0) v = v[..plus];
-            return $"v{v}";
+            return $"应用程序版本号 v{v}";
         }
 
         var av = assembly.GetName().Version;
-        return av != null ? $"v{av.Major}.{av.Minor}.{av.Build}" : "v0.0.0";
+        return av != null ? $"应用程序版本号 v{av.Major}.{av.Minor}.{av.Build}" : "应用程序版本号 v0.0.0";
     }
 
     /// <summary>从 Headless 拉取任务列表与全局设置（在窗口已显示后调用）。</summary>
@@ -203,13 +205,13 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
         _ipc.Send(new Command { Action = "getVersion" });
     }
 
-    // 后端（核心）版本来自 IPC 的 getVersion 响应；展示在「关于 · 其他功能」区。
+    // 后端（内核）版本来自 IPC 的 getVersion 响应；展示在「关于 · 更新与许可证」区。
     private void OnBackendVersionReceived(string version)
     {
         Dispatcher.BeginInvoke(() =>
         {
             var v = string.IsNullOrWhiteSpace(version) ? "未知" : version.TrimStart('v', 'V');
-            BackendVersionText.Text = $"核心版本 v{v}";
+            BackendVersionText.Text = $"内核版本号 v{v}";
         });
     }
 
@@ -960,15 +962,23 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.";
         Dispatcher.BeginInvoke(() =>
         {
             var editingId = _editingId;
-            _rows.Clear();
-            foreach (var t in tasks) _rows.Add(TaskRow.From(t));
-            _rowsView?.Refresh();
-
-            // 刷新后恢复当前编辑任务的选中状态，避免编辑过程中高亮丢失。
-            if (editingId != null)
+            _suppressTaskSelectionReload = true;
+            try
             {
-                var row = _rows.FirstOrDefault(r => r.Id == editingId);
-                if (row != null) TaskGrid.SelectedItem = row;
+                _rows.Clear();
+                foreach (var t in tasks) _rows.Add(TaskRow.From(t));
+                _rowsView?.Refresh();
+
+                // 仅恢复列表高亮，不重载表单，避免覆盖用户未保存/刚保存的字段（尤其是图片路径）。
+                if (editingId != null)
+                {
+                    var row = _rows.FirstOrDefault(r => r.Id == editingId);
+                    if (row != null) TaskGrid.SelectedItem = row;
+                }
+            }
+            finally
+            {
+                _suppressTaskSelectionReload = false;
             }
 
             DesktopLog.Info($"ConfigWindow.OnTasksReceived grid rows={_rows.Count}");
@@ -1015,6 +1025,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.";
 
     private void OnSelectTask(object sender, SelectionChangedEventArgs e)
     {
+        if (_suppressTaskSelectionReload) return;
         if (TaskGrid.SelectedItem is not TaskRow row) return;
         _loadingTask = true;
         _autoSaveTimer?.Stop();
@@ -1386,10 +1397,13 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.";
             Name = name,
             Type = type,
             Color = color,
-            Gif = string.IsNullOrEmpty(gif) ? null : gif,
+            // 必须显式序列化 gif（含空串），否则 JSON 省略该字段会导致 Go 端整任务替换时清空图片。
+            Gif = gif,
+            ImageMaxSize = existing?.ImageMaxSize ?? 0,
             Position = position,
             StartAt = start,
             EndAt = end,
+            CreatedAt = _taskCreatedAt,
             ExpiredBehaviors = CollectTaskBehaviors(),
             Recurrence = recurrence,
             Status = existing?.Status ?? "active",
@@ -1404,7 +1418,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.";
         if (a.Name != b.Name) return false;
         if (a.Type != b.Type) return false;
         if (a.Color != b.Color) return false;
-        if (a.Gif != b.Gif) return false;
+        if (!string.Equals(a.Gif ?? "", b.Gif ?? "", StringComparison.Ordinal)) return false;
         if (a.Position != b.Position) return false;
         if (a.StartAt != b.StartAt) return false;
         if (a.EndAt != b.EndAt) return false;
