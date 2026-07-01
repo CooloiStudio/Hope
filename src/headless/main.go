@@ -30,7 +30,7 @@ import (
 //
 // 构建时可通过 -ldflags "-X main.Version=vX.Y.Z" 覆盖（CI/CD 场景）。
 // 修改版本号时，请同步更新：CHANGELOG.md 中对应的 headless 相关条目。
-var Version = "0.8.22"
+var Version = "0.8.23"
 
 func main() {
 	debug := flag.Bool("debug", false, "输出日志到控制台并启用 debug 级别")
@@ -106,7 +106,9 @@ func runBroadcastLoop(ctx context.Context, store *config.Store, eng *engine.Engi
 			return
 		case <-t.C:
 			srv.Broadcast(eng.ComputeState())
-			t.Reset(interval())
+			max := interval()
+			_, tasks := store.Snapshot()
+			t.Reset(engine.NextWakeDuration(tasks, time.Now(), max))
 		}
 	}
 }

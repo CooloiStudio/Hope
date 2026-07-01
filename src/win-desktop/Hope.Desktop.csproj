@@ -5,7 +5,7 @@
     <TargetFramework>net10.0-windows</TargetFramework>
     <RootNamespace>Hope.Desktop</RootNamespace>
     <AssemblyName>hope-desktop</AssemblyName>
-    <Version>0.12.66</Version>
+    <Version>0.12.68</Version>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>
@@ -17,6 +17,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Content Include="..\resources\hope.ico" Link="resources\hope.ico" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="..\resources\hope.png" Link="resources\hope.png" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="..\resources\hope-h.png" Link="resources\hope-h.png" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>

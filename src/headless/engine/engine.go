@@ -128,18 +128,47 @@ func effectiveBehaviors(t *task.Task, s config.Settings) []string {
 	return s.ExpiredBehaviors
 }
 
-// computeActivity 返回是否存在未手动完成的任务，以及是否存在未过期任务。
+// computeActivity 返回是否存在未手动完成的任务，以及是否存在已进入窗口且未过期的任务。
 func computeActivity(tasks []*task.Task, now time.Time) (hadAny, hasActive bool) {
 	for _, t := range tasks {
 		if t.IsCompleted() {
 			continue
 		}
 		hadAny = true
-		if !t.IsExpired(now) {
+		if t.HasStarted(now) && !t.IsExpired(now) {
 			hasActive = true
 		}
 	}
 	return
+}
+
+// NextWakeDuration 在不超过 maxInterval 的前提下，返回到最近任务边界（开始/截止）的等待时长。
+// 若无更近边界则返回 maxInterval。
+func NextWakeDuration(tasks []*task.Task, now time.Time, maxInterval time.Duration) time.Duration {
+	var nearest time.Time
+	found := false
+	for _, t := range tasks {
+		if t.IsCompleted() {
+			continue
+		}
+		if next := t.NextBoundaryAfter(now); !next.IsZero() {
+			if !found || next.Before(nearest) {
+				nearest = next
+				found = true
+			}
+		}
+	}
+	if !found {
+		return maxInterval
+	}
+	d := nearest.Sub(now)
+	if d <= 0 {
+		return time.Millisecond // 边界已到，尽快重算
+	}
+	if d < maxInterval {
+		return d
+	}
+	return maxInterval
 }
 
 // collectPositions 返回在单位置模式下需要渲染的所有位置（含全局位置与任务级覆盖）。
@@ -235,7 +264,7 @@ func buildAllFourLayout(tasks []*task.Task, now time.Time, behaviorsOf func(*tas
 			continue
 		}
 		bs := behaviorsOf(t)
-		if !t.IsExpired(now) && t.Percent(now) <= 0 {
+		if !t.HasStarted(now) {
 			continue
 		}
 
@@ -249,7 +278,7 @@ func buildAllFourLayout(tasks []*task.Task, now time.Time, behaviorsOf func(*tas
 			pct = 100
 			expired = true
 		} else {
-			pct = t.Percent(now)
+			pct = t.RenderPercent(now)
 		}
 		items = append(items, afItem{t, pct, expired, endAt, bs})
 	}

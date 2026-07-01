@@ -55,11 +55,7 @@
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
-        <ui:TitleBar x:Name="AppTitleBar" Grid.Row="0" Title="Hope · 盼头">
-            <ui:TitleBar.Icon>
-                <ui:SymbolIcon Symbol="Timer24" />
-            </ui:TitleBar.Icon>
-        </ui:TitleBar>
+        <ui:TitleBar x:Name="AppTitleBar" Grid.Row="0" Title="Hope · 盼头" />
 
         <Grid x:Name="RootGrid" Grid.Row="1" Margin="16,8,16,16">
             <Grid.ColumnDefinitions>
@@ -84,6 +80,9 @@
                             <ComboBoxItem Content="已完成" Tag="completed" />
                             <ComboBoxItem Content="全部" Tag="all" />
                         </ComboBox>
+                        <TextBlock x:Name="NowTimeToolbarText" VerticalAlignment="Center" Margin="16,0,0,0"
+                                   Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                                   ToolTip="当前时间，便于对照列表起止时间" />
                     </StackPanel>
                     <ui:Button Grid.Column="2" x:Name="AddTaskButton" Content="添加任务"
                                Appearance="Success"
@@ -178,6 +177,7 @@
                         <DataGridTextColumn Header="类型" Binding="{Binding TypeLabel}" Width="60" />
                         <DataGridTextColumn Header="开始" Binding="{Binding StartLabel}" Width="110" />
                         <DataGridTextColumn Header="截止" Binding="{Binding EndLabel}" Width="110" />
+                        <DataGridTextColumn Header="循环" Binding="{Binding RecurLabel}" Width="72" />
                         <DataGridTemplateColumn Header="操作" Width="72" MinWidth="72">
                             <DataGridTemplateColumn.CellTemplate>
                                 <DataTemplate>
@@ -484,9 +484,9 @@
                                 <DockPanel Margin="0,6,0,0">
                                     <TextBlock Style="{StaticResource FieldLabel}" Text="开始时间" />
                                     <StackPanel Orientation="Horizontal">
-                                        <ComboBox x:Name="StartHourBox" Width="78" />
+                                        <ComboBox x:Name="StartHourBox" Width="78" IsEditable="True" />
                                         <TextBlock Text=":" VerticalAlignment="Center" Margin="6,0,6,0" FontWeight="Bold" />
-                                        <ComboBox x:Name="StartMinuteBox" Width="78" />
+                                        <ComboBox x:Name="StartMinuteBox" Width="78" IsEditable="True" />
                                     </StackPanel>
                                 </DockPanel>
                                 <DockPanel Margin="0,4,0,0">
@@ -523,9 +523,9 @@
                             <DockPanel Margin="0,6,0,0">
                                 <TextBlock Style="{StaticResource FieldLabel}" Text="截止时间" />
                                 <StackPanel Orientation="Horizontal">
-                                    <ComboBox x:Name="EndHourBox" Width="78" />
+                                    <ComboBox x:Name="EndHourBox" Width="78" IsEditable="True" />
                                     <TextBlock Text=":" VerticalAlignment="Center" Margin="6,0,6,0" FontWeight="Bold" />
-                                    <ComboBox x:Name="EndMinuteBox" Width="78" />
+                                    <ComboBox x:Name="EndMinuteBox" Width="78" IsEditable="True" />
                                 </StackPanel>
                             </DockPanel>
                             <DockPanel Margin="0,4,0,0">

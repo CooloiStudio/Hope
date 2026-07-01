@@ -48,9 +48,11 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
     private bool _loadingSettings;
     private bool _loadingTask;
     private TaskDto? _lastSavedDto;
+    private string? _buildDtoError;
     private DateTimeOffset _taskCreatedAt = DateTimeOffset.Now;
     private bool _layoutReady;
     private readonly DispatcherTimer _autoSaveTimer;
+    private DispatcherTimer? _nowClockTimer;
 
     public ConfigWindow(IpcClient ipc) : this(ipc, null) { }
 
@@ -64,6 +66,8 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
         DesktopLog.Info("ConfigWindow ctor: after InitializeComponent");
 
         AppIconHelper.ApplyWindowIcon(this);
+        AppIconHelper.ApplyTitleBarIcon(AppTitleBar);
+        StartNowClock();
 
         _ipc = ipc;
         _updates = updates;
@@ -77,6 +81,10 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
 
         PopulateTimeBoxes(StartHourBox, StartMinuteBox);
         PopulateTimeBoxes(EndHourBox, EndMinuteBox);
+        SetupEditableTimeCombo(StartHourBox, 0, 23);
+        SetupEditableTimeCombo(StartMinuteBox, 0, 59);
+        SetupEditableTimeCombo(EndHourBox, 0, 23);
+        SetupEditableTimeCombo(EndMinuteBox, 0, 59);
 
         RefreshBox.ValueChanged += OnSliderValueChanged;
         BarHeightBox.ValueChanged += OnSliderValueChanged;
@@ -146,6 +154,23 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
         if (Wpf.Ui.Controls.WindowBackdrop.IsSupported(WpfBackdrop.Acrylic))
             return WpfBackdrop.Acrylic;
         return WpfBackdrop.None;
+    }
+
+    /// <summary>当前时间展示：当前时间 MM-dd HH:mm</summary>
+    private static string FormatNowLabel()
+    {
+        var now = DateTime.Now;
+        return $"当前时间 {now:MM-dd HH:mm}";
+    }
+
+    private void StartNowClock()
+    {
+        void Refresh() => NowTimeToolbarText.Text = FormatNowLabel();
+
+        Refresh();
+        _nowClockTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(30) };
+        _nowClockTimer.Tick += (_, _) => Refresh();
+        _nowClockTimer.Start();
     }
 
     /// <summary>读取程序集版本信息并格式化为 vX.Y.Z。</summary>
@@ -788,6 +813,147 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.";
         for (int m = 0; m < 60; m++) minute.Items.Add(m.ToString("D2"));
     }
 
+    private readonly Dictionary<ComboBox, DispatcherTimer> _timeNormalizeTimers = new();
+
+    /// <summary>时/分下拉框：可手动输入或选择；失焦或防抖后把越界值钳制到合法区间。</summary>
+    private void SetupEditableTimeCombo(ComboBox box, int min, int max)
+    {
+        var normalizeTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
+        normalizeTimer.Tick += (_, _) =>
+        {
+            normalizeTimer.Stop();
+            NormalizeTimeCombo(box, min, max);
+        };
+        _timeNormalizeTimers[box] = normalizeTimer;
+
+        void AttachEditableTextBox()
+        {
+            if (box.Template.FindName("PART_EditableTextBox", box) is not System.Windows.Controls.TextBox tb) return;
+            if (ReferenceEquals(tb.Tag, box)) return;
+            tb.Tag = box;
+            tb.MaxLength = 2;
+            tb.PreviewTextInput += (_, e) =>
+            {
+                e.Handled = e.Text.Length > 0 && !e.Text.All(char.IsDigit);
+            };
+            tb.LostFocus += (_, _) =>
+            {
+                normalizeTimer.Stop();
+                NormalizeTimeCombo(box, min, max);
+                TryAutoSaveTask();
+            };
+            tb.TextChanged += (_, _) =>
+            {
+                normalizeTimer.Stop();
+                normalizeTimer.Start();
+                TryAutoSaveTask();
+            };
+        }
+
+        if (box.IsLoaded) AttachEditableTextBox();
+        else box.Loaded += (_, _) => AttachEditableTextBox();
+
+        box.SelectionChanged += (_, _) =>
+        {
+            normalizeTimer.Stop();
+            NormalizeTimeCombo(box, min, max);
+            TryAutoSaveTask();
+        };
+        box.LostFocus += (_, _) =>
+        {
+            normalizeTimer.Stop();
+            NormalizeTimeCombo(box, min, max);
+        };
+    }
+
+    private static void NormalizeTimeCombo(ComboBox box, int min, int max)
+    {
+        if (!TryReadTimeComboRaw(box, out var raw))
+        {
+            ApplyTimeComboValue(box, min);
+            return;
+        }
+        if (!int.TryParse(raw, out var n))
+        {
+            ApplyTimeComboValue(box, min);
+            return;
+        }
+        ApplyTimeComboValue(box, Math.Clamp(n, min, max));
+    }
+
+    private static void ApplyTimeComboValue(ComboBox box, int value)
+    {
+        var text = value.ToString("D2");
+        box.Text = text;
+        box.SelectedItem = text;
+    }
+
+    private static bool TryReadTimeComboRaw(ComboBox box, out string raw)
+    {
+        raw = string.IsNullOrWhiteSpace(box.Text)
+            ? box.SelectedItem?.ToString()?.Trim() ?? ""
+            : box.Text.Trim();
+        return !string.IsNullOrWhiteSpace(raw);
+    }
+
+    private static bool TryParseTimeCombo(ComboBox box, int min, int max, out int value)
+    {
+        value = min;
+        if (!TryReadTimeComboRaw(box, out var raw)) return false;
+        if (!int.TryParse(raw, out var n)) return false;
+        value = Math.Clamp(n, min, max);
+        return true;
+    }
+
+    /// <summary>定时任务允许跨午夜（截止时分 ≤ 开始时分）；其余情况要求截止晚于开始。</summary>
+    private static bool IsTaskTimeRangeValid(string type, DateTimeOffset? start, DateTimeOffset end,
+        DateTimeOffset taskStart, out string error)
+    {
+        error = "";
+        var rangeStart = type == "instant" ? taskStart : start ?? taskStart;
+        if (end > rangeStart) return true;
+
+        if (type == "scheduled" && start.HasValue)
+        {
+            var s = start.Value.LocalDateTime;
+            var e = end.LocalDateTime;
+            if (e.Date < s.Date)
+            {
+                error = "截止时间不能早于开始时间";
+                return false;
+            }
+            if (e.Date <= s.Date.AddDays(1) && e.TimeOfDay <= s.TimeOfDay)
+                return true;
+        }
+
+        error = type == "instant"
+            ? "截止时间不能早于任务开始时刻"
+            : "截止时间不能早于开始时间";
+        return false;
+    }
+
+    private static void SetDateTime(DatePicker date, ComboBox hour, ComboBox minute, DateTime value)
+    {
+        date.SelectedDate = value.Date;
+        var hs = value.Hour.ToString("D2");
+        var ms = value.Minute.ToString("D2");
+        hour.Text = hs;
+        hour.SelectedItem = hs;
+        minute.Text = ms;
+        minute.SelectedItem = ms;
+    }
+
+    private static bool TryComposeDateTime(DatePicker date, ComboBox hour, ComboBox minute, out DateTimeOffset value)
+    {
+        value = default;
+        if (date.SelectedDate is not DateTime d) return false;
+        if (!TryParseTimeCombo(hour, 0, 23, out var h)) return false;
+        if (!TryParseTimeCombo(minute, 0, 59, out var m)) return false;
+        var dt = new DateTime(d.Year, d.Month, d.Day, h, m, 0);
+        value = new DateTimeOffset(dt, TimeZoneInfo.Local.GetUtcOffset(dt));
+        return true;
+    }
+
     private void OnTasksReceived(List<TaskDto> tasks)
     {
         DesktopLog.Info($"ConfigWindow.OnTasksReceived count={tasks.Count}");
@@ -1127,11 +1293,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.";
         TypeScheduledRadio.Checked += (_, _) => { UpdateStartVisibility(); TryAutoSaveTask(); };
         TypeInstantRadio.Checked += (_, _) => { UpdateStartVisibility(); TryAutoSaveTask(); };
         StartDatePicker.SelectedDateChanged += (_, _) => TryAutoSaveTask();
-        StartHourBox.SelectionChanged += (_, _) => TryAutoSaveTask();
-        StartMinuteBox.SelectionChanged += (_, _) => TryAutoSaveTask();
         EndDatePicker.SelectedDateChanged += (_, _) => TryAutoSaveTask();
-        EndHourBox.SelectionChanged += (_, _) => TryAutoSaveTask();
-        EndMinuteBox.SelectionChanged += (_, _) => TryAutoSaveTask();
         RecurModeBox.SelectionChanged += (_, _) => { UpdateRecurVisibility(); TryAutoSaveTask(); };
         RecurIntervalBox.TextChanged += (_, _) => TryAutoSaveTask();
         foreach (var chk in WeekdayChecks())
@@ -1157,7 +1319,12 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.";
         if (_loadingTask) return;
 
         var dto = BuildCurrentDto();
-        if (dto == null) return;
+        if (dto == null)
+        {
+            if (!string.IsNullOrEmpty(_buildDtoError))
+                StatusText.Text = _buildDtoError;
+            return;
+        }
 
         // 表单无实际变化时不触发保存，避免选中/加载阶段误报“已更新”。
         if (_lastSavedDto != null && TaskDtoEquals(dto, _lastSavedDto)) return;
@@ -1178,10 +1345,15 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.";
 
     private TaskDto? BuildCurrentDto()
     {
+        _buildDtoError = null;
         var name = NameBox.Text.Trim();
         if (string.IsNullOrEmpty(name)) return null;
         if (!TryParseColor(ColorBox.Text, out var color)) return null;
-        if (!TryComposeDateTime(EndDatePicker, EndHourBox, EndMinuteBox, out _)) return null;
+        if (!TryComposeDateTime(EndDatePicker, EndHourBox, EndMinuteBox, out var end))
+        {
+            _buildDtoError = "请填写有效的截止时间（时 0~23，分 0~59）";
+            return null;
+        }
 
         var gif = _gifPath.Trim();
         var position = (TaskPositionBox.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? "";
@@ -1190,11 +1362,19 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.";
         RecurrenceDto? recurrence = null;
         if (type == "scheduled")
         {
-            if (TryComposeDateTime(StartDatePicker, StartHourBox, StartMinuteBox, out var s))
+            if (!TryComposeDateTime(StartDatePicker, StartHourBox, StartMinuteBox, out var s))
             {
-                recurrence = CollectRecurrence();
-                start = s;
+                _buildDtoError = "请填写有效的开始时间（时 0~23，分 0~59）";
+                return null;
             }
+            recurrence = CollectRecurrence();
+            start = s;
+        }
+
+        if (!IsTaskTimeRangeValid(type, start, end, _taskCreatedAt, out var timeError))
+        {
+            _buildDtoError = timeError;
+            return null;
         }
 
         // 保留正在编辑任务的完成状态，避免编辑表单把已完成任务重置为进行中。
@@ -1209,7 +1389,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.";
             Gif = string.IsNullOrEmpty(gif) ? null : gif,
             Position = position,
             StartAt = start,
-            EndAt = TryComposeDateTime(EndDatePicker, EndHourBox, EndMinuteBox, out var end) ? end : default,
+            EndAt = end,
             ExpiredBehaviors = CollectTaskBehaviors(),
             Recurrence = recurrence,
             Status = existing?.Status ?? "active",
@@ -1313,24 +1493,6 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.";
         ScheduleFitHeightToTaskEditor();
     }
 
-    private static void SetDateTime(DatePicker date, ComboBox hour, ComboBox minute, DateTime value)
-    {
-        date.SelectedDate = value.Date;
-        hour.SelectedItem = value.Hour.ToString("D2");
-        minute.SelectedItem = value.Minute.ToString("D2");
-    }
-
-    private static bool TryComposeDateTime(DatePicker date, ComboBox hour, ComboBox minute, out DateTimeOffset value)
-    {
-        value = default;
-        if (date.SelectedDate is not DateTime d) return false;
-        if (hour.SelectedItem is not string hs || !int.TryParse(hs, out var h)) return false;
-        if (minute.SelectedItem is not string ms || !int.TryParse(ms, out var m)) return false;
-        var dt = new DateTime(d.Year, d.Month, d.Day, h, m, 0);
-        value = new DateTimeOffset(dt, TimeZoneInfo.Local.GetUtcOffset(dt));
-        return true;
-    }
-
     private string SelectedType() => TypeScheduledRadio.IsChecked == true ? "scheduled" : "instant";
 
     private void SelectType(string type)
@@ -1393,6 +1555,7 @@ public sealed class TaskRow
     public string TypeLabel => Type == "instant" ? "即时" : "定时";
     public string StartLabel => (StartAt ?? CreatedAt)?.LocalDateTime.ToString("MM-dd HH:mm") ?? "—";
     public string EndLabel => EndAt.LocalDateTime.ToString("MM-dd HH:mm");
+    public string RecurLabel => FormatRecurLabel(Type, Recurrence);
     public string StatusLabel => Completed ? "已完成" : TypeLabel;
     public Brush ColorBrush
     {
@@ -1421,4 +1584,29 @@ public sealed class TaskRow
         ExpiredBehaviors = t.ExpiredBehaviors,
         Recurrence = t.Recurrence,
     };
+
+    private static string FormatRecurLabel(string type, RecurrenceDto? rec)
+    {
+        if (type != "scheduled") return "—";
+        if (rec == null || string.IsNullOrEmpty(rec.Mode)) return "无";
+        return rec.Mode switch
+        {
+            "daily" => "每天",
+            "everyN" => $"每{Math.Max(2, rec.Interval)}天",
+            "weekly" => FormatRecurWeekdays(rec.Weekdays),
+            _ => "无",
+        };
+    }
+
+    private static string FormatRecurWeekdays(List<int>? days)
+    {
+        if (days == null || days.Count == 0) return "按星期";
+        static string Name(int d) => d switch
+        {
+            1 => "一", 2 => "二", 3 => "三", 4 => "四", 5 => "五", 6 => "六", 0 => "日", _ => "",
+        };
+        var names = days.Where(d => d is >= 0 and <= 6).Distinct()
+            .OrderBy(d => d == 0 ? 7 : d).Select(Name).Where(n => n.Length > 0);
+        return string.Concat(names);
+    }
 }

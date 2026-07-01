@@ -60,17 +60,83 @@ internal static class AppIconHelper
         return ToIcon(tinted);
     }
 
-    /// <summary>配置窗体标题栏图标：hope.png。</summary>
-    public static void ApplyWindowIcon(Window window)
+    /// <summary>任务栏/窗口标题栏彩色图标：多尺寸 hope.ico 中选最接近目标像素的一帧；回退 hope.png。</summary>
+    public static ImageSource? LoadAppChromeIconSource(int preferPx = 32)
     {
-        var path = ResolveResource("hope.png");
-        if (!File.Exists(path)) return;
+        var icoPath = ResolveResource("hope.ico");
+        if (File.Exists(icoPath))
+        {
+            try
+            {
+                using var stream = File.OpenRead(icoPath);
+                var decoder = BitmapDecoder.Create(
+                    stream, BitmapCreateOptions.None, BitmapCacheOption.OnLoad);
+                BitmapFrame? best = null;
+                var bestDiff = int.MaxValue;
+                foreach (var frame in decoder.Frames)
+                {
+                    var diff = Math.Abs(frame.PixelWidth - preferPx);
+                    if (diff < bestDiff)
+                    {
+                        bestDiff = diff;
+                        best = frame;
+                    }
+                }
+                if (best != null)
+                {
+                    best.Freeze();
+                    return best;
+                }
+            }
+            catch { /* 回退 PNG */ }
+        }
+
+        var pngPath = ResolveResource("hope.png");
+        if (!File.Exists(pngPath)) return null;
         try
         {
-            window.Icon = BitmapFrame.Create(new Uri(path, UriKind.Absolute));
+            var uri = new Uri(pngPath, UriKind.Absolute);
+            var frame = BitmapFrame.Create(uri);
+            frame.Freeze();
+            return frame;
         }
+        catch { return null; }
+    }
+
+    /// <summary>窗口图标：使用完整 hope.ico（多尺寸），供标题栏与 Alt+Tab。</summary>
+    public static void ApplyWindowIcon(Window window)
+    {
+        var icoPath = ResolveResource("hope.ico");
+        if (File.Exists(icoPath))
+        {
+            try
+            {
+                window.Icon = BitmapFrame.Create(new Uri(icoPath, UriKind.Absolute));
+                return;
+            }
+            catch { /* 回退 */ }
+        }
+
+        var source = LoadAppChromeIconSource(32);
+        if (source == null) return;
+        try { window.Icon = source; }
         catch { /* 资源缺失时保留默认 */ }
     }
+
+    /// <summary>WPF-UI TitleBar 小图标：从 hope.ico 取最接近 16px 的帧。</summary>
+    public static void ApplyTitleBarIcon(Wpf.Ui.Controls.TitleBar titleBar)
+    {
+        var source = LoadAppChromeIconSource(16);
+        if (source == null) return;
+        titleBar.Icon = new Wpf.Ui.Controls.ImageIcon
+        {
+            Source = source,
+            Width = 16,
+            Height = 16,
+        };
+    }
+
+    public static ImageSource? LoadHopeImageSource() => LoadAppChromeIconSource(32);
 
     public static string ResolveResource(string fileName)
     {

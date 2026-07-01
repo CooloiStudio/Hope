@@ -179,12 +179,17 @@ func isOccurrenceDay(rec *Recurrence, anchor, d time.Time) bool {
 	return false
 }
 
-// windowAt 返回与 now 相关的有效时间窗 [start, end]。
-//   - 非循环：恒返回任务固定的 [EffectiveStart, EndAt]，started=true。
-//   - 循环：返回 start≤now 的最近一次发生窗口；若 now 早于首个发生窗口，started=false。
+// windowAt 返回与 now 相关的有效时间窗 [start, end] 及是否已进入该窗口（now ≥ start）。
+//   - 非循环：固定 [EffectiveStart, EndAt]；未到开始时刻时 started=false。
+//   - 循环：优先当天发生窗口；当天未到开始时刻时 started=false（不回退到昨日已结束窗口）。
 func (t *Task) windowAt(now time.Time) (start, end time.Time, started bool) {
 	if !t.IsRecurring() {
-		return t.EffectiveStart(), t.EndAt, true
+		start = t.EffectiveStart()
+		end = t.EndAt
+		if now.Before(start) {
+			return start, end, false
+		}
+		return start, end, true
 	}
 	loc := t.StartAt.Location()
 	startTOD := todOf(*t.StartAt)
@@ -214,11 +219,81 @@ func (t *Task) windowAt(now time.Time) (start, end time.Time, started bool) {
 		if endTOD <= startTOD { // 跨午夜（或等长）→ 次日截止
 			we = d.AddDate(0, 0, 1).Add(endTOD)
 		}
+		if i == 0 && now.Before(ws) {
+			// 当天窗口尚未开始。非跨午夜任务直接视为未开始；
+			// 跨午夜任务可能仍处在「昨日开启、今日凌晨结束」的窗口内。
+			if endTOD <= startTOD {
+				yd := d.AddDate(0, 0, -1)
+				if !yd.Before(anchor) && isOccurrenceDay(rec, anchor, yd) {
+					yws := yd.Add(startTOD)
+					ywe := d.Add(endTOD)
+					if !now.Before(yws) {
+						return yws, ywe, true
+					}
+				}
+			}
+			return ws, we, false
+		}
 		if !ws.After(now) { // ws ≤ now：最近一次发生窗口
 			return ws, we, true
 		}
 	}
 	return time.Time{}, time.Time{}, false
+}
+
+// minRenderPercent 窗口已开始但墙钟进度四舍五入为 0 时，仍生成可见色段的最小百分比。
+const minRenderPercent = 0.1
+
+// NextBoundaryAfter 返回 strictly 在 now 之后、本任务渲染状态可能变化的最近时刻（窗口开始或截止）。
+// 已完成任务或无后续边界时返回零值。
+func (t *Task) NextBoundaryAfter(now time.Time) time.Time {
+	if t.IsCompleted() {
+		return time.Time{}
+	}
+	if !t.IsRecurring() {
+		start := t.EffectiveStart()
+		end := t.EndAt
+		if now.Before(start) {
+			return start
+		}
+		if now.Before(end) {
+			return end
+		}
+		return time.Time{}
+	}
+	start, end, started := t.windowAt(now)
+	if started && now.Before(end) {
+		return end
+	}
+	if !started && !start.IsZero() && now.Before(start) {
+		return start
+	}
+	loc := t.StartAt.Location()
+	startTOD := todOf(*t.StartAt)
+	endTOD := todOf(t.EndAt)
+	anchor := dateOf(*t.StartAt, loc)
+	rec := t.Recurrence
+	d0 := dateOf(now, loc)
+
+	const maxForward = 400
+	for i := 0; i <= maxForward; i++ {
+		d := d0.AddDate(0, 0, i)
+		if !isOccurrenceDay(rec, anchor, d) {
+			continue
+		}
+		ws := d.Add(startTOD)
+		we := d.Add(endTOD)
+		if endTOD <= startTOD {
+			we = d.AddDate(0, 0, 1).Add(endTOD)
+		}
+		if ws.After(now) {
+			return ws
+		}
+		if now.Before(we) {
+			return we
+		}
+	}
+	return time.Time{}
 }
 
 // Percent 返回任务自身进度（0~100），按墙钟实时计算（循环任务取当前发生窗口）。
@@ -233,6 +308,25 @@ func (t *Task) Percent(now time.Time) float64 {
 	}
 	p := float64(now.Sub(start)) / float64(total) * 100
 	return clamp(p, 0, 100)
+}
+
+// HasStarted 报告 now 是否已进入任务当前有效时间窗（含跨午夜循环的凌晨时段）。
+func (t *Task) HasStarted(now time.Time) bool {
+	_, _, started := t.windowAt(now)
+	return started
+}
+
+// RenderPercent 返回用于顶栏绘制的进度；窗口已开始但计算值为 0 时抬升到 minRenderPercent，避免零宽段。
+func (t *Task) RenderPercent(now time.Time) float64 {
+	if t.IsExpired(now) {
+		return 100
+	}
+	p := t.Percent(now)
+	_, _, started := t.windowAt(now)
+	if started && p <= 0 {
+		return minRenderPercent
+	}
+	return p
 }
 
 // IsExpired 当前时刻是否已过截止（循环任务指当前发生窗口已结束且未到下一次开始）。
@@ -354,21 +448,22 @@ func BuildLayout(tasks []*Task, now time.Time, behaviorsOf func(*Task) []string,
 		}
 		bs := behaviorsOf(t)
 		start, end, started := t.windowAt(now)
-		if started && !now.Before(end) { // 已过当前窗口截止
+		if !started {
+			continue // 预约任务未到开始时刻，不参与渲染
+		}
+		if !now.Before(end) { // 已过当前窗口截止
 			if KeepsVisibleWhenExpired(bs) {
 				items = append(items, item{t, 100, true, bs, end})
 			}
 			continue
 		}
 		pct := 0.0
-		if started {
-			if total := end.Sub(start); total <= 0 {
-				pct = 100
-			} else {
-				pct = clamp(float64(now.Sub(start))/float64(total)*100, 0, 100)
-			}
-			out.HasActive = true
+		if total := end.Sub(start); total <= 0 {
+			pct = 100
+		} else {
+			pct = t.RenderPercent(now)
 		}
+		out.HasActive = true
 		items = append(items, item{t, pct, false, bs, end})
 	}
 	if len(items) == 0 {
