@@ -167,10 +167,14 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
 
     private void StartNowClock()
     {
-        void Refresh() => NowTimeToolbarText.Text = FormatNowLabel();
+        void Refresh()
+        {
+            NowTimeToolbarText.Text = FormatNowLabel();
+            foreach (var row in _rows) row.RefreshProgressLabel();
+        }
 
         Refresh();
-        _nowClockTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(30) };
+        _nowClockTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
         _nowClockTimer.Tick += (_, _) => Refresh();
         _nowClockTimer.Start();
     }
@@ -982,7 +986,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.";
             }
 
             DesktopLog.Info($"ConfigWindow.OnTasksReceived grid rows={_rows.Count}");
-        });
+        }, DispatcherPriority.Background);
     }
 
     // 任务列表过滤谓词：按 _filterMode 决定行是否显示。
@@ -1548,8 +1552,13 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.";
 }
 
 /// <summary>DataGrid 行视图模型。</summary>
-public sealed class TaskRow
+public sealed class TaskRow : INotifyPropertyChanged
 {
+    public event PropertyChangedEventHandler? PropertyChanged;
+
+    internal void RefreshProgressLabel() =>
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(ProgressLabel)));
+
     public string Id { get; init; } = "";
     public string Name { get; init; } = "";
     public string Type { get; init; } = "scheduled";
@@ -1567,10 +1576,11 @@ public sealed class TaskRow
     public RecurrenceDto? Recurrence { get; init; }
 
     public string TypeLabel => Type == "instant" ? "即时" : "定时";
-    public string StartLabel => (StartAt ?? CreatedAt)?.LocalDateTime.ToString("MM-dd HH:mm") ?? "—";
-    public string EndLabel => EndAt.LocalDateTime.ToString("MM-dd HH:mm");
+    public DateTimeOffset? StartDisplayAt => StartAt ?? CreatedAt;
+    public DateTimeOffset EndDisplayAt => EndAt;
     public string RecurLabel => FormatRecurLabel(Type, Recurrence);
     public string StatusLabel => Completed ? "已完成" : TypeLabel;
+    public string ProgressLabel => TaskSchedule.GetListProgressLabel(this, DateTimeOffset.Now);
     public Brush ColorBrush
     {
         get

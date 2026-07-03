@@ -36,7 +36,8 @@ public partial class OverlayWindow : Window
     private static readonly DateTime BlinkAnchorUtc = DateTime.UtcNow;
 
     private readonly DispatcherTimer _hoverTimer;
-    private readonly DispatcherTimer _gifTimer;
+    private EventHandler? _gifRenderingHandler;
+    private long _lastGifTickMs;
     private readonly Dictionary<string, ImageSprite> _sprites = new();
     private List<Segment> _segments = new();
     private int _barHeightPx = 4;
@@ -73,10 +74,6 @@ public partial class OverlayWindow : Window
     private string _blinkSeqSig = ""; // 当前颜色序列签名；变化才重建动画，否则保持相位连续
     // 上次渲染的分段签名：未变化时跳过重建，避免每秒重置闪烁动画导致渐变不连续。
     private string _lastRenderSig = "";
-    // 上次渲染日志签名：避免同一状态下重复输出 debug 日志。
-    private string _lastRenderLogSig = "";
-    // 上次图片位置日志签名：避免同一状态下重复输出 debug 日志。
-    private string _lastSpriteLogSig = "";
 
     public OverlayWindow()
     {
@@ -86,12 +83,30 @@ public partial class OverlayWindow : Window
             Interval = TimeSpan.FromMilliseconds(150),
         };
         _hoverTimer.Tick += OnHoverTick;
+    }
 
-        _gifTimer = new DispatcherTimer(DispatcherPriority.Background)
-        {
-            Interval = TimeSpan.FromMilliseconds(66), // ~15fps
-        };
-        _gifTimer.Tick += OnGifTick;
+    private void HookGifRendering()
+    {
+        if (_gifRenderingHandler != null) return;
+        _gifRenderingHandler = OnGifRendering;
+        CompositionTarget.Rendering += _gifRenderingHandler;
+    }
+
+    private void UnhookGifRendering()
+    {
+        if (_gifRenderingHandler == null) return;
+        CompositionTarget.Rendering -= _gifRenderingHandler;
+        _gifRenderingHandler = null;
+    }
+
+    // 与 WPF 渲染管线同步推进动图；比 Background 优先级 DispatcherTimer 更不易被 UI 突发工作饿死。
+    private void OnGifRendering(object? sender, EventArgs e)
+    {
+        if (!IsVisible || _sprites.Count == 0) return;
+        long now = Environment.TickCount64;
+        if (now - _lastGifTickMs < 66) return; // ~15fps
+        _lastGifTickMs = now;
+        foreach (var s in _sprites.Values) s.Advance();
     }
 
     protected override void OnSourceInitialized(EventArgs e)
@@ -104,7 +119,7 @@ public partial class OverlayWindow : Window
         src?.AddHook(WndProc);
 
         _hoverTimer.Start();
-        _gifTimer.Start();
+        HookGifRendering();
     }
 
     // 所有命中测试返回 HTTRANSPARENT，使鼠标点击与移动直接穿透到下层窗口。
@@ -160,6 +175,7 @@ public partial class OverlayWindow : Window
         if (show)
         {
             if (!IsVisible) Show();
+            HookGifRendering();
         }
         else
         {
@@ -249,37 +265,21 @@ public partial class OverlayWindow : Window
 
         var wanted = _segments.Where(s => ImageSprite.IsUsable(s.Gif)).ToList();
 
-        // 移除已不需要、路径变更或最大尺寸变更的精灵
+        // 移除已不需要、路径变更或最大尺寸变更的精灵（先移出视觉树再释放，缩短 UI 线程持锁时间）。
         foreach (var id in _sprites.Keys.ToList())
         {
             var seg = wanted.FirstOrDefault(s => s.TaskId == id);
             if (seg == null || seg.Gif != _sprites[id].Path || seg.ImageMaxSize != _sprites[id].MaxSize)
             {
-                GifCanvas.Children.Remove(_sprites[id].Element);
-                _sprites[id].Dispose();
+                var sprite = _sprites[id];
+                GifCanvas.Children.Remove(sprite.Element);
                 _sprites.Remove(id);
+                sprite.Dispose();
             }
         }
 
         double w = Width;
         double h = Height;
-        // debug 日志：图片位置计算状态变化时输出一次。
-        {
-            var sb = new System.Text.StringBuilder();
-            sb.Append(Position).Append('|').Append(Direction).Append('|');
-            foreach (var seg in wanted)
-            {
-                bool rev = IsSegReverse(seg);
-                double localFill = rev ? 100.0 - seg.FillEnd : seg.FillEnd;
-                sb.Append(seg.TaskId).Append(':').Append(rev ? "rev" : "fwd").Append(':').Append(localFill).Append(';');
-            }
-            string sig = sb.ToString();
-            if (sig != _lastSpriteLogSig)
-            {
-                _lastSpriteLogSig = sig;
-                DesktopLog.Info($"UpdateSprites pos={Position} dir={Direction} {sig}");
-            }
-        }
         foreach (var seg in wanted)
         {
             if (!_sprites.TryGetValue(seg.TaskId, out var sprite))
@@ -387,12 +387,6 @@ public partial class OverlayWindow : Window
         _sprites.Clear();
     }
 
-    private void OnGifTick(object? sender, EventArgs e)
-    {
-        if (_sprites.Count == 0) return;
-        foreach (var s in _sprites.Values) s.Advance();
-    }
-
     private void Render()
     {
         double w = Width;
@@ -404,18 +398,6 @@ public partial class OverlayWindow : Window
         string sig = BuildRenderSignature(w, h);
         if (sig == _lastRenderSig && BarCanvas.Children.Count > 0) return;
         _lastRenderSig = sig;
-
-        // debug 日志：渲染状态变化时输出一次，便于定位方向/位置问题。
-        if (sig != _lastRenderLogSig)
-        {
-            _lastRenderLogSig = sig;
-            foreach (var seg in _segments)
-            {
-                bool rev = IsSegReverse(seg);
-                DesktopLog.Info($"Render pos={Position} dir={Direction} segDir={seg.Direction} reverse={rev} " +
-                               $"barStart={seg.BarStart} barEnd={seg.BarEnd} fillEnd={seg.FillEnd}");
-            }
-        }
 
         // 本边需闪烁的段（到期 + 含 blink/celebrate + 未确认）；按 taskId 取去重颜色，组成轮换序列。
         var blinkSegs = _segments
@@ -614,7 +596,7 @@ public partial class OverlayWindow : Window
     public void ForceClose()
     {
         _hoverTimer.Stop();
-        _gifTimer.Stop();
+        UnhookGifRendering();
         ClearSprites();
         HoverPopup.IsOpen = false;
         Close();

@@ -3,7 +3,8 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
         xmlns:converters="clr-namespace:Hope.Desktop.Converters"
-        Title="Hope · 盼头" Width="1010" MinWidth="1010" MinHeight="400"
+        xmlns:controls="clr-namespace:Hope.Desktop.Controls"
+        Title="Hope · 盼头" Width="1180" MinWidth="1180" MinHeight="400"
         ResizeMode="CanResize"
         WindowStartupLocation="CenterScreen"
         ShowActivated="True"
@@ -175,9 +176,22 @@
                         </DataGridTemplateColumn>
                         <DataGridTextColumn Header="名称" Binding="{Binding Name}" Width="*" />
                         <DataGridTextColumn Header="类型" Binding="{Binding TypeLabel}" Width="60" />
-                        <DataGridTextColumn Header="开始" Binding="{Binding StartLabel}" Width="110" />
-                        <DataGridTextColumn Header="截止" Binding="{Binding EndLabel}" Width="110" />
                         <DataGridTextColumn Header="循环" Binding="{Binding RecurLabel}" Width="72" />
+                        <DataGridTemplateColumn Header="开始" Width="130" MinWidth="130">
+                            <DataGridTemplateColumn.CellTemplate>
+                                <DataTemplate>
+                                    <controls:AlternatingDateText Value="{Binding StartDisplayAt}" />
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellTemplate>
+                        </DataGridTemplateColumn>
+                        <DataGridTemplateColumn Header="截止" Width="130" MinWidth="130">
+                            <DataGridTemplateColumn.CellTemplate>
+                                <DataTemplate>
+                                    <controls:AlternatingDateText Value="{Binding EndDisplayAt}" />
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellTemplate>
+                        </DataGridTemplateColumn>
+                        <DataGridTextColumn Header="进度" Binding="{Binding ProgressLabel}" Width="64" MinWidth="64" />
                         <DataGridTemplateColumn Header="操作" Width="72" MinWidth="72">
                             <DataGridTemplateColumn.CellTemplate>
                                 <DataTemplate>

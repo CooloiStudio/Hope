@@ -1,6 +1,7 @@
 using System.Drawing;
 using System.Drawing.Imaging;
 using System.IO;
+using System.Windows;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using DrawingImage = System.Drawing.Image;
@@ -27,6 +28,7 @@ public sealed class ImageSprite : IDisposable
     private readonly MemoryStream _stream;
     private readonly EventHandler _onFrame = (_, _) => { };
     private readonly bool _animating;
+    private WriteableBitmap? _display;
     private bool _disposed;
 
     public ImageSprite(string path, double maxSize)
@@ -83,20 +85,24 @@ public sealed class ImageSprite : IDisposable
         Render();
     }
 
-    // 用 LockBits → Bgra32 转换，保留 PNG/GIF 的 alpha 透明通道。
-    // （GetHbitmap 会丢失 alpha，把透明区域填成不透明底色，导致顶栏出现“背景色”。）
+    // 复用 WriteableBitmap 并 WritePixels，避免每帧 new BitmapSource + 替换 Source 造成 GC 与 UI 线程拥堵。
     private void Render()
     {
-        var rect = new Rectangle(0, 0, _bitmap.Width, _bitmap.Height);
+        int w = _bitmap.Width;
+        int h = _bitmap.Height;
+        if (w <= 0 || h <= 0) return;
+
+        if (_display == null || _display.PixelWidth != w || _display.PixelHeight != h)
+        {
+            _display = new WriteableBitmap(w, h, 96, 96, PixelFormats.Bgra32, null);
+            Element.Source = _display;
+        }
+
+        var rect = new Rectangle(0, 0, w, h);
         BitmapData data = _bitmap.LockBits(rect, ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
         try
         {
-            var src = BitmapSource.Create(
-                _bitmap.Width, _bitmap.Height, 96, 96,
-                PixelFormats.Bgra32, null,
-                data.Scan0, data.Stride * _bitmap.Height, data.Stride);
-            src.Freeze();
-            Element.Source = src;
+            _display.WritePixels(new Int32Rect(0, 0, w, h), data.Scan0, data.Stride * h, data.Stride);
         }
         finally
         {
@@ -109,6 +115,7 @@ public sealed class ImageSprite : IDisposable
         if (_disposed) return;
         _disposed = true;
         if (_animating) ImageAnimator.StopAnimate(_bitmap, _onFrame);
+        _display = null;
         _bitmap.Dispose();
         _stream.Dispose();
     }

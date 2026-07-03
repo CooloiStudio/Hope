@@ -31,6 +31,8 @@ public partial class App : Application
     private ConfigWindow? _config;
     /// <summary>已弹过到期通知的 taskId 集合；任务不再 expired 时清除，允许下个周期再次通知。</summary>
     private readonly HashSet<string> _notifiedTaskIds = new();
+    /// <summary>当前任务列表快照，供托盘 tooltip 展示（含未开始任务）。</summary>
+    private List<TaskDto> _tasks = new();
 
     private System.Threading.Mutex? _instanceMutex;
     private int _barHeightPx = 4;
@@ -84,7 +86,7 @@ public partial class App : Application
         _ipc.SettingsReceived += OnSettingsReceived;
         _ipc.VersionReceived += OnVersionReceived;
         _ipc.ConnectionChanged += OnConnectionChanged;
-        _ipc.TasksReceived += OnTasksReceivedForEmptyCheck;
+        _ipc.TasksReceived += OnTasksReceived;
         _ipc.FatalDisconnected += OnIpcFatalDisconnected;
 
         // 当已存在可连接的 headless（如开发时手动启动）时，supervisor 不再重复拉起，避免 mutex 冲突。
@@ -161,18 +163,23 @@ public partial class App : Application
         }
     }
 
-    private void OnTasksReceivedForEmptyCheck(List<TaskDto> tasks)
+    private void OnTasksReceived(List<TaskDto> tasks)
     {
         Dispatcher.BeginInvoke(() =>
         {
-            if (_checkedEmptyTasks) return;
-            _checkedEmptyTasks = true;
-            if (tasks.Count == 0)
+            if (!_checkedEmptyTasks)
             {
-                DesktopLog.Info("No tasks found at startup, opening config window automatically");
-                ShowConfig();
+                _checkedEmptyTasks = true;
+                if (tasks.Count == 0)
+                {
+                    DesktopLog.Info("No tasks found at startup, opening config window automatically");
+                    ShowConfig();
+                }
             }
-        });
+
+            _tasks = tasks;
+            UpdateTrayTooltipFromTasks();
+        }, DispatcherPriority.Background);
     }
 
     private void OnHeadlessFatalFailure(string reason)
@@ -325,32 +332,32 @@ public partial class App : Application
         return $"Hope·盼头 v{ver}";
     }
 
-    // 根据当前渲染的任务段刷新托盘 tooltip：任务按进度升序、每行「名称 倒计时」。
+    // 根据任务列表刷新托盘 tooltip：仅进行中/已到期（不含未开始与用户手动完成的任务）。
     // 受 NotifyIcon.Text 长度限制（≤127），超出时截断并以省略行提示。
-    private void UpdateTrayTooltip(List<Segment> segments)
+    private void UpdateTrayTooltipFromTasks()
     {
         if (_tray == null) return;
 
         var now = DateTimeOffset.Now;
-        var tasks = segments
-            .Where(s => !string.IsNullOrEmpty(s.TaskId))
-            .GroupBy(s => s.TaskId)
-            .Select(g => g.First())
-            .OrderBy(s => s.Percent)
+        var rows = _tasks
+            .Where(t => !IsTaskCompleted(t))
+            .Select(TaskRow.From)
+            .Where(r => TaskSchedule.HasStarted(r.Type, r.StartAt, r.EndAt, r.CreatedAt, r.Recurrence, now))
+            .OrderBy(r => TaskSchedule.Percent(r.Type, r.StartAt, r.EndAt, r.CreatedAt, r.Recurrence, now))
+            .ThenBy(r => r.Name, StringComparer.Ordinal)
             .ToList();
 
         const int maxLen = 127;
         const string nl = "\r\n";
         var text = new StringBuilder(TrayHeader());
-        if (tasks.Count > 0)
+        if (rows.Count > 0)
         {
-            // 名称按显示宽度（中文/全角=2，半角=1）补齐到统一宽度，使倒计时列对齐。
-            int nameWidth = tasks.Max(s => DisplayWidth(s.Name ?? ""));
+            int nameWidth = rows.Max(r => DisplayWidth(r.Name ?? ""));
             text.Append(nl).Append("————");
-            foreach (var s in tasks)
+            foreach (var row in rows)
             {
-                string line = $"{PadToWidth(s.Name ?? "", nameWidth)} {FormatTrayCountdown(s.EndAt, now)}";
-                // 预留省略行（nl + '…' = 3 字符）的空间，超出则截断。
+                string status = TaskSchedule.GetTrayStatusLabel(row, now);
+                string line = $"{PadToWidth(row.Name ?? "", nameWidth)} {status}";
                 if (text.Length + nl.Length + line.Length > maxLen - 3)
                 {
                     text.Append(nl).Append('…');
@@ -361,9 +368,12 @@ public partial class App : Application
         }
 
         string final = text.ToString();
-        if (final.Length > maxLen) final = final.Substring(0, maxLen);
+        if (final.Length > maxLen) final = final[..maxLen];
         _tray.Text = final;
     }
+
+    private static bool IsTaskCompleted(TaskDto t) =>
+        t.Completed || string.Equals(t.Status, "completed", StringComparison.OrdinalIgnoreCase);
 
     // 显示宽度：中文/全角字符按 2 列，半角字符按 1 列（近似 wcwidth）。
     private static int DisplayWidth(string s)
@@ -395,15 +405,6 @@ public partial class App : Application
         return name + new string('\u3000', full) + new string(' ', half);
     }
 
-    private static string FormatTrayCountdown(DateTimeOffset endAt, DateTimeOffset now)
-    {
-        var remaining = endAt - now;
-        if (remaining <= TimeSpan.Zero) return "已到期";
-        return remaining.TotalDays >= 1
-            ? $"{(int)remaining.TotalDays}天 {remaining.Hours:00}:{remaining.Minutes:00}:{remaining.Seconds:00}"
-            : $"{remaining.Hours:00}:{remaining.Minutes:00}:{remaining.Seconds:00}";
-    }
-
     private void OnStateReceived(StateMessage msg)
     {
         Dispatcher.BeginInvoke(() =>
@@ -413,7 +414,7 @@ public partial class App : Application
             bool wantAllFour = _allFour || celebrate;
             EnsureOverlays(wantAllFour);
             DispatchState(msg, celebrate);
-            UpdateTrayTooltip(all);
+            UpdateTrayTooltipFromTasks();
 
             // 清除已不在当前到期列表中的 taskId，允许下个周期再次通知
             var currentExpiredIds = new HashSet<string>(

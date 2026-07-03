@@ -1,0 +1,14 @@
+<UserControl x:Class="Hope.Desktop.Controls.AlternatingDateText"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             mc:Ignorable="d"
+             d:DesignHeight="24" d:DesignWidth="150">
+    <Grid VerticalAlignment="Center">
+        <TextBlock x:Name="AbsoluteText" HorizontalAlignment="Left" VerticalAlignment="Center"
+                   Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=DataGridCell}}" />
+        <TextBlock x:Name="RelativeText" HorizontalAlignment="Left" VerticalAlignment="Center" Opacity="0"
+                   Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=DataGridCell}}" />
+    </Grid>
+</UserControl>
