@@ -36,6 +36,7 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
     private ICollectionView? _rowsView;
     // 任务列表过滤模式：all=全部 / active=进行中 / completed=已完成。
     private string _filterMode = "all";
+    private readonly HashSet<string> _pendingCompleteIds = new();
     private string? _editingId;
     // 当前编辑任务图片路径（取代原图片地址输入框，作为数据来源）；空串表示无图片。
     private string _gifPath = "";
@@ -985,6 +986,18 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.";
                 _suppressTaskSelectionReload = false;
             }
 
+            if (_editingId != null)
+            {
+                var editing = _rows.FirstOrDefault(r => r.Id == _editingId);
+                if (editing != null) UpdateTaskActionButtons(editing);
+            }
+
+            foreach (var id in _pendingCompleteIds.ToList())
+            {
+                if (_rows.Any(r => r.Id == id && r.Completed))
+                    _pendingCompleteIds.Remove(id);
+            }
+
             DesktopLog.Info($"ConfigWindow.OnTasksReceived grid rows={_rows.Count}");
         }, DispatcherPriority.Background);
     }
@@ -1099,7 +1112,11 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.";
     private void CompleteTaskById(string id)
     {
         if (_rows.FirstOrDefault(r => r.Id == id) is not TaskRow row) return;
-        if (row.Completed) { StatusText.Text = "该任务已完成"; return; }
+        if (row.Completed || _pendingCompleteIds.Contains(id))
+        {
+            StatusText.Text = row.Completed ? "该任务已完成" : "正在完成…";
+            return;
+        }
 
         var result = System.Windows.MessageBox.Show(
             $"确认完成任务「{row.Name}」？",
@@ -1108,9 +1125,23 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.";
             System.Windows.MessageBoxImage.Question);
         if (result != System.Windows.MessageBoxResult.Yes) return;
 
-        _ipc.Send(new Command { Action = "completeTask", TaskId = row.Id });
-        _ipc.Send(new Command { Action = "listTasks" });
-        StatusText.Text = row.Recurrence != null ? "任务已完成并进入下一循环" : "任务已完成";
+        // 暂停自动保存，避免与 completeTask / listTasks 竞态把已完成状态覆盖回进行中。
+        _autoSaveTimer?.Stop();
+        _loadingTask = true;
+        _pendingCompleteIds.Add(id);
+        try
+        {
+            _ipc.Send(new Command { Action = "completeTask", TaskId = row.Id });
+            _ipc.Send(new Command { Action = "listTasks" });
+        }
+        finally
+        {
+            _loadingTask = false;
+        }
+
+        bool isRecurring = row.Type == "scheduled" && row.Recurrence != null &&
+                           !string.IsNullOrEmpty(row.Recurrence.Mode);
+        StatusText.Text = isRecurring ? "任务已完成并进入下一循环" : "任务已完成";
 
         if (_editingId == row.Id)
         {

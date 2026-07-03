@@ -430,6 +430,59 @@ func TestCompleteRecurringSpawnsNextCopy(t *testing.T) {
 	}
 }
 
+// TestCompleteRecurringIdempotent 重复完成同一循环任务不应再次生成下一期副本。
+func TestCompleteRecurringIdempotent(t *testing.T) {
+	t.Setenv("APPDATA", t.TempDir())
+	store, err := config.Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	eng := New(store, nil)
+
+	start := mustTime("2026-06-25T08:00:00+08:00")
+	end := mustTime("2026-06-25T18:00:00+08:00")
+	tk := makeTask("r1", start, start, end)
+	tk.Recurrence = &task.Recurrence{Mode: task.RecurDaily}
+	eng.HandleCommand(ipc.Command{Action: "createTask", Task: tk})
+	eng.HandleCommand(ipc.Command{Action: "completeTask", TaskID: "r1"})
+	eng.HandleCommand(ipc.Command{Action: "completeTask", TaskID: "r1"})
+
+	_, tasks := store.Snapshot()
+	if len(tasks) != 2 {
+		t.Fatalf("expected original + one copy = 2 tasks, got %d", len(tasks))
+	}
+}
+
+// TestUpdateTaskCannotUncomplete 已完成任务不应被 updateTask 重置为进行中。
+func TestUpdateTaskCannotUncomplete(t *testing.T) {
+	t.Setenv("APPDATA", t.TempDir())
+	store, err := config.Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	eng := New(store, nil)
+
+	start := mustTime("2026-06-25T08:00:00+08:00")
+	end := mustTime("2026-06-25T18:00:00+08:00")
+	tk := makeTask("t1", start, start, end)
+	eng.HandleCommand(ipc.Command{Action: "createTask", Task: tk})
+	eng.HandleCommand(ipc.Command{Action: "completeTask", TaskID: "t1"})
+
+	reset := makeTask("t1", start, start, end)
+	reset.Status = task.StatusActive
+	reset.Completed = false
+	reset.CompletedAt = nil
+	eng.HandleCommand(ipc.Command{Action: "updateTask", Task: reset})
+
+	_, tasks := store.Snapshot()
+	if len(tasks) != 1 {
+		t.Fatalf("expected 1 task, got %d", len(tasks))
+	}
+	if !tasks[0].IsCompleted() {
+		t.Errorf("completed task must stay completed after updateTask, got status=%q", tasks[0].Status)
+	}
+}
+
 // TestDeleteCompletedTasks 验证一键删除仅移除已完成任务。
 func TestDeleteCompletedTasks(t *testing.T) {
 	t.Setenv("APPDATA", t.TempDir())

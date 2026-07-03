@@ -521,6 +521,9 @@ func (e *Engine) HandleCommand(cmd ipc.Command) any {
 	switch cmd.Action {
 	case "createTask", "updateTask":
 		if cmd.Task != nil {
+			if cmd.Action == "updateTask" {
+				preserveCompletedTask(cmd.Task, e.store)
+			}
 			if cmd.Task.CreatedAt.IsZero() {
 				if cmd.Action == "updateTask" {
 					_, tasks := e.store.Snapshot()
@@ -548,6 +551,9 @@ func (e *Engine) HandleCommand(cmd ipc.Command) any {
 			_, tasks := e.store.Snapshot()
 			for _, t := range tasks {
 				if t.ID == cmd.TaskID {
+					if t.IsCompleted() {
+						break
+					}
 					now := time.Now()
 					// 循环任务：先生成下一期副本（复制全部参数，起止时间推进到下一发生窗口），
 					// 副本为「进行中」且拥有全新 ID；随后将当前任务标记为已完成。
@@ -616,4 +622,24 @@ func (e *Engine) clearSignal(id string) {
 	e.mu.Lock()
 	delete(e.signaled, id)
 	e.mu.Unlock()
+}
+
+// preserveCompletedTask 防止桌面端自动保存在 listTasks 返回前用旧快照把已完成任务写回进行中。
+func preserveCompletedTask(incoming *task.Task, store *config.Store) {
+	if incoming == nil || incoming.ID == "" {
+		return
+	}
+	_, tasks := store.Snapshot()
+	for _, ex := range tasks {
+		if ex.ID != incoming.ID || !ex.IsCompleted() {
+			continue
+		}
+		incoming.Status = task.StatusCompleted
+		incoming.Completed = true
+		if ex.CompletedAt != nil {
+			at := *ex.CompletedAt
+			incoming.CompletedAt = &at
+		}
+		return
+	}
 }
