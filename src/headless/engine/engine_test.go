@@ -514,3 +514,37 @@ func ids(tasks []*task.Task) []string {
 	}
 	return out
 }
+
+// TestMutatingCommandsReturnTasksSnapshot 写操作应单播最新 tasks，避免 Desktop 再发 listTasks 竞态。
+func TestMutatingCommandsReturnTasksSnapshot(t *testing.T) {
+	t.Setenv("APPDATA", t.TempDir())
+	store, err := config.Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	eng := New(store, nil)
+
+	start := mustTime("2026-06-25T08:00:00+08:00")
+	end := mustTime("2026-06-25T18:00:00+08:00")
+	tk := makeTask("t1", start, start, end)
+	eng.HandleCommand(ipc.Command{Action: "createTask", Task: tk})
+
+	resp := eng.HandleCommand(ipc.Command{Action: "completeTask", TaskID: "t1", RequestID: "req-1"})
+	m, ok := resp.(map[string]any)
+	if !ok {
+		t.Fatalf("completeTask should return map, got %T", resp)
+	}
+	if m["type"] != "tasks" {
+		t.Fatalf("expected type=tasks, got %v", m["type"])
+	}
+	if m["requestId"] != "req-1" {
+		t.Fatalf("expected requestId echo, got %v", m["requestId"])
+	}
+	tasks, ok := m["tasks"].([]*task.Task)
+	if !ok {
+		t.Fatalf("tasks field type %T", m["tasks"])
+	}
+	if len(tasks) != 1 || !tasks[0].IsCompleted() {
+		t.Fatalf("expected one completed task in response, got %+v", tasks)
+	}
+}

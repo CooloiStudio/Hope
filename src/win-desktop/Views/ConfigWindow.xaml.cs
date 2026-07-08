@@ -370,7 +370,6 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
         if (_updates != null) _updates.AutoUpdateEnabled = _settings.AutoUpdate;
 
         _ipc.Send(new Command { Action = "updateSettings", Settings = _settings });
-        _ipc.Send(new Command { Action = "getSettings" });
         ApplyAutostart(_settings.Autostart);
         SettingsStatus.Text = "";
     }
@@ -1191,7 +1190,6 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.";
         if (result != System.Windows.MessageBoxResult.Yes) return;
 
         _ipc.Send(new Command { Action = "deleteCompletedTasks" });
-        _ipc.Send(new Command { Action = "listTasks" });
         if (_editingId != null && completed.Any(r => r.Id == _editingId))
             OnNew(sender, e);
         StatusText.Text = $"已删除 {completed.Count} 个已完成任务";
@@ -1251,7 +1249,6 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.";
     {
         if (TaskGrid.SelectedItem is not TaskRow row) { StatusText.Text = "请先选择任务"; return; }
         _ipc.Send(new Command { Action = "deleteTask", TaskId = row.Id });
-        _ipc.Send(new Command { Action = "listTasks" });
         OnNew(sender, e);
         StatusText.Text = "已删除";
     }
@@ -1282,13 +1279,13 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.";
             System.Windows.MessageBoxImage.Question);
         if (result != System.Windows.MessageBoxResult.Yes) return;
 
-        // 暂停自动保存，避免与 completeTask / listTasks 竞态把已完成状态覆盖回进行中。
+        // 暂停自动保存，避免与 completeTask 响应竞态把已完成状态覆盖回进行中。
         _autoSaveTimer?.Stop();
         _session.Write.LoadingTask = true;
         _session.Write.AddPendingComplete(id);
         _ipc.Send(new Command { Action = "completeTask", TaskId = row.Id });
 
-        // 乐观更新列表：后端已成功时重启能读到完成态，但 UI 不能等 listTasks 才反馈。
+        // 乐观更新列表：Headless 写盘后会单播 tasks 快照，但 UI 不能等响应才反馈。
         ReplaceRowWithCompleted(row);
         _rowsView?.Refresh();
 
@@ -1300,8 +1297,6 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.";
 
         if (_editingId == row.Id)
             UpdateTaskActionButtons(FindRowById(id) ?? row);
-
-        _ipc.Send(new Command { Action = "listTasks" });
     }
 
     private TaskRow? FindRowById(string id) => _rows.FirstOrDefault(r => r.Id == id);
@@ -1394,7 +1389,6 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.";
         };
 
         _ipc.Send(new Command { Action = "createTask", Task = dto });
-        _ipc.Send(new Command { Action = "listTasks" });
         StatusText.Text = $"已将「{row.Name}」创建为新任务";
     }
 
@@ -1544,7 +1538,6 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.";
 
         bool isNew = _editingId == null;
         _ipc.Send(new Command { Action = isNew ? "createTask" : "updateTask", Task = dto });
-        _ipc.Send(new Command { Action = "listTasks" });
         StatusText.Text = isNew ? "已创建" : "已更新";
         _editingId = dto.Id;
         _lastSavedDto = dto;
@@ -1801,7 +1794,7 @@ public sealed class TaskRow : INotifyPropertyChanged
         Recurrence = t.Recurrence,
     };
 
-    /// <summary>将进行中行转为已完成（乐观 UI，待 listTasks 确认）。</summary>
+    /// <summary>将进行中行转为已完成（乐观 UI，待 Headless tasks 响应确认）。</summary>
     public static TaskRow AsCompleted(TaskRow row)
     {
         var at = DateTimeOffset.Now;

@@ -36,10 +36,11 @@ type ExpiredEvent struct {
 
 // Command 为客户端 → 服务端的控制命令。
 type Command struct {
-	Action   string          `json:"action"`
-	Task     *task.Task      `json:"task,omitempty"`
-	TaskID   string          `json:"taskId,omitempty"`
-	Settings json.RawMessage `json:"settings,omitempty"`
+	Action    string          `json:"action"`
+	Task      *task.Task      `json:"task,omitempty"`
+	TaskID    string          `json:"taskId,omitempty"`
+	Settings  json.RawMessage `json:"settings,omitempty"`
+	RequestID string          `json:"requestId,omitempty"`
 }
 
 // CommandHandler 处理一条命令，可返回需要单播给该客户端的响应（如 listTasks）。

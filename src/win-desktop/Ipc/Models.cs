@@ -47,6 +47,7 @@ public sealed class Command
     [JsonPropertyName("task")] public TaskDto? Task { get; set; }
     [JsonPropertyName("taskId")] public string? TaskId { get; set; }
     [JsonPropertyName("settings")] public SettingsDto? Settings { get; set; }
+    [JsonPropertyName("requestId")] public string? RequestId { get; set; }
 }
 
 /// <summary>任务数据传输对象，字段与 Go 端 task.Task 对齐。</summary>

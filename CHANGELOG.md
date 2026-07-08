@@ -1,6 +1,18 @@
 # Hope 更新日志
 
+> **版本号规则**：`major.minor.patch` 中第三位 patch 跨 minor 持续累加（如 `0.12.72` → `0.13.73`），minor 升级时不归零。
+
 ## v0.13 (2026-07-05)
+
+### v0.13.78 (2026-07-05)
+
+- **质量**：新增 `Hope.Desktop.Tests`（SessionState / WriteGuard 单元测试）。
+- **版本号**：前端 `v0.13.78`，后端 `v0.8.26`。
+
+### v0.13.77 (2026-07-05)
+
+- **IPC**：Headless 在 create/update/delete/complete 任务及 updateSettings 后立即单播最新快照；支持可选 `requestId` 回显；Desktop 移除冗余 listTasks/getSettings 调用。
+- **版本号**：前端 `v0.13.77`，后端 `v0.8.26`。
 
 ### v0.13.76 (2026-07-05)
 

@@ -541,11 +541,13 @@ func (e *Engine) HandleCommand(cmd ipc.Command) any {
 			e.store.UpsertTask(cmd.Task)
 			e.clearSignal(cmd.Task.ID)
 		}
+		return e.tasksResponse(cmd.RequestID)
 	case "deleteTask":
 		if cmd.TaskID != "" {
 			e.store.DeleteTask(cmd.TaskID)
 			e.clearSignal(cmd.TaskID)
 		}
+		return e.tasksResponse(cmd.RequestID)
 	case "completeTask":
 		if cmd.TaskID != "" {
 			_, tasks := e.store.Snapshot()
@@ -580,18 +582,18 @@ func (e *Engine) HandleCommand(cmd ipc.Command) any {
 				}
 			}
 		}
+		return e.tasksResponse(cmd.RequestID)
 	case "deleteCompletedTasks":
 		for _, id := range e.store.DeleteCompletedTasks() {
 			e.clearSignal(id)
 		}
+		return e.tasksResponse(cmd.RequestID)
 	case "listTasks":
-		_, tasks := e.store.Snapshot()
-		return map[string]any{"type": "tasks", "tasks": tasks}
+		return e.tasksResponse(cmd.RequestID)
 	case "getVersion":
 		return map[string]any{"type": "version", "version": buildVersion}
 	case "getSettings":
-		settings, _ := e.store.Snapshot()
-		return map[string]any{"type": "settings", "settings": settings}
+		return e.settingsResponse(cmd.RequestID)
 	case "updateSettings":
 		if len(cmd.Settings) > 0 {
 			var ns config.Settings
@@ -599,6 +601,7 @@ func (e *Engine) HandleCommand(cmd ipc.Command) any {
 				e.store.UpdateSettings(ns)
 			}
 		}
+		return e.settingsResponse(cmd.RequestID)
 	case "screenSize":
 		// 仅上报屏幕尺寸，独立于设置合并，避免默认值覆盖用户设置。
 		if len(cmd.Settings) > 0 {
@@ -616,6 +619,24 @@ func (e *Engine) HandleCommand(cmd ipc.Command) any {
 		e.log.Warn("unknown action", "action", cmd.Action)
 	}
 	return nil
+}
+
+func (e *Engine) tasksResponse(requestID string) map[string]any {
+	_, tasks := e.store.Snapshot()
+	resp := map[string]any{"type": "tasks", "tasks": tasks}
+	if requestID != "" {
+		resp["requestId"] = requestID
+	}
+	return resp
+}
+
+func (e *Engine) settingsResponse(requestID string) map[string]any {
+	settings, _ := e.store.Snapshot()
+	resp := map[string]any{"type": "settings", "settings": settings}
+	if requestID != "" {
+		resp["requestId"] = requestID
+	}
+	return resp
 }
 
 func (e *Engine) clearSignal(id string) {

@@ -307,7 +307,6 @@ public partial class App : Application
                     DesktopLog.Info($"Autostart reconcile: registry={regOn} config={s.Autostart} → 以注册表为准对齐配置");
                     s.Autostart = regOn;
                     _ipc.Send(new Command { Action = "updateSettings", Settings = s });
-                    _ipc.Send(new Command { Action = "getSettings" });
                 }
             }
 
