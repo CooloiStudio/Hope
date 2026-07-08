@@ -5,7 +5,8 @@
     <TargetFramework>net10.0-windows</TargetFramework>
     <RootNamespace>Hope.Desktop</RootNamespace>
     <AssemblyName>hope-desktop</AssemblyName>
-    <Version>0.13.0</Version>
+    <!-- 第三位 patch 跨 minor 持续累加（0.12.72 → 0.13.73），不归零 -->
+    <Version>0.13.76</Version>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>

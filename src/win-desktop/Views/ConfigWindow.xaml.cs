@@ -12,6 +12,7 @@ using System.Windows.Threading;
 using Hope.Desktop;
 using Hope.Desktop.Ipc;
 using Hope.Desktop.Overlay;
+using Hope.Desktop.State;
 using ComboBox = System.Windows.Controls.ComboBox;
 using CheckBox = System.Windows.Controls.CheckBox;
 using Color = System.Windows.Media.Color;
@@ -31,12 +32,12 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
     private const double FluentTitleBarFallbackHeight = 48;
 
     private readonly IpcClient _ipc;
+    private readonly SessionState _session;
     private readonly Services.UpdateCoordinator? _updates;
     private readonly ObservableCollection<TaskRow> _rows = new();
     private ICollectionView? _rowsView;
     // 任务列表过滤模式：all=全部 / active=进行中 / completed=已完成（与 FilterBox 默认「进行中」一致）。
     private string _filterMode = "active";
-    private readonly HashSet<string> _pendingCompleteIds = new();
     private string? _editingId;
     // 当前编辑任务图片路径（取代原图片地址输入框，作为数据来源）；空串表示无图片。
     private string _gifPath = "";
@@ -46,13 +47,11 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
     // 当前编辑任务的到期提醒覆盖（表单不再暴露，保存时原样保留）；null = 继承全局。
     private List<string>? _editingBehaviors;
     private SettingsDto _settings = new();
-    private bool _loadingSettings;
-    /// <summary>是否已从 Headless 成功加载过至少一次全局设置；此前禁止 CommitSettings 以免默认值覆盖磁盘。</summary>
-    private bool _settingsHydrated;
     private bool _advancedSettingsVisible;
-    private bool _loadingTask;
     // listTasks 刷新后恢复选中行时抑制 OnSelectTask，避免用服务端快照覆盖正在编辑的表单（含图片路径）。
     private bool _suppressTaskSelectionReload;
+    private int _appliedSettingsRevision = -1;
+    private int _appliedTasksRevision = -1;
     private TaskDto? _lastSavedDto;
     private string? _buildDtoError;
     private DateTimeOffset _taskCreatedAt = DateTimeOffset.Now;
@@ -60,9 +59,9 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
     private readonly DispatcherTimer _autoSaveTimer;
     private DispatcherTimer? _nowClockTimer;
 
-    public ConfigWindow(IpcClient ipc) : this(ipc, null) { }
+    public ConfigWindow(IpcClient ipc, SessionState session) : this(ipc, session, null) { }
 
-    public ConfigWindow(IpcClient ipc, Services.UpdateCoordinator? updates)
+    public ConfigWindow(IpcClient ipc, SessionState session, Services.UpdateCoordinator? updates)
     {
         DesktopLog.Info("ConfigWindow ctor: before InitializeComponent");
         // 必须在 InitializeComponent 之前初始化，因为 XAML 事件在加载期间就可能触发 TryAutoSaveTask
@@ -76,13 +75,14 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
         StartNowClock();
 
         _ipc = ipc;
+        _session = session;
         _updates = updates;
         if (_updates != null) _updates.StateChanged += OnUpdateStateChanged;
         _rowsView = System.Windows.Data.CollectionViewSource.GetDefaultView(_rows);
         _rowsView.Filter = RowMatchesFilter;
         TaskGrid.ItemsSource = _rowsView;
-        _ipc.TasksReceived += OnTasksReceived;
-        _ipc.SettingsReceived += OnSettingsReceived;
+        _session.SettingsChanged += OnSessionSettingsChanged;
+        _session.TasksChanged += OnSessionTasksChanged;
         _ipc.VersionReceived += OnBackendVersionReceived;
 
         PopulateTimeBoxes(StartHourBox, StartMinuteBox);
@@ -229,60 +229,53 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
         _ipc.Send(new Command { Action = "getVersion" });
     }
 
-    /// <summary>用 App 已缓存的快照即时填充 UI（打开设置窗时调用，随后仍会通过 RequestRefresh 拉最新数据）。</summary>
-    public void ApplyCachedSnapshot(IReadOnlyList<TaskDto> tasks, SettingsDto? settings) =>
-        ApplyCachedSnapshotSync(tasks, settings);
-
-    /// <summary>在 UI 线程同步应用缓存，避免嵌套 BeginInvoke 导致启动时空窗。</summary>
-    public void ApplyCachedSnapshotSync(IReadOnlyList<TaskDto> tasks, SettingsDto? settings)
+    /// <summary>从 <see cref="SessionState"/> 同步当前快照到 UI（打开/再次显示设置窗时调用）。</summary>
+    public void HydrateFromSession()
     {
         if (!Dispatcher.CheckAccess())
         {
-            Dispatcher.Invoke(() => ApplyCachedSnapshotSync(tasks, settings));
+            Dispatcher.Invoke(HydrateFromSession);
             return;
         }
-        ApplySettingsSnapshot(settings);
-        ApplyTasksSnapshot(tasks);
+        if (_session.SettingsHydrated && _session.Settings != null)
+            ApplySettingsFromServer(_session.Settings, _session.SettingsRevision);
+        if (_session.TasksHydrated)
+            ApplyTasksFromServer(_session.Tasks, _session.TasksRevision);
     }
 
-    /// <summary>仅同步全局设置，不触碰任务列表（避免用 App 侧可能过期的 _tasks 覆盖列表）。</summary>
-    public void ApplySettingsSnapshot(SettingsDto? settings)
+    private void OnSessionSettingsChanged(SettingsDto s)
     {
-        if (settings == null) return;
-        if (!Dispatcher.CheckAccess())
-        {
-            Dispatcher.Invoke(() => ApplySettingsSnapshot(settings));
+        DesktopLog.Info($"ConfigWindow.OnSessionSettingsChanged barHeightPx={s.BarHeightPx} rev={_session.SettingsRevision}");
+        if (_session.SettingsRevision <= _appliedSettingsRevision && _session.SettingsHydrated)
             return;
-        }
-        ApplySettingsFromServer(settings);
-    }
-
-    /// <summary>仅同步任务列表。</summary>
-    public void ApplyTasksSnapshot(IReadOnlyList<TaskDto> tasks)
-    {
-        if (!Dispatcher.CheckAccess())
-        {
-            Dispatcher.Invoke(() => ApplyTasksSnapshot(tasks));
-            return;
-        }
-        ApplyTasksFromServer(tasks);
-    }
-
-    private void OnSettingsReceived(SettingsDto s)
-    {
-        DesktopLog.Info($"ConfigWindow.OnSettingsReceived barHeightPx={s.BarHeightPx}");
         if (Dispatcher.CheckAccess())
-            ApplySettingsFromServer(s);
+            ApplySettingsFromServer(s, _session.SettingsRevision);
         else
-            Dispatcher.BeginInvoke(() => ApplySettingsFromServer(s));
+            Dispatcher.BeginInvoke(() => ApplySettingsFromServer(s, _session.SettingsRevision));
     }
 
-    private void ApplySettingsFromServer(SettingsDto s)
+    private void OnSessionTasksChanged(IReadOnlyList<TaskDto> tasks)
     {
+        DesktopLog.Info($"ConfigWindow.OnSessionTasksChanged count={tasks.Count} rev={_session.TasksRevision}");
+        if (_session.TasksRevision <= _appliedTasksRevision && _session.TasksHydrated)
+            return;
+        if (Dispatcher.CheckAccess())
+            ApplyTasksFromServer(tasks, _session.TasksRevision);
+        else
+            Dispatcher.BeginInvoke(() => ApplyTasksFromServer(tasks, _session.TasksRevision));
+    }
+
+    private void ApplySettingsFromServer(SettingsDto s, int revision)
+    {
+        if (revision <= _appliedSettingsRevision && _session.SettingsHydrated)
+        {
+            DesktopLog.Info($"ConfigWindow.ApplySettingsFromServer skip stale rev={revision} applied={_appliedSettingsRevision}");
+            return;
+        }
         try
         {
             _settings = s;
-            _loadingSettings = true;
+            _session.Write.LoadingSettings = true;
             RefreshBox.Value = Math.Clamp(s.RefreshSec, 1, 10);
             BarHeightBox.Value = Math.Clamp(s.BarHeightPx, 1, 10);
             ImageMaxHeightBox.Value = Math.Clamp(s.ImageMaxHeightPx <= 0 ? 15 : s.ImageMaxHeightPx, 15, 30);
@@ -302,7 +295,7 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
             AllFourCheck.IsChecked = s.AllFour;
             UpdateDirectionPanelsVisibility();
             ApplyAdvancedSettingsVisibility(s.ShowAdvancedSettings);
-            _settingsHydrated = true;
+            _appliedSettingsRevision = revision;
             DesktopLog.Info("ConfigWindow.ApplySettingsFromServer applied to UI");
         }
         catch (Exception ex)
@@ -311,7 +304,7 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
         }
         finally
         {
-            _loadingSettings = false;
+            _session.Write.LoadingSettings = false;
         }
     }
 
@@ -327,7 +320,7 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
 
     private void OnSettingsSelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (_loadingSettings || !_settingsHydrated) return;
+        if (!_session.Write.CanCommitSettings(_session)) return;
         if (e.AddedItems.Count > 0) CommitSettings();
     }
 
@@ -336,17 +329,17 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
         if (sender == RefreshBox) RefreshValueText.Text = ((int)RefreshBox.Value).ToString();
         if (sender == BarHeightBox) BarHeightValueText.Text = ((int)BarHeightBox.Value).ToString();
         if (sender == ImageMaxHeightBox) ImageMaxHeightValueText.Text = ((int)ImageMaxHeightBox.Value).ToString();
-        if (!_loadingSettings && _settingsHydrated) CommitSettings();
+        if (_session.Write.CanCommitSettings(_session)) CommitSettings();
     }
 
     private void OnSettingsControlChanged(object sender, RoutedEventArgs e)
     {
-        if (!_loadingSettings && _settingsHydrated) CommitSettings();
+        if (_session.Write.CanCommitSettings(_session)) CommitSettings();
     }
 
     private void CommitSettings()
     {
-        if (_loadingSettings || !_settingsHydrated) return;
+        if (!_session.Write.CanCommitSettings(_session)) return;
         // InitializeComponent() 期间会触发 BarPositionBox 的 SelectionChanged，
         // 此时 _ipc 尚未赋值，连控件也尚未完全构造，因此只能静默返回。
         if (_ipc == null) return;
@@ -479,7 +472,7 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
     {
         UpdateDirectionPanelsVisibility();
         ScheduleFitHeightToTaskEditor();
-        if (!_loadingSettings && _settingsHydrated) CommitSettings();
+        if (_session.Write.CanCommitSettings(_session)) CommitSettings();
     }
 
     private void OnBarPositionChanged(object sender, SelectionChangedEventArgs e)
@@ -488,7 +481,7 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
         if (BarForwardRadio == null) return; // InitializeComponent 期间 AdvancedOptionsPanel 尚未解析
         var pos = (BarPositionBox.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? "top";
         UpdateSingleDirectionLabels(pos);
-        if (!_loadingSettings && _settingsHydrated) CommitSettings();
+        if (_session.Write.CanCommitSettings(_session)) CommitSettings();
     }
 
     private void OnAdvancedPositionChanged(object sender, RoutedEventArgs e)
@@ -500,7 +493,7 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
     private void OnToggleAdvancedOptionsClick(object sender, RoutedEventArgs e)
     {
         ApplyAdvancedSettingsVisibility(!_advancedSettingsVisible);
-        if (_settingsHydrated) CommitSettings();
+        if (_session.Write.CanCommitSettings(_session)) CommitSettings();
         ScheduleFitHeightToTaskEditor();
     }
 
@@ -1109,17 +1102,13 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.";
         return true;
     }
 
-    private void OnTasksReceived(List<TaskDto> tasks)
+    private void ApplyTasksFromServer(IReadOnlyList<TaskDto> tasks, int revision)
     {
-        DesktopLog.Info($"ConfigWindow.OnTasksReceived count={tasks.Count}");
-        if (Dispatcher.CheckAccess())
-            ApplyTasksFromServer(tasks);
-        else
-            Dispatcher.BeginInvoke(() => ApplyTasksFromServer(tasks), DispatcherPriority.Normal);
-    }
-
-    private void ApplyTasksFromServer(IReadOnlyList<TaskDto> tasks)
-    {
+        if (revision <= _appliedTasksRevision && _session.TasksHydrated)
+        {
+            DesktopLog.Info($"ConfigWindow.ApplyTasksFromServer skip stale rev={revision} applied={_appliedTasksRevision}");
+            return;
+        }
         try
         {
             var editingId = _editingId;
@@ -1147,14 +1136,16 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.";
                 if (editing != null) UpdateTaskActionButtons(editing);
             }
 
-            foreach (var id in _pendingCompleteIds.ToList())
+            foreach (var id in _session.Write.PendingCompleteIdsSnapshot())
             {
                 if (_rows.Any(r => r.Id == id && r.Completed))
-                    _pendingCompleteIds.Remove(id);
+                    _session.Write.RemovePendingComplete(id);
             }
 
-            if (_pendingCompleteIds.Count == 0)
-                _loadingTask = false;
+            if (_session.Write.PendingCompleteCount == 0)
+                _session.Write.LoadingTask = false;
+
+            _appliedTasksRevision = revision;
 
             DesktopLog.Info($"ConfigWindow.ApplyTasksFromServer grid rows={_rows.Count} visible={_rowsView?.Cast<object>().Count() ?? 0}");
         }
@@ -1210,7 +1201,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.";
     {
         if (_suppressTaskSelectionReload) return;
         if (TaskGrid.SelectedItem is not TaskRow row) return;
-        _loadingTask = true;
+        _session.Write.LoadingTask = true;
         _autoSaveTimer?.Stop();
 
         _editingId = row.Id;
@@ -1230,7 +1221,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.";
         MainTabs.SelectedItem = TaskTab;
 
         _lastSavedDto = BuildCurrentDto();
-        _loadingTask = false;
+        _session.Write.LoadingTask = false;
     }
 
     private void OnNew(object sender, RoutedEventArgs e)
@@ -1278,7 +1269,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.";
     private void CompleteTaskById(string id)
     {
         if (_rows.FirstOrDefault(r => r.Id == id) is not TaskRow row) return;
-        if (row.Completed || _pendingCompleteIds.Contains(id))
+        if (row.Completed || _session.Write.IsPendingComplete(id))
         {
             StatusText.Text = row.Completed ? "该任务已完成" : "正在完成…";
             return;
@@ -1293,8 +1284,8 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.";
 
         // 暂停自动保存，避免与 completeTask / listTasks 竞态把已完成状态覆盖回进行中。
         _autoSaveTimer?.Stop();
-        _loadingTask = true;
-        _pendingCompleteIds.Add(id);
+        _session.Write.LoadingTask = true;
+        _session.Write.AddPendingComplete(id);
         _ipc.Send(new Command { Action = "completeTask", TaskId = row.Id });
 
         // 乐观更新列表：后端已成功时重启能读到完成态，但 UI 不能等 listTasks 才反馈。
@@ -1524,9 +1515,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.";
 
     private void TryAutoSaveTask()
     {
-        if (_loadingSettings) return;
-        if (_loadingTask) return;
-        if (_editingId != null && _pendingCompleteIds.Contains(_editingId)) return;
+        if (!_session.Write.CanAutoSaveTask(_session, _editingId)) return;
         if (_autoSaveTimer == null) return;
         _autoSaveTimer.Stop();
         _autoSaveTimer.Start();
@@ -1534,9 +1523,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.";
 
     private void AutoSaveTask()
     {
-        if (_loadingSettings) return;
-        if (_loadingTask) return;
-        if (_editingId != null && _pendingCompleteIds.Contains(_editingId)) return;
+        if (!_session.Write.CanAutoSaveTask(_session, _editingId)) return;
 
         var dto = BuildCurrentDto();
         if (dto == null)
