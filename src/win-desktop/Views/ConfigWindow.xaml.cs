@@ -1345,27 +1345,13 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.";
         return true;
     }
 
-    /// <summary>定时任务允许跨午夜（截止时分 ≤ 开始时分）；其余情况要求截止晚于开始。</summary>
-    private static bool IsTaskTimeRangeValid(string type, DateTimeOffset? start, DateTimeOffset end,
-        DateTimeOffset taskStart, out string error)
+    /// <summary>定时任务允许跨午夜（截止日在次日）；校验基于 Unix 秒。</summary>
+    private static bool IsTaskTimeRangeValid(string type, long startTs, long endTs,
+        DateTimeOffset taskCreatedAt, out string error)
     {
         error = "";
-        var rangeStart = type == "instant" ? taskStart : start ?? taskStart;
-        if (end > rangeStart) return true;
-
-        if (type == "scheduled" && start.HasValue)
-        {
-            var s = start.Value.LocalDateTime;
-            var e = end.LocalDateTime;
-            if (e.Date < s.Date)
-            {
-                error = "截止时间不能早于开始时间";
-                return false;
-            }
-            if (e.Date <= s.Date.AddDays(1) && e.TimeOfDay <= s.TimeOfDay)
-                return true;
-        }
-
+        var rangeStart = type == "instant" ? taskCreatedAt.ToUnixTimeSeconds() : startTs;
+        if (endTs > rangeStart) return true;
         error = type == "instant"
             ? "截止时间不能早于任务开始时刻"
             : "截止时间不能早于开始时间";
@@ -1457,6 +1443,8 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.";
         if (item is not TaskRow row) return true;
         return _filterMode switch
         {
+            // 「进行中」是「未完成」这一大类（含未开始 / 进行中 / 已截止）；
+            // 三态区分在状态/进度列展示，不收窄筛选，避免已截止任务从列表消失。
             "active" => !row.Completed,
             "completed" => row.Completed,
             _ => true,
@@ -1502,8 +1490,9 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.";
         SetGifPath(row.Gif, autoSave: false);
         SelectType(row.Type);
         SetDateTime(StartDatePicker, StartHourBox, StartMinuteBox,
-            row.StartAt?.LocalDateTime ?? DateTime.Now);
-        SetDateTime(EndDatePicker, EndHourBox, EndMinuteBox, row.EndAt.LocalDateTime);
+            TaskSchedule.TsToLocal(row.StartTs)?.LocalDateTime ?? DateTime.Now);
+        SetDateTime(EndDatePicker, EndHourBox, EndMinuteBox,
+            TaskSchedule.TsToLocal(row.EndTs)?.LocalDateTime ?? DateTime.Now);
         _editingBehaviors = row.ExpiredBehaviors; // 保留任务已有覆盖，表单不展示
         LoadRecurrence(row.Recurrence);
         SelectComboByTag(TaskPositionBox, row.Position);
@@ -1642,27 +1631,26 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.";
         if (result != MessageBoxResult.OK) return;
 
         var today = DateTime.Today;
-        DateTimeOffset? newStart = null;
-        DateTimeOffset newEnd;
+        long newStartTs = row.StartTs;
+        long newEndTs = row.EndTs;
 
-        if (row.Type == "scheduled" && row.StartAt.HasValue)
+        if (row.Type == "scheduled" && row.StartTs > 0)
         {
-            var originalStartLocal = row.StartAt.Value.LocalDateTime;
+            var originalStartLocal = TaskSchedule.TsToLocal(row.StartTs)!.Value.LocalDateTime;
             var adjustedStart = new DateTime(today.Year, today.Month, today.Day,
                 originalStartLocal.Hour, originalStartLocal.Minute, 0, originalStartLocal.Kind);
-            newStart = new DateTimeOffset(adjustedStart, TimeZoneInfo.Local.GetUtcOffset(adjustedStart));
+            newStartTs = new DateTimeOffset(adjustedStart, TimeZoneInfo.Local.GetUtcOffset(adjustedStart)).ToUnixTimeSeconds();
 
             var dayOffset = today - originalStartLocal.Date;
-            var adjustedEndLocal = row.EndAt.LocalDateTime + dayOffset;
-            newEnd = new DateTimeOffset(adjustedEndLocal, TimeZoneInfo.Local.GetUtcOffset(adjustedEndLocal));
+            var adjustedEndLocal = TaskSchedule.TsToLocal(row.EndTs)!.Value.LocalDateTime + dayOffset;
+            newEndTs = new DateTimeOffset(adjustedEndLocal, TimeZoneInfo.Local.GetUtcOffset(adjustedEndLocal)).ToUnixTimeSeconds();
         }
         else
         {
-            // 即时任务没有开始时间：以截止日期为锚点，将截止日期调整为今天。
-            var originalEndLocal = row.EndAt.LocalDateTime;
+            var originalEndLocal = TaskSchedule.TsToLocal(row.EndTs)!.Value.LocalDateTime;
             var adjustedEnd = new DateTime(today.Year, today.Month, today.Day,
                 originalEndLocal.Hour, originalEndLocal.Minute, 0, originalEndLocal.Kind);
-            newEnd = new DateTimeOffset(adjustedEnd, TimeZoneInfo.Local.GetUtcOffset(adjustedEnd));
+            newEndTs = new DateTimeOffset(adjustedEnd, TimeZoneInfo.Local.GetUtcOffset(adjustedEnd)).ToUnixTimeSeconds();
         }
 
         var dto = new TaskDto
@@ -1673,8 +1661,8 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.";
             Color = row.Color,
             Gif = row.Gif,
             Position = row.Position,
-            StartAt = newStart,
-            EndAt = newEnd,
+            StartTs = newStartTs,
+            EndTs = newEndTs,
             ExpiredBehaviors = row.ExpiredBehaviors,
             Recurrence = row.Recurrence,
             Status = "active",
@@ -1853,7 +1841,8 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.";
         var gif = _gifPath.Trim();
         var position = (TaskPositionBox.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? "";
         var type = SelectedType();
-        DateTimeOffset? start = null;
+        long startTs = 0;
+        long endTs = end.ToUnixTimeSeconds();
         RecurrenceDto? recurrence = null;
         if (type == "scheduled")
         {
@@ -1863,10 +1852,10 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.";
                 return null;
             }
             recurrence = CollectRecurrence();
-            start = s;
+            startTs = s.ToUnixTimeSeconds();
         }
 
-        if (!IsTaskTimeRangeValid(type, start, end, _taskCreatedAt, out var timeError))
+        if (!IsTaskTimeRangeValid(type, startTs, endTs, _taskCreatedAt, out var timeError))
         {
             _buildDtoError = timeError;
             return null;
@@ -1885,8 +1874,8 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.";
             Gif = gif,
             ImageMaxSize = existing?.ImageMaxSize ?? 0,
             Position = position,
-            StartAt = start,
-            EndAt = end,
+            StartTs = startTs,
+            EndTs = endTs,
             CreatedAt = _taskCreatedAt,
             ExpiredBehaviors = CollectTaskBehaviors(),
             Recurrence = recurrence,
@@ -1904,8 +1893,8 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.";
         if (a.Color != b.Color) return false;
         if (!string.Equals(a.Gif ?? "", b.Gif ?? "", StringComparison.Ordinal)) return false;
         if (a.Position != b.Position) return false;
-        if (a.StartAt != b.StartAt) return false;
-        if (a.EndAt != b.EndAt) return false;
+        if (a.StartTs != b.StartTs) return false;
+        if (a.EndTs != b.EndTs) return false;
         if (a.Status != b.Status) return false;
         if (a.Completed != b.Completed) return false;
         if (!SequenceEqual(a.ExpiredBehaviors, b.ExpiredBehaviors)) return false;
@@ -2045,8 +2034,8 @@ public sealed class TaskRow : INotifyPropertyChanged
     public string Color { get; init; } = "#FF6B35";
     public string? Gif { get; init; }
     public int ImageMaxSize { get; init; }
-    public DateTimeOffset? StartAt { get; init; }
-    public DateTimeOffset EndAt { get; init; }
+    public long StartTs { get; init; }
+    public long EndTs { get; init; }
     public DateTimeOffset? CreatedAt { get; init; }
     public string Status { get; init; } = "active";
     public bool Completed { get; init; }
@@ -2056,8 +2045,8 @@ public sealed class TaskRow : INotifyPropertyChanged
     public RecurrenceDto? Recurrence { get; init; }
 
     public string TypeLabel => Type == "instant" ? "即时" : "定时";
-    public DateTimeOffset? StartDisplayAt => StartAt ?? CreatedAt;
-    public DateTimeOffset EndDisplayAt => EndAt;
+    public DateTimeOffset? StartDisplayAt => TaskSchedule.TsToLocal(StartTs) ?? CreatedAt;
+    public DateTimeOffset? EndDisplayAt => TaskSchedule.TsToLocal(EndTs);
     public string RecurLabel => FormatRecurLabel(Type, Recurrence);
     public string StatusLabel => Completed ? "已完成" : TypeLabel;
     public string ProgressLabel => TaskSchedule.GetListProgressLabel(this, DateTimeOffset.Now);
@@ -2070,24 +2059,28 @@ public sealed class TaskRow : INotifyPropertyChanged
         }
     }
 
-    public static TaskRow From(TaskDto t) => new()
+    public static TaskRow From(TaskDto t)
     {
-        Id = t.Id,
-        Name = t.Name,
-        Type = t.Type,
-        Color = t.Color,
-        Gif = t.Gif,
-        ImageMaxSize = t.ImageMaxSize,
-        StartAt = t.StartAt,
-        EndAt = t.EndAt,
-        CreatedAt = t.CreatedAt,
-        Status = string.IsNullOrEmpty(t.Status) ? (t.Completed ? "completed" : "active") : t.Status,
-        Completed = t.Completed || t.Status == "completed",
-        CompletedAt = t.CompletedAt,
-        Position = t.Position,
-        ExpiredBehaviors = t.ExpiredBehaviors,
-        Recurrence = t.Recurrence,
-    };
+        var (startTs, endTs) = TaskSchedule.ResolveTimestamps(t);
+        return new()
+        {
+            Id = t.Id,
+            Name = t.Name,
+            Type = t.Type,
+            Color = t.Color,
+            Gif = t.Gif,
+            ImageMaxSize = t.ImageMaxSize,
+            StartTs = startTs,
+            EndTs = endTs,
+            CreatedAt = t.CreatedAt,
+            Status = string.IsNullOrEmpty(t.Status) ? (t.Completed ? "completed" : "active") : t.Status,
+            Completed = t.Completed || t.Status == "completed",
+            CompletedAt = t.CompletedAt,
+            Position = t.Position,
+            ExpiredBehaviors = t.ExpiredBehaviors,
+            Recurrence = t.Recurrence,
+        };
+    }
 
     /// <summary>将进行中行转为已完成（乐观 UI，待 Headless tasks 响应确认）。</summary>
     public static TaskRow AsCompleted(TaskRow row)
@@ -2101,8 +2094,8 @@ public sealed class TaskRow : INotifyPropertyChanged
             Color = row.Color,
             Gif = row.Gif,
             ImageMaxSize = row.ImageMaxSize,
-            StartAt = row.StartAt,
-            EndAt = row.EndAt,
+            StartTs = row.StartTs,
+            EndTs = row.EndTs,
             CreatedAt = row.CreatedAt,
             Status = "completed",
             Completed = true,

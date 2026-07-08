@@ -421,8 +421,8 @@ func TestCompleteRecurringSpawnsNextCopy(t *testing.T) {
 	if copyT.IsCompleted() || copyT.Status != task.StatusActive {
 		t.Errorf("copy should be active, got status=%q", copyT.Status)
 	}
-	if copyT.StartAt == nil || !copyT.StartAt.After(start) {
-		t.Errorf("copy start should be advanced past original start, got %v", copyT.StartAt)
+	if copyT.StartTs != start.Unix()+86400 {
+		t.Errorf("copy startTs should advance 1 day, got startTs=%d want %d", copyT.StartTs, start.Unix()+86400)
 	}
 	// 副本保留全部参数（颜色、循环规则）。
 	if copyT.Color != orig.Color || copyT.Recurrence == nil || copyT.Recurrence.Mode != task.RecurDaily {

@@ -4,162 +4,112 @@ using Hope.Desktop.Views;
 namespace Hope.Desktop;
 
 /// <summary>
-/// 任务时间窗与进度计算（与 headless task 包语义对齐，供列表与托盘展示）。
+/// 任务时间戳与进度计算（与 headless task 包语义对齐，供列表与托盘展示）。
+/// 业务逻辑仅使用 Unix 秒比较与四则运算；日期时间仅用于展示。
 /// </summary>
 internal static class TaskSchedule
 {
+    public static long EffectiveStartTs(string type, long startTs, long endTs, DateTimeOffset? createdAt)
+    {
+        if (type == "scheduled" && startTs > 0) return startTs;
+        if (createdAt.HasValue) return createdAt.Value.ToUnixTimeSeconds();
+        return startTs > 0 ? startTs : DateTimeOffset.Now.ToUnixTimeSeconds();
+    }
+
+    public static long EffectiveEndTs(long endTs) => endTs;
+
+    public static bool HasStarted(string type, long startTs, long endTs, DateTimeOffset? createdAt, DateTimeOffset now)
+    {
+        var nowTs = now.ToUnixTimeSeconds();
+        return nowTs >= EffectiveStartTs(type, startTs, endTs, createdAt);
+    }
+
+    public static bool IsExpired(string type, long startTs, long endTs, DateTimeOffset? createdAt, DateTimeOffset now)
+    {
+        var nowTs = now.ToUnixTimeSeconds();
+        var start = EffectiveStartTs(type, startTs, endTs, createdAt);
+        if (nowTs < start) return false;
+        return nowTs >= EffectiveEndTs(endTs);
+    }
+
+    public static double Percent(string type, long startTs, long endTs, DateTimeOffset? createdAt, DateTimeOffset now)
+    {
+        var nowTs = now.ToUnixTimeSeconds();
+        var start = EffectiveStartTs(type, startTs, endTs, createdAt);
+        var end = EffectiveEndTs(endTs);
+        if (nowTs < start) return 0;
+        var total = end - start;
+        if (total <= 0) return 100;
+        var p = (nowTs - start) * 100.0 / total;
+        return Math.Clamp(p, 0, 100);
+    }
+
+    public static DateTimeOffset EffectiveEndDisplay(string type, long startTs, long endTs, DateTimeOffset? createdAt) =>
+        DateTimeOffset.FromUnixTimeSeconds(EffectiveEndTs(endTs)).ToLocalTime();
+
     /// <summary>列表进度列：已完成 / 未开始 / 已到期 / 百分比。</summary>
     public static string GetListProgressLabel(TaskRow row, DateTimeOffset now)
     {
         if (row.Completed) return "已完成";
-        return GetActiveProgressLabel(row.Type, row.StartAt, row.EndAt, row.CreatedAt, row.Recurrence, now);
+        return GetActiveProgressLabel(row.Type, row.StartTs, row.EndTs, row.CreatedAt, now);
     }
 
     /// <summary>托盘状态列：未开始 / 已到期 / 倒计时。</summary>
     public static string GetTrayStatusLabel(TaskRow row, DateTimeOffset now)
     {
         if (row.Completed) return "已完成";
-        if (!HasStarted(row.Type, row.StartAt, row.EndAt, row.CreatedAt, row.Recurrence, now))
+        if (!HasStarted(row.Type, row.StartTs, row.EndTs, row.CreatedAt, now))
             return "未开始";
-        if (IsExpired(row.Type, row.StartAt, row.EndAt, row.CreatedAt, row.Recurrence, now))
+        if (IsExpired(row.Type, row.StartTs, row.EndTs, row.CreatedAt, now))
             return "已到期";
-        return FormatCountdown(EffectiveEnd(row.Type, row.StartAt, row.EndAt, row.CreatedAt, row.Recurrence, now), now);
+        return FormatCountdown(EffectiveEndTs(row.EndTs), now);
     }
 
-    public static string GetActiveProgressLabel(string type, DateTimeOffset? startAt, DateTimeOffset endAt,
-        DateTimeOffset? createdAt, RecurrenceDto? recurrence, DateTimeOffset now)
+    public static string GetActiveProgressLabel(string type, long startTs, long endTs,
+        DateTimeOffset? createdAt, DateTimeOffset now)
     {
-        if (!HasStarted(type, startAt, endAt, createdAt, recurrence, now))
+        if (!HasStarted(type, startTs, endTs, createdAt, now))
             return "未开始";
-        if (IsExpired(type, startAt, endAt, createdAt, recurrence, now))
+        if (IsExpired(type, startTs, endTs, createdAt, now))
             return "已到期";
-        var pct = Percent(type, startAt, endAt, createdAt, recurrence, now);
+        var pct = Percent(type, startTs, endTs, createdAt, now);
         return $"{Math.Round(pct):0}%";
     }
 
-    public static bool HasStarted(string type, DateTimeOffset? startAt, DateTimeOffset endAt,
-        DateTimeOffset? createdAt, RecurrenceDto? recurrence, DateTimeOffset now) =>
-        WindowAt(type, startAt, endAt, createdAt, recurrence, now).Started;
-
-    public static bool IsExpired(string type, DateTimeOffset? startAt, DateTimeOffset endAt,
-        DateTimeOffset? createdAt, RecurrenceDto? recurrence, DateTimeOffset now)
+    /// <summary>由 IPC 任务解析起止戳（优先 startTs/endTs，回退旧版 startAt/endAt）。</summary>
+    public static (long StartTs, long EndTs) ResolveTimestamps(TaskDto t)
     {
-        var (_, end, started) = WindowAt(type, startAt, endAt, createdAt, recurrence, now);
-        return started && now >= end;
+        long endTs = t.EndTs > 0 ? t.EndTs : t.EndAt.ToUnixTimeSeconds();
+        long startTs;
+        if (t.StartTs > 0)
+            startTs = t.StartTs;
+        else if (t.Type == "scheduled" && t.StartAt.HasValue)
+            startTs = t.StartAt.Value.ToUnixTimeSeconds();
+        else if (t.CreatedAt.HasValue)
+            startTs = t.CreatedAt.Value.ToUnixTimeSeconds();
+        else
+            startTs = 0;
+        while (endTs > 0 && startTs > 0 && endTs <= startTs)
+            endTs += 86400;
+        return (startTs, endTs);
     }
 
-    public static double Percent(string type, DateTimeOffset? startAt, DateTimeOffset endAt,
-        DateTimeOffset? createdAt, RecurrenceDto? recurrence, DateTimeOffset now)
+    public static DateTimeOffset? TsToLocal(long ts) =>
+        ts > 0 ? DateTimeOffset.FromUnixTimeSeconds(ts).ToLocalTime() : null;
+
+    private static string FormatCountdown(long endTs, DateTimeOffset now)
     {
-        var (start, end, started) = WindowAt(type, startAt, endAt, createdAt, recurrence, now);
-        if (!started) return 0;
-        var total = end - start;
-        if (total <= TimeSpan.Zero) return 100;
-        var p = (now - start).TotalMilliseconds / total.TotalMilliseconds * 100;
-        return Math.Clamp(p, 0, 100);
-    }
-
-    public static DateTimeOffset EffectiveEnd(string type, DateTimeOffset? startAt, DateTimeOffset endAt,
-        DateTimeOffset? createdAt, RecurrenceDto? recurrence, DateTimeOffset now)
-    {
-        var (_, end, started) = WindowAt(type, startAt, endAt, createdAt, recurrence, now);
-        return started ? end : endAt;
-    }
-
-    private static (DateTimeOffset Start, DateTimeOffset End, bool Started) WindowAt(
-        string type, DateTimeOffset? startAt, DateTimeOffset endAt,
-        DateTimeOffset? createdAt, RecurrenceDto? recurrence, DateTimeOffset now)
-    {
-        if (!IsRecurring(type, startAt, recurrence))
-        {
-            var start = EffectiveStart(type, startAt, createdAt);
-            if (now < start) return (start, endAt, false);
-            return (start, endAt, true);
-        }
-
-        var startRef = startAt!.Value;
-        var startTod = startRef.TimeOfDay;
-        var endTod = endAt.TimeOfDay;
-        var anchor = DateOnly.FromDateTime(startRef.DateTime);
-        var d0 = DateOnly.FromDateTime(now.DateTime);
-
-        int limit = 8;
-        if (recurrence!.Mode == "everyN" && recurrence.Interval + 1 > limit)
-            limit = recurrence.Interval + 1;
-        if (limit > 400) limit = 400;
-
-        for (int i = 0; i <= limit; i++)
-        {
-            var d = d0.AddDays(-i);
-            if (d < anchor) break;
-            if (!IsOccurrenceDay(recurrence, anchor, d)) continue;
-
-            var ws = Combine(d, startTod, startRef.Offset);
-            var we = Combine(d, endTod, endAt.Offset);
-            if (endTod <= startTod)
-                we = Combine(d.AddDays(1), endTod, endAt.Offset);
-
-            if (i == 0 && now < ws)
-            {
-                if (endTod <= startTod)
-                {
-                    var yd = d.AddDays(-1);
-                    if (yd >= anchor && IsOccurrenceDay(recurrence, anchor, yd))
-                    {
-                        var yws = Combine(yd, startTod, startRef.Offset);
-                        var ywe = Combine(d, endTod, endAt.Offset);
-                        if (now >= yws) return (yws, ywe, true);
-                    }
-                }
-                return (ws, we, false);
-            }
-
-            if (ws <= now) return (ws, we, true);
-        }
-
-        return (default, default, false);
-    }
-
-    private static DateTimeOffset Combine(DateOnly date, TimeSpan tod, TimeSpan offset)
-    {
-        var dt = date.ToDateTime(TimeOnly.FromTimeSpan(tod));
-        return new DateTimeOffset(dt, offset);
-    }
-
-    private static DateTimeOffset EffectiveStart(string type, DateTimeOffset? startAt, DateTimeOffset? createdAt) =>
-        type == "scheduled" && startAt.HasValue ? startAt.Value : (createdAt ?? DateTimeOffset.Now);
-
-    private static bool IsRecurring(string type, DateTimeOffset? startAt, RecurrenceDto? recurrence) =>
-        type == "scheduled" && startAt.HasValue &&
-        recurrence != null && !string.IsNullOrEmpty(recurrence.Mode);
-
-    private static bool IsOccurrenceDay(RecurrenceDto rec, DateOnly anchor, DateOnly d)
-    {
-        if (d < anchor) return false;
-        switch (rec.Mode)
-        {
-            case "daily":
-                return true;
-            case "everyN":
-            {
-                int n = rec.Interval < 1 ? 1 : rec.Interval;
-                int days = (int)Math.Round((d.ToDateTime(TimeOnly.MinValue) - anchor.ToDateTime(TimeOnly.MinValue)).TotalDays);
-                return days % n == 0;
-            }
-            case "weekly":
-                return rec.Weekdays != null && rec.Weekdays.Contains((int)d.DayOfWeek);
-            default:
-                return false;
-        }
-    }
-
-    private static string FormatCountdown(DateTimeOffset endAt, DateTimeOffset now)
-    {
-        var remaining = endAt - now;
-        if (remaining <= TimeSpan.Zero) return "已到期";
-        return remaining.TotalDays >= 1
-            ? $"{(int)remaining.TotalDays}天 {remaining.Hours:00}:{remaining.Minutes:00}:{remaining.Seconds:00}"
-            : $"{remaining.Hours:00}:{remaining.Minutes:00}:{remaining.Seconds:00}";
+        var remaining = endTs - now.ToUnixTimeSeconds();
+        if (remaining <= 0) return "已到期";
+        var days = remaining / 86400;
+        remaining %= 86400;
+        var hours = remaining / 3600;
+        remaining %= 3600;
+        var minutes = remaining / 60;
+        var seconds = remaining % 60;
+        return days >= 1
+            ? $"{days}天 {hours:00}:{minutes:00}:{seconds:00}"
+            : $"{hours:00}:{minutes:00}:{seconds:00}";
     }
 
     /// <summary>列表绝对日期：HH:mm MM-dd。</summary>

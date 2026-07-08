@@ -55,9 +55,6 @@ public partial class App : Application
     private DispatcherTimer? _sessionSnapshotRetry;
     private int _sessionSnapshotAttempts;
 
-    /// <summary>最近一次 Headless 广播状态，供唤醒时兜底重绘。</summary>
-    private StateMessage? _lastStateMessage;
-
     /// <summary>是否已经因致命错误进入退出流程，避免重复弹窗。</summary>
     private bool _fatalExiting;
 
@@ -355,33 +352,41 @@ public partial class App : Application
     private void OnPowerModeChanged(object sender, PowerModeChangedEventArgs e)
     {
         if (e.Mode != PowerModes.Resume) return;
-        DesktopLog.Info("Power resume detected, refreshing overlay state and screen layout");
+        DesktopLog.Info("Power resume detected, scheduling resume refresh");
         Dispatcher.BeginInvoke(() =>
         {
-            RequestOverlayStateRefresh();
-            ScheduleRefreshScreenLayout("PowerResume", delayMs: 800);
-        });
+            try
+            {
+                RequestOverlayStateRefresh();
+                // 唤醒后显示器/工作区会在数百毫秒内继续抖动，延迟一次布局刷新。
+                ScheduleRefreshScreenLayout("PowerResume", delayMs: 900);
+            }
+            catch (Exception ex)
+            {
+                DesktopLog.Error("Power resume refresh failed", ex);
+            }
+        }, DispatcherPriority.Background);
     }
 
     /// <summary>按当前墙钟向 Headless 索取一帧顶栏状态并刷新 Overlay（休眠唤醒后进度条/图片停滞）。</summary>
     private void RequestOverlayStateRefresh()
     {
-        foreach (var overlay in _overlays.Values)
+        var overlays = _overlays.Values.ToList();
+        foreach (var overlay in overlays)
             overlay.InvalidateVisualCache();
 
-        if (_ipc.IsConnected)
+        if (!_ipc.IsConnected)
         {
-            DesktopLog.Info("App.RequestOverlayStateRefresh via IPC requestState");
-            _ipc.Send(new Command { Action = "requestState" });
+            DesktopLog.Warn("App.RequestOverlayStateRefresh skipped: IPC disconnected");
             return;
         }
 
-        if (_lastStateMessage != null)
-        {
-            DesktopLog.Warn("App.RequestOverlayStateRefresh: IPC disconnected, re-dispatching last state");
-            var all = _lastStateMessage.Segments ?? new List<Segment>();
-            DispatchState(_lastStateMessage, IsCelebrateActive(all));
-        }
+        DesktopLog.Info($"App.RequestOverlayStateRefresh requesting snapshots overlays={overlays.Count}");
+        // 仅请求后端快照，不在唤醒路径本地重放上一次状态，避免 UI 线程在恢复期做重渲染。
+        _ipc.Send(new Command { Action = "requestState" });
+        _ipc.Send(new Command { Action = "listTasks" });
+        _ipc.Send(new Command { Action = "getSettings" });
+        _ipc.Send(new Command { Action = "getVersion" });
     }
 
     /// <summary>合并短时间内的多次屏幕布局变更（唤醒、分辨率切换等），减轻 UI 线程突发负载。</summary>
@@ -469,8 +474,8 @@ public partial class App : Application
         var rows = _session.Tasks
             .Where(t => !IsTaskCompleted(t))
             .Select(TaskRow.From)
-            .Where(r => TaskSchedule.HasStarted(r.Type, r.StartAt, r.EndAt, r.CreatedAt, r.Recurrence, now))
-            .OrderBy(r => TaskSchedule.Percent(r.Type, r.StartAt, r.EndAt, r.CreatedAt, r.Recurrence, now))
+            .Where(r => TaskSchedule.HasStarted(r.Type, r.StartTs, r.EndTs, r.CreatedAt, now))
+            .OrderBy(r => TaskSchedule.Percent(r.Type, r.StartTs, r.EndTs, r.CreatedAt, now))
             .ThenBy(r => r.Name, StringComparer.Ordinal)
             .ToList();
 
@@ -536,7 +541,6 @@ public partial class App : Application
     {
         Dispatcher.BeginInvoke(() =>
         {
-            _lastStateMessage = msg;
             var all = msg.Segments ?? new List<Segment>();
             bool celebrate = IsCelebrateActive(all);
             if (_session.OverlayAllFour || celebrate)

@@ -6,7 +6,7 @@
     <RootNamespace>Hope.Desktop</RootNamespace>
     <AssemblyName>hope-desktop</AssemblyName>
     <!-- 第三位 patch 跨 minor 持续累加（0.12.72 → 0.13.73），不归零 -->
-    <Version>0.13.82</Version>
+    <Version>0.13.83</Version>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>

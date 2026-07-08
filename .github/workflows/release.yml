@@ -5,12 +5,13 @@ name: release
 # Release 正文取自 CHANGELOG.md 中与该版本号匹配的小节（### v<版本>）。
 # 不含 UWP / MSIX 签名（见方案文档 §8）。
 #
-# 触发方式：代码合并 / 推送到 release 分支时自动发版。
+# 触发方式：向 release 分支上的提交打 tag 并推送（tag 形如 v0.13.83）。
+# 仅推送到 release 分支、未打 tag 的提交不会发版。
 
 on:
   push:
-    branches:
-      - release
+    tags:
+      - "v*"
 
 permissions:
   contents: write
@@ -20,6 +21,18 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify tag commit is on release branch
+        shell: pwsh
+        run: |
+          git fetch origin release --quiet
+          git merge-base --is-ancestor ${{ github.sha }} origin/release
+          if ($LASTEXITCODE -ne 0) {
+            throw "Tag ${{ github.ref_name }} 必须打在 release 分支可达的提交上"
+          }
+          Write-Host "Tag ${{ github.ref_name }} is on release branch"
 
       - name: Setup Go
         uses: actions/setup-go@v5
@@ -35,11 +48,17 @@ jobs:
         id: ver
         shell: pwsh
         run: |
+          $tag = "${{ github.ref_name }}"
+          if ($tag -notmatch '^v(.+)$') { throw "Tag 格式应为 vX.Y.Z，当前: $tag" }
+          $tagVersion = $Matches[1]
           [xml]$proj = Get-Content src/win-desktop/Hope.Desktop.csproj
           $v = ($proj.Project.PropertyGroup.Version | Where-Object { $_ } | Select-Object -First 1).Trim()
           if (-not $v) { throw "未能在 Hope.Desktop.csproj 中找到 <Version>" }
+          if ($v -ne $tagVersion) {
+            throw "Tag 版本 ($tagVersion) 与 Hope.Desktop.csproj <Version> ($v) 不一致"
+          }
           "version=$v" >> $env:GITHUB_OUTPUT
-          "tag=v$v" >> $env:GITHUB_OUTPUT
+          "tag=$tag" >> $env:GITHUB_OUTPUT
           Write-Host "Desktop (release) version: $v"
 
       - name: Extract release notes from CHANGELOG

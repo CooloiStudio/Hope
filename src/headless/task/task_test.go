@@ -194,66 +194,65 @@ func TestKeepsVisibleWhenExpired(t *testing.T) {
 	}
 }
 
-// 每日循环任务：取「当天」时间窗 09:00–18:00 计算进度，不受锚点日期早于今天影响。
+// 每日循环任务：进度仅由存储的 startTs/endTs 决定，过期后不自动进入「今天」新窗。
 func TestRecurringDailyPercent(t *testing.T) {
-	start := mustTime("2026-06-01T09:00:00+08:00") // 锚点在过去
+	start := mustTime("2026-06-01T09:00:00+08:00")
+	end := mustTime("2026-06-01T18:00:00+08:00")
 	task := &Task{
-		ID: "r", Type: Scheduled, StartAt: &start,
-		EndAt:      mustTime("2026-06-01T18:00:00+08:00"),
+		ID: "r", Type: Scheduled,
+		StartTs: start.Unix(), EndTs: end.Unix(),
 		Recurrence: &Recurrence{Mode: RecurDaily},
 	}
-	now := mustTime("2026-06-25T17:00:00+08:00") // 当天 09:00–18:00 的 8/9 ≈ 88.9%
-	if got := task.Percent(now); got < 88.8 || got > 89.0 {
-		t.Fatalf("daily recurring percent = %.2f, want ~88.9", got)
+	now := mustTime("2026-06-25T17:00:00+08:00")
+	if !task.IsExpired(now) {
+		t.Fatal("should be expired: stored window ended long ago")
 	}
-	if task.IsExpired(now) {
-		t.Fatal("should be active within today's window")
-	}
-	// 窗口结束后到期。
 	after := mustTime("2026-06-25T18:30:00+08:00")
 	if !task.IsExpired(after) {
-		t.Fatal("should be expired after today's window end")
+		t.Fatal("should be expired after window end")
 	}
 }
 
-// 跨午夜循环任务：22:00–06:00，凌晨 03:00 应处于「前一天」开启的窗口内且活跃。
+// 跨午夜：起止戳直接表示绝对窗口（截止日在次日）。
 func TestRecurringOvernight(t *testing.T) {
-	start := mustTime("2026-06-01T22:00:00+08:00")
+	start := mustTime("2026-06-24T22:00:00+08:00")
+	end := mustTime("2026-06-25T06:00:00+08:00")
 	task := &Task{
-		ID: "r", Type: Scheduled, StartAt: &start,
-		EndAt:      mustTime("2026-06-01T06:00:00+08:00"), // 时分早于开始 → 跨午夜
+		ID: "r", Type: Scheduled,
+		StartTs: start.Unix(), EndTs: end.Unix(),
 		Recurrence: &Recurrence{Mode: RecurDaily},
 	}
-	now := mustTime("2026-06-25T03:00:00+08:00") // 24 日 22:00 → 25 日 06:00 窗口内，5/8=62.5%
+	now := mustTime("2026-06-25T03:00:00+08:00") // 5/8=62.5%
 	if got := task.Percent(now); got < 62.0 || got > 63.0 {
-		t.Fatalf("overnight recurring percent = %.2f, want ~62.5", got)
+		t.Fatalf("overnight percent = %.2f, want ~62.5", got)
 	}
 	if task.IsExpired(now) {
 		t.Fatal("should be active inside overnight window")
 	}
 }
 
-// 按星期循环：仅选中的星期为发生日。
+// 按星期循环：运行期仍用固定 startTs/endTs；weekly 仅在完成时 +7 天推进。
 func TestRecurringWeekly(t *testing.T) {
-	start := mustTime("2026-06-01T09:00:00+08:00") // 2026-06-25 为周四(weekday=4)
+	start := mustTime("2026-06-26T09:00:00+08:00") // 周五
+	end := mustTime("2026-06-26T18:00:00+08:00")
 	task := &Task{
-		ID: "r", Type: Scheduled, StartAt: &start,
-		EndAt:      mustTime("2026-06-01T18:00:00+08:00"),
-		Recurrence: &Recurrence{Mode: RecurWeekly, Weekdays: []int{1, 3, 5}}, // 周一/三/五
+		ID: "r", Type: Scheduled,
+		StartTs: start.Unix(), EndTs: end.Unix(),
+		Recurrence: &Recurrence{Mode: RecurWeekly, Weekdays: []int{1, 3, 5}},
 	}
-	thu := mustTime("2026-06-25T12:00:00+08:00") // 周四非发生日
-	if _, _, started := task.windowAt(thu); started {
-		// 周四非发生日：最近发生日为周三 24 日，其窗口 06-24 18:00 已结束 → 到期（keep 场景）。
-		if !task.IsExpired(thu) {
-			t.Fatal("thursday should fall outside an active window")
-		}
-	}
-	fri := mustTime("2026-06-26T12:00:00+08:00") // 周五发生日，09-18 的 3/9≈33.3%
+	fri := mustTime("2026-06-26T12:00:00+08:00") // 3/9≈33.3%
 	if got := task.Percent(fri); got < 33.0 || got > 33.6 {
 		t.Fatalf("friday percent = %.2f, want ~33.3", got)
 	}
 	if task.IsExpired(fri) {
-		t.Fatal("friday should be active")
+		t.Fatal("friday should be active within stored window")
+	}
+	thu := mustTime("2026-06-25T12:00:00+08:00")
+	if task.HasStarted(thu) {
+		t.Fatal("thursday before window should not have started")
+	}
+	if task.IsExpired(thu) {
+		t.Fatal("thursday before window should not be expired")
 	}
 }
 

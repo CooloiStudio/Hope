@@ -126,6 +126,9 @@ func Load() (*Store, error) {
 		var tf tasksFile
 		if json.Unmarshal(stripBOM(b), &tf) == nil {
 			s.Tasks = tf.Tasks
+			if s.migrateTasksToTimestamps() {
+				_ = s.saveTasksUnlocked()
+			}
 		}
 	}
 	return s, nil
@@ -278,6 +281,13 @@ func (s *Store) Snapshot() (Settings, []*task.Task) {
 // UpsertTask 新增或按 ID 更新任务。
 func (s *Store) UpsertTask(t *task.Task) {
 	s.mu.Lock()
+	defer func() {
+		s.mu.Unlock()
+		_ = s.SaveTasks()
+	}()
+	if err := t.PrepareForPersist(); err != nil {
+		return
+	}
 	for i, ex := range s.Tasks {
 		if ex.ID == t.ID {
 			merged := *t
@@ -285,14 +295,33 @@ func (s *Store) UpsertTask(t *task.Task) {
 				merged.CreatedAt = ex.CreatedAt
 			}
 			s.Tasks[i] = &merged
-			s.mu.Unlock()
-			_ = s.SaveTasks()
 			return
 		}
 	}
 	s.Tasks = append(s.Tasks, t)
-	s.mu.Unlock()
-	_ = s.SaveTasks()
+}
+
+// migrateTasksToTimestamps 将旧版 startAt/endAt 迁移为 startTs/endTs 并落盘。
+func (s *Store) migrateTasksToTimestamps() bool {
+	changed := false
+	for _, t := range s.Tasks {
+		beforeStart, beforeEnd := t.StartTs, t.EndTs
+		hadLegacy := t.StartAt != nil || !t.EndAt.IsZero()
+		t.EnsureTimestamps()
+		if t.StartTs != beforeStart || t.EndTs != beforeEnd || hadLegacy {
+			_ = t.PrepareForPersist()
+			changed = true
+		}
+	}
+	return changed
+}
+
+func (s *Store) saveTasksUnlocked() error {
+	b, err := json.MarshalIndent(tasksFile{Tasks: s.Tasks}, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(s.dir, "tasks.json"), b, 0o644)
 }
 
 // DeleteTask 按 ID 删除任务。

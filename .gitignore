@@ -132,3 +132,6 @@ $RECYCLE.BIN/
 *.local
 secrets/
 credentials.json
+
+# Cursor 本地配置
+.cursor

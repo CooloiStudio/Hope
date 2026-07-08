@@ -29,11 +29,11 @@ public partial class OverlayWindow : Window
     public const string PositionLeft = "left";
     public const string PositionRight = "right";
 
-    // 颜色轮换：整周期目标时长（多色时按颜色数均分步长）；单色呼吸用原色↔暗色（不用透明，避免透出下层非到期段）。
+    // 颜色轮换：整周期目标时长（多色时按颜色数均分步长）；单色呼吸用原色↔暗色，整周期 3s（不用透明，避免透出下层非到期段）。
     private const double BlinkCycleTargetSec = 4.0;
-    private const double BlinkStepMinSec = 0.55;
-    private const double BlinkStepMaxSec = 1.15;
-    private const double BlinkSingleBreatheStepSec = 0.85;
+    private const double BlinkStepMinSec = 1.0;
+    private const double BlinkStepMaxSec = 1.5;
+    private const double BlinkSingleBreatheStepSec = 1.5;
     // 全局相位锚点（App 启动时刻，跨所有 OverlayWindow 共享）：各边按同一墙钟相位轮换；
     // 当各边颜色序列相同时（四边环绕 / 全屏庆祝）即同步显示同一颜色。
     private static readonly DateTime BlinkAnchorUtc = DateTime.UtcNow;
@@ -226,13 +226,13 @@ public partial class OverlayWindow : Window
     // 用「颜色序列」驱动本边共享画刷的轮换呼吸：在 seq 各颜色间循环平滑过渡（正弦缓动），
     // 步长随颜色数调整，使整周期约 BlinkCycleTargetSec。序列未变则保持动画连续；变化才重建并按全局锚点 Seek 对齐相位，
     // 使颜色序列相同的各边（四边环绕 / 全屏庆祝）同步显示同一颜色。
-    private void UpdateBlinkBrush(List<Color> seq)
+    private void UpdateBlinkBrush(List<Color> seq, int expiredColorCount)
     {
         string sig = string.Join(",", seq.Select(c => c.ToString()));
         if (sig == _blinkSeqSig) return; // 序列未变 → 不重启，相位连续
         _blinkSeqSig = sig;
 
-        double stepSec = BlinkStepSeconds(seq.Count);
+        double stepSec = BlinkStepSeconds(expiredColorCount);
         double total = seq.Count * stepSec;
         var ease = new SineEase { EasingMode = EasingMode.EaseInOut };
         var anim = new ColorAnimationUsingKeyFrames
@@ -431,7 +431,7 @@ public partial class OverlayWindow : Window
         else
         {
             var seq = BuildBlinkColorSequence(blinkColors);
-            UpdateBlinkBrush(seq);
+            UpdateBlinkBrush(seq, blinkColors.Count);
         }
 
         BarCanvas.Children.Clear();
@@ -522,11 +522,11 @@ public partial class OverlayWindow : Window
         return expiredColors.ToList();
     }
 
-    private static double BlinkStepSeconds(int seqLength)
+    private static double BlinkStepSeconds(int expiredColorCount)
     {
-        if (seqLength <= 2)
+        if (expiredColorCount <= 1)
             return BlinkSingleBreatheStepSec;
-        return Math.Clamp(BlinkCycleTargetSec / seqLength, BlinkStepMinSec, BlinkStepMaxSec);
+        return Math.Clamp(BlinkCycleTargetSec / expiredColorCount, BlinkStepMinSec, BlinkStepMaxSec);
     }
 
     private static Color DimColor(Color c, double factor = 0.38) =>

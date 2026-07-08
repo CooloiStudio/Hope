@@ -31,7 +31,7 @@
 | 悬停展示任务名 + 倒计时 | ✅ | `OverlayWindow`：`endAt` 倒计时 Tooltip |
 | 跟随图片/动图 | ✅ | `Overlay/ImageSprite`：Bgra32 保留 alpha；>15px 等比缩放、GIF 播放 |
 | 截止后行为 `expiredBehaviors`（可叠加） | ✅ | 默认自动显示 + 叠加勾选 `blink`/`celebrate`/`notify`（已移除 `keep`/`hide` 与显示模式下拉）；全局默认 + 任务级覆盖（「使用全局默认」勾选框）；`blink` 为柔和 alpha 渐变持续到查看 |
-| 循环任务 `recurrence` | ✅ | 仅定时任务；每天 / 每 N 天 / 按星期；时分定义每日窗口、支持跨午夜；窗口结束套用到期提醒并在下次开始重置（详见 §7.2） |
+| 循环任务 `recurrence` | ✅ | 仅定时任务；每期由 `startTs`/`endTs` 定义绝对窗口；完成时累加 n×86400 生成下一期（详见 §7.2） |
 | Desktop → Headless 互拉 | ✅ | `HeadlessSupervisor`：检测进程缺失则拉起 |
 | Headless → Desktop 互拉 | ✅ | `main.go --desktop` 已实现；`HeadlessSupervisor` 拉起 Headless 时传入自身路径，双向互拉已接通 |
 | Desktop 单实例 | ✅ | `Global\HopeDesktop` Mutex |
@@ -325,22 +325,24 @@ go build -ldflags="-s -w -H=windowsgui" -o hope-headless.exe .
 4. **最大 percent pₙ 之后的 `[pₙ,100]` 完全透明**：不绘制任何底色、不可点击、悬停不交互。
 5. 视觉示例（a=30/b=60/c=90）：`[==a 0–30==][==b 30–60==][==c 60–90==][  透明 90–100  ]`。
 
-**单任务 percent（已确定）：**
+**单任务 percent（已确定，v0.14 时间戳模型）：**
 
-| 类型 | 有效开始 `startAt` | 公式 |
-|------|-------------------|------|
-| **定时任务** | 用户填写 | `percent = clamp((now - startAt) / (endAt - startAt) * 100, 0, 100)` |
-| **即时任务** | 创建时刻 `createdAt` | 同上，`startAt = createdAt` |
+| 类型 | 有效起止 | 公式（`nowTs` / `startTs` / `endTs` 均为 Unix 秒） |
+|------|----------|------------------------------------------------------|
+| **定时任务** | `startTs` + `endTs` | `nowTs < startTs` → 未开始；`startTs ≤ nowTs < endTs` → `percent = (nowTs-startTs)/(endTs-startTs)×100`；`nowTs ≥ endTs` → 已截止 |
+| **即时任务** | `startTs = createdAt`；`endTs` 用户填写 | 同上 |
 
 **客户端 → 服务端（命令，JSON）：**
 
 ```json
-{"action":"createTask","task":{"id":"uuid","name":"写文档","type":"scheduled","color":"#43A047","startAt":"2026-06-23T10:00:00+08:00","endAt":"2026-06-23T18:00:00+08:00"}}
+{"action":"createTask","task":{"id":"uuid","name":"写文档","type":"scheduled","color":"#43A047","startTs":1782189600,"endTs":1782218400}}
 ```
 
 ```json
-{"action":"createTask","task":{"id":"uuid","name":"买菜","type":"instant","color":"#E53935","endAt":"2026-06-23T20:00:00+08:00"}}
+{"action":"createTask","task":{"id":"uuid","name":"买菜","type":"instant","color":"#E53935","endTs":1782225600}}
 ```
+
+> **兼容**：旧版 `startAt`/`endAt`（RFC3339）仅在 `startTs`/`endTs` 缺失时读取；落盘时统一迁移为时间戳并移除旧字段。UI 展示层将时间戳格式化为本地日期时间。
 
 ```json
 {"action":"updateTask","task":{...}}
@@ -362,7 +364,7 @@ go build -ldflags="-s -w -H=windowsgui" -o hope-headless.exe .
 {"action":"deleteCompletedTasks"}
 ```
 
-> **任务状态（v0.8）**：`task.status` 为枚举（`active` 进行中 / `completed` 已完成，使用字符串便于后续扩展），空值兼容旧数据并回退到旧 `completed` 布尔字段。仅 **进行中** 任务参与渲染；`completeTask` 仅在用户手动点击「完成」时将任务置为 `completed`。若被完成的任务为 **循环任务**，则先复制其全部参数生成一份新副本（全新 `id`、起止时间推进到下一发生窗口、状态 `active`）再把原任务标记为 `completed`。`deleteCompletedTasks` 一键删除全部已完成任务。
+> **任务状态（v0.8）**：`task.status` 为枚举（`active` 进行中 / `completed` 已完成，使用字符串便于后续扩展），空值兼容旧数据并回退到旧 `completed` 布尔字段。仅 **进行中** 任务参与渲染；`completeTask` 仅在用户手动点击「完成」时将任务置为 `completed`。若被完成的任务为 **循环任务**，则先复制其全部参数生成一份新副本（全新 `id`、起止时间戳整体累加 `n×86400`、状态 `active`）再把原任务标记为 `completed`。`deleteCompletedTasks` 一键删除全部已完成任务。
 
 ```json
 {"action":"updateSettings","settings":{"barHeightPx":4,"imageMaxHeightPx":15,"expiredBehaviors":["blink","notify"]}}
@@ -858,15 +860,17 @@ Hope/
 
 | 类型 | 字段 | percent |
 |------|------|---------|
-| **定时任务** `scheduled` | `startAt` + `endAt` + `color` | `(now - startAt) / (endAt - startAt) * 100`，clamp 0–100 |
-| **即时任务** `instant` | `endAt` + `color`；`startAt` 取 `createdAt` | 同上 |
+| **定时任务** `scheduled` | `startTs` + `endTs` + `color` | 见上表（纯 Unix 秒比较与四则运算） |
+| **即时任务** `instant` | `endTs` + `color`；`startTs` 取 `createdAt` | 同上 |
 
-**时间语义（已确定）：**
+**时间语义（已确定，v0.14 时间戳模型）：**
 
+- 业务逻辑 **一律使用 Unix 秒时间戳**（`startTs` / `endTs` / `nowTs`），不做日历日拆解或「拼回今天」
+- 校验：`startTs ≤ endTs` 且 `endTs > startTs`（正时长）；跨午夜任务在创建时直接将截止存为次日时刻（如 22:00→次日 06:00）
 - 进度 **一律墙钟实时计算**，不累加有效工作时间
-- **休眠不改变公式**：休眠期间时间轴照常推进，唤醒后与未休眠使用同一 `now`
-- **全局暂停不冻结墙钟**：暂停期间 Headless 仍按 `time.Now()` 维护各任务 `percent`；仅隐藏顶栏（`visible=false`）。恢复后顶栏立刻显示暂停期间已推进的进度
-- 例：08:00–18:00 任务，17:00 打开电脑 → 该任务 `percent = 90%`
+- **休眠不改变公式**：休眠期间时间轴照常推进，唤醒后与未休眠使用同一 `nowTs`
+- **全局暂停不冻结墙钟**：暂停期间 Headless 仍按 `time.Now().Unix()` 维护各任务 `percent`；仅隐藏顶栏（`visible=false`）
+- 展示层（列表日期列、表单日期选择器）仅负责时间戳 ↔ 本地日期时间格式化
 
 **截止后行为（已确定）：** ✅ 逻辑与配置 UI 均已实现（v0.8 改造为「默认自动显示 + 可叠加勾选」）
 
@@ -882,17 +886,17 @@ Hope/
   - 任务级覆盖能力仍保留于数据模型与后端（`task.expiredBehaviors` 非空即覆盖全局）；编辑既有任务时表单原样保留其覆盖值、保存不清空，仅不提供编辑入口。
 - 默认值：全局 `expiredBehaviors = []`。`updateSettings` 携带完整用户意图，**允许把该集合显式清空** 并持久化（旧的「非空才覆盖」合并仅用于加载兜底）。
 
-**循环任务（已确定，v0.6）：** ✅ 仅 **定时任务** 可设循环；存于 `task.recurrence`（`nil` = 单次）
+**循环任务（已确定，v0.14 时间戳模型）：** ✅ 仅 **定时任务** 可设循环；存于 `task.recurrence`（`nil` = 单次）
 
 - 循环模式（`recurrence.mode`，四选一）：
   - `""` 不循环 — 单次任务（默认）。
-  - `daily` 每天 — 每个自然日均为发生日。
-  - `everyN` 间隔若干天循环 — `interval` 为 **2~800（含端点）的整数**（UI 输入框校验），自 **开始日期（锚点）** 起每隔 N 天一次。
-  - `weekly` 按星期 — `weekdays[]` 多选（`0`=周日 … `6`=周六），命中即为发生日；UI 分两行展示（周一~周五 / 周六、周日）。
-- **时间窗语义**：循环任务里，`startAt` / `endAt` 的 **时分** 定义每个发生日的窗口 `[当日开始时分, 截止时分]`；`startAt` 的 **日期** 仅作锚点 / 生效起始日（早于锚点不发生）。
-- **跨午夜**：当截止时分 ≤ 开始时分时，窗口顺延至 **次日** 截止（如 `22:00–06:00`）。
-- **进度与到期**：`percent` 在「与当前时刻相关的最近一次发生窗口」内按墙钟实时计算；窗口结束即视为到期，**套用该任务的到期提醒**（`keep`/`blink`/`hide`/`notify`）；到 **下一次发生窗口开始** 时自动重置为进行中（引擎在任务回到活跃态时清除一次性 `notify` 标记，使每次发生都能重新提醒）。
-- 计算入口：Go `task.windowAt(now)` 统一返回相关窗口；`Percent` / `IsExpired` / `EffectiveEnd` / `BuildLayout` 均基于它（非循环任务恒返回固定 `[start, end]`）。配置窗预览以同构 C# 逻辑镜像。
+  - `daily` 每天 — 完成时 `startTs`/`endTs` 各 **+1×86400**。
+  - `everyN` 间隔若干天 — `interval` 为 **2~800（含端点）的整数**（UI 校验）；完成时各 **+interval×86400**。
+  - `weekly` 按星期 — `weekdays[]` 多选（`0`=周日 … `6`=周六），UI 分两行展示；完成时各 **+7×86400**（`weekdays` 仍用于 UI 标注，运行期不自动按星期重算窗口）。
+- **时间窗语义**：每一期任务由存储的 **`startTs` / `endTs` 绝对时间戳** 定义唯一窗口；过期后 **保持已截止**，不自动进入「第二天」新窗。
+- **跨午夜**：创建任务时截止直接存为次日时刻（`endTs > startTs`），运行期无需特殊分支。
+- **进度与到期**：`nowTs` 与 `startTs`/`endTs` 比较；窗口结束即到期并套用到期提醒；**仅用户点「完成」** 才生成下一期（起止戳累加）。
+- 计算入口：Go `task.effectiveStartTs()` / `effectiveEndTs()` + Unix 比较；`Percent` / `IsExpired` / `BuildLayout` 均基于此。Desktop 列表/托盘以同构 C# `TaskSchedule` 镜像（只读展示）。
 
 **无任务时（已确定）：** 不创建 / 不显示顶栏窗口（`visible = false`）
 
@@ -1072,7 +1076,7 @@ Hope/
 ## 11. 开放问题
 
 1. Desktop 与 Overlay 同进程？**已决：是（`hope-desktop.exe`）** ✅
-2. 开始时间？**已决：定时任务必填；即时任务 `startAt = createdAt`** ✅
+2. 开始时间？**已决：定时任务必填 `startTs`；即时任务 `startTs = createdAt`** ✅
 3. 配置文件是否允许用户手动编辑？__________（当前可直接改 `%APPDATA%\Hope\*.json`）
 4. 是否需要 `hope-headless.exe --debug` 打开控制台？**已决：是** ✅ 已实现
 5. 插件是否考虑上架 Microsoft Store？__________

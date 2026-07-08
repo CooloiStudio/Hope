@@ -59,6 +59,9 @@ public sealed class TaskDto
     [JsonPropertyName("color")] public string Color { get; set; } = "#FF6B35";
     [JsonPropertyName("gif")] public string? Gif { get; set; }
     [JsonPropertyName("imageMaxSize")] public int ImageMaxSize { get; set; }
+    [JsonPropertyName("startTs")] public long StartTs { get; set; }
+    [JsonPropertyName("endTs")] public long EndTs { get; set; }
+    // 旧版 RFC3339 字段：仅当 startTs/endTs 缺失时读取。
     [JsonPropertyName("startAt")] public DateTimeOffset? StartAt { get; set; }
     [JsonPropertyName("endAt")] public DateTimeOffset EndAt { get; set; }
     [JsonPropertyName("createdAt")] public DateTimeOffset? CreatedAt { get; set; }

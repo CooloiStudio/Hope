@@ -29,7 +29,7 @@ public sealed class SessionStateTests
     public void ApplyTasks_IncrementsRevision()
     {
         var session = new SessionState();
-        session.ApplyTasks(new List<TaskDto> { new() { Id = "a", Name = "t", EndAt = DateTimeOffset.Now } });
+        session.ApplyTasks(new List<TaskDto> { new() { Id = "a", Name = "t", EndTs = DateTimeOffset.Now.ToUnixTimeSeconds() } });
 
         Assert.True(session.TasksHydrated);
         Assert.Equal(1, session.TasksRevision);

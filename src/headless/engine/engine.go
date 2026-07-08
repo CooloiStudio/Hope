@@ -557,8 +557,7 @@ func (e *Engine) HandleCommand(cmd ipc.Command) any {
 						break
 					}
 					now := time.Now()
-					// 循环任务：先生成下一期副本（复制全部参数，起止时间推进到下一发生窗口），
-					// 副本为「进行中」且拥有全新 ID；随后将当前任务标记为已完成。
+					// 循环任务：复制并累加 n×86400 到起止戳，生成下一期副本。
 					if t.IsRecurring() {
 						next := t.Clone()
 						if next.AdvanceIfRecurring(now) {
