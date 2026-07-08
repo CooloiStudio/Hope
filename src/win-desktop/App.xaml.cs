@@ -26,13 +26,18 @@ public partial class App : Application
     private readonly Dictionary<string, OverlayWindow> _overlays = new();
     private string _currentBarPosition = OverlayWindow.PositionTop;
     private string _currentBarDirection = "forward";
-    private bool _allFour;    private HeadlessSupervisor _supervisor = null!;
+    private bool _allFour;
+    private bool _advancedPosition;
+    private Dictionary<string, string> _barDirections = DefaultBarDirections();
+    private HeadlessSupervisor _supervisor = null!;
     private NotifyIcon? _tray;
     private ConfigWindow? _config;
     /// <summary>已弹过到期通知的 taskId 集合；任务不再 expired 时清除，允许下个周期再次通知。</summary>
     private readonly HashSet<string> _notifiedTaskIds = new();
     /// <summary>当前任务列表快照，供托盘 tooltip 展示（含未开始任务）。</summary>
     private List<TaskDto> _tasks = new();
+    /// <summary>最近一次从 Headless 读到的全局设置，供设置窗打开时即时填充。</summary>
+    private SettingsDto? _lastSettings;
 
     private System.Threading.Mutex? _instanceMutex;
     private int _barHeightPx = 4;
@@ -178,6 +183,7 @@ public partial class App : Application
             }
 
             _tasks = tasks;
+            _config?.ApplyTasksSnapshot(_tasks);
             UpdateTrayTooltipFromTasks();
         }, DispatcherPriority.Background);
     }
@@ -279,10 +285,13 @@ public partial class App : Application
         DesktopLog.Info($"App.OnSettingsReceived barHeightPx={s.BarHeightPx} showConfigAtRuntime={s.ShowConfigAtRuntime} barPosition={s.BarPosition} barDirection={s.BarDirection}");
         Dispatcher.BeginInvoke(() =>
         {
+            _lastSettings = s;
             _barHeightPx = Math.Clamp(s.BarHeightPx, 1, 10);
             _currentBarPosition = string.IsNullOrWhiteSpace(s.BarPosition) ? OverlayWindow.PositionTop : s.BarPosition;
-            _currentBarDirection = s.BarDirection ?? "";
+            _currentBarDirection = string.IsNullOrWhiteSpace(s.BarDirection) ? "forward" : s.BarDirection;
             _allFour = s.AllFour;
+            _advancedPosition = s.AdvancedPosition;
+            _barDirections = NormalizeBarDirections(s.BarDirections);
             if (_updates != null) _updates.AutoUpdateEnabled = s.AutoUpdate;
 
             // 遥测开关：用户取消勾选后关闭上报，不再发送任何事件。
@@ -310,6 +319,7 @@ public partial class App : Application
             }
 
             EnsureOverlays();
+            _config?.ApplySettingsSnapshot(s);
             if (!_startupConfigHandled)
             {
                 _startupConfigHandled = true;
@@ -411,8 +421,10 @@ public partial class App : Application
         {
             var all = msg.Segments ?? new List<Segment>();
             bool celebrate = IsCelebrateActive(all);
-            bool wantAllFour = _allFour || celebrate;
-            EnsureOverlays(wantAllFour);
+            if (_allFour || celebrate)
+                EnsureOverlays(forceAllFour: true);
+            else if (!_advancedPosition)
+                EnsureOverlays();
             DispatchState(msg, celebrate);
             UpdateTrayTooltipFromTasks();
 
@@ -431,16 +443,27 @@ public partial class App : Application
         segments.Any(s => s.Expired && s.Behaviors != null && s.Behaviors.Contains("celebrate"));
 
     /// <summary>根据当前全局设置确保创建或销毁对应 OverlayWindow。</summary>
-    private void EnsureOverlays(bool? forceAllFour = null)
+    private void EnsureOverlays(IEnumerable<string>? activePositions = null, bool forceAllFour = false)
     {
-        bool allFour = forceAllFour ?? _allFour;
         var wanted = new HashSet<string>();
-        if (allFour)
+        if (_allFour || forceAllFour)
         {
             wanted.Add(OverlayWindow.PositionTop);
             wanted.Add(OverlayWindow.PositionRight);
             wanted.Add(OverlayWindow.PositionBottom);
             wanted.Add(OverlayWindow.PositionLeft);
+        }
+        else if (_advancedPosition)
+        {
+            wanted.Add(_currentBarPosition);
+            if (activePositions != null)
+            {
+                foreach (var p in activePositions)
+                {
+                    if (!string.IsNullOrWhiteSpace(p))
+                        wanted.Add(p);
+                }
+            }
         }
         else
         {
@@ -483,12 +506,43 @@ public partial class App : Application
     private string LocalDirectionFor(string position)
     {
         if (_allFour) return "forward"; // 四边环绕时方向已编码到 Segment 中
-        return _currentBarDirection;
+        if (_advancedPosition)
+            return _barDirections.TryGetValue(position, out var d) && !string.IsNullOrWhiteSpace(d) ? d : "forward";
+        if (position == _currentBarPosition && !string.IsNullOrWhiteSpace(_currentBarDirection))
+            return _currentBarDirection;
+        return "forward";
+    }
+
+    private static Dictionary<string, string> DefaultBarDirections() => new()
+    {
+        ["top"] = "forward",
+        ["bottom"] = "forward",
+        ["left"] = "forward",
+        ["right"] = "forward",
+    };
+
+    private static Dictionary<string, string> NormalizeBarDirections(Dictionary<string, string>? loaded)
+    {
+        var dirs = DefaultBarDirections();
+        if (loaded == null) return dirs;
+        foreach (var (key, value) in loaded)
+        {
+            if (value is "forward" or "reverse")
+                dirs[key] = value;
+        }
+        return dirs;
     }
 
     private void DispatchState(StateMessage msg, bool celebrate)
     {
         var all = celebrate && !_allFour ? ExpandForCelebrate(msg.Segments ?? new List<Segment>()) : (msg.Segments ?? new List<Segment>());
+        if (_advancedPosition && !_allFour && !celebrate)
+        {
+            var positions = all
+                .Select(s => string.IsNullOrWhiteSpace(s.Position) ? _currentBarPosition : s.Position)
+                .Distinct();
+            EnsureOverlays(positions);
+        }
         var groups = all.GroupBy(s => string.IsNullOrWhiteSpace(s.Position) ? _currentBarPosition : s.Position)
                         .ToDictionary(g => g.Key, g => g.ToList());
 
@@ -638,6 +692,8 @@ public partial class App : Application
             {
                 DesktopLog.Info("ShowConfigCore: creating ConfigWindow");
                 _config = new ConfigWindow(_ipc, _updates);
+                if (_lastSettings != null) _config.ApplySettingsSnapshot(_lastSettings);
+                if (_tasks.Count > 0) _config.ApplyTasksSnapshot(_tasks);
             }
 
             if (_config == null)
@@ -664,6 +720,8 @@ public partial class App : Application
                 _config.WindowState = WindowState.Normal;
                 _config.Activate();
                 _config.EnsureFluentBackdrop();
+                if (_lastSettings != null) _config.ApplySettingsSnapshot(_lastSettings);
+                if (_tasks.Count > 0) _config.ApplyTasksSnapshot(_tasks);
                 _config.RequestRefresh();
                 _config.FitHeightToTaskEditor();
                 DesktopLog.Info($"ShowConfigCore: done IsVisible={_config.IsVisible} IsActive={_config.IsActive}");

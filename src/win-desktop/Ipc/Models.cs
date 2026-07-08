@@ -92,9 +92,11 @@ public sealed class SettingsDto
     [JsonPropertyName("monitor")] public string Monitor { get; set; } = "primary";
     [JsonPropertyName("autostart")] public bool Autostart { get; set; }
     [JsonPropertyName("showConfigAtRuntime")] public bool ShowConfigAtRuntime { get; set; }
+    [JsonPropertyName("showAdvancedSettings")] public bool ShowAdvancedSettings { get; set; }
     [JsonPropertyName("language")] public string Language { get; set; } = "zh-CN";
     [JsonPropertyName("barPosition")] public string BarPosition { get; set; } = "top";
     [JsonPropertyName("barDirection")] public string BarDirection { get; set; } = "forward";
+    [JsonPropertyName("barDirections")] public Dictionary<string, string>? BarDirections { get; set; }
     [JsonPropertyName("advancedPosition")] public bool AdvancedPosition { get; set; }
     [JsonPropertyName("allFour")] public bool AllFour { get; set; }
     // 是否自动下载更新（默认开）；关闭后仅检测并提示，不自动下载。

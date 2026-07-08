@@ -33,6 +33,15 @@
         <Style x:Key="QuickFillLabel" TargetType="{x:Type TextBlock}" BasedOn="{StaticResource FieldLabel}">
             <Setter Property="Foreground" Value="{DynamicResource TextFillColorSecondaryBrush}" />
         </Style>
+        <!-- 全局设置区字段标签：较宽以容纳进度条等设置项标题 -->
+        <Style x:Key="SettingsFieldLabel" TargetType="{x:Type TextBlock}" BasedOn="{StaticResource FieldLabel}">
+            <Setter Property="Width" Value="96" />
+        </Style>
+        <Style x:Key="SettingsUnitLabel" TargetType="{x:Type TextBlock}">
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="Margin" Value="2,0,0,0" />
+            <Setter Property="Foreground" Value="{DynamicResource TextFillColorSecondaryBrush}" />
+        </Style>
         <!-- 任务编辑区分割线：随 Fluent 主题切换，2px 控制描边色（显眼且与背景对比） -->
         <Style x:Key="TaskEditSeparator" TargetType="{x:Type Separator}">
             <Setter Property="Margin" Value="0,14,0,14" />
@@ -177,21 +186,21 @@
                         <DataGridTextColumn Header="名称" Binding="{Binding Name}" Width="*" />
                         <DataGridTextColumn Header="类型" Binding="{Binding TypeLabel}" Width="60" />
                         <DataGridTextColumn Header="循环" Binding="{Binding RecurLabel}" Width="72" />
-                        <DataGridTemplateColumn Header="开始" Width="130" MinWidth="130">
+                        <DataGridTemplateColumn Header="开始" Width="104" MinWidth="104">
                             <DataGridTemplateColumn.CellTemplate>
                                 <DataTemplate>
                                     <controls:AlternatingDateText Value="{Binding StartDisplayAt}" />
                                 </DataTemplate>
                             </DataGridTemplateColumn.CellTemplate>
                         </DataGridTemplateColumn>
-                        <DataGridTemplateColumn Header="截止" Width="130" MinWidth="130">
+                        <DataGridTemplateColumn Header="截止" Width="104" MinWidth="104">
                             <DataGridTemplateColumn.CellTemplate>
                                 <DataTemplate>
                                     <controls:AlternatingDateText Value="{Binding EndDisplayAt}" />
                                 </DataTemplate>
                             </DataGridTemplateColumn.CellTemplate>
                         </DataGridTemplateColumn>
-                        <DataGridTextColumn Header="进度" Binding="{Binding ProgressLabel}" Width="64" MinWidth="64" />
+                        <DataGridTextColumn Header="进度" Binding="{Binding ProgressLabel}" Width="69" MinWidth="69" />
                         <DataGridTemplateColumn Header="操作" Width="72" MinWidth="72">
                             <DataGridTemplateColumn.CellTemplate>
                                 <DataTemplate>
@@ -234,51 +243,62 @@
                                            FontSize="12" />
                             </Grid>
 
-                            <TextBlock Text="粗细（px）" Margin="0,6,0,2" />
-                            <DockPanel LastChildFill="True">
+                            <DockPanel Margin="0,6,0,0">
+                                <TextBlock Style="{StaticResource SettingsFieldLabel}" Text="粗细" />
+                                <TextBlock Style="{StaticResource SettingsUnitLabel}" DockPanel.Dock="Right" Text="px" />
                                 <TextBlock x:Name="BarHeightValueText" DockPanel.Dock="Right"
-                                           Width="20" TextAlignment="Center" VerticalAlignment="Center"
-                                           Margin="8,0,0,0" Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
+                                           Width="20" TextAlignment="Right" VerticalAlignment="Center"
+                                           Margin="8,0,4,0" Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
                                 <Slider x:Name="BarHeightBox" Minimum="1" Maximum="10" TickFrequency="1"
                                         IsSnapToTickEnabled="True" VerticalAlignment="Center" />
                             </DockPanel>
 
-                            <TextBlock Text="图片最大高度（px）" Margin="0,12,0,2" />
-                            <DockPanel LastChildFill="True">
+                            <DockPanel Margin="0,8,0,0">
+                                <TextBlock Style="{StaticResource SettingsFieldLabel}" Text="图片最大高度" />
+                                <TextBlock Style="{StaticResource SettingsUnitLabel}" DockPanel.Dock="Right" Text="px" />
                                 <TextBlock x:Name="ImageMaxHeightValueText" DockPanel.Dock="Right"
-                                           Width="24" TextAlignment="Center" VerticalAlignment="Center"
-                                           Margin="8,0,0,0" Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
+                                           Width="20" TextAlignment="Right" VerticalAlignment="Center"
+                                           Margin="8,0,4,0" Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
                                 <Slider x:Name="ImageMaxHeightBox" Minimum="15" Maximum="30" TickFrequency="1"
                                         IsSnapToTickEnabled="True" VerticalAlignment="Center"
                                         ToolTip="所有任务图片统一的最大高度，超出按比例缩放" />
                             </DockPanel>
 
-                            <TextBlock Text="起始位置" Margin="0,12,0,2" />
-                            <ComboBox x:Name="BarPositionBox" HorizontalAlignment="Stretch"
-                                      SelectionChanged="OnBarPositionChanged"
-                                      ToolTip="进度条在屏幕上的位置">
-                                <ComboBoxItem Content="屏幕顶边" Tag="top" IsSelected="True" />
-                                <ComboBoxItem Content="屏幕底边" Tag="bottom" />
-                                <ComboBoxItem Content="屏幕左边" Tag="left" />
-                                <ComboBoxItem Content="屏幕右边" Tag="right" />
-                            </ComboBox>
-
-                            <CheckBox x:Name="ShowAdvancedSettingsCheck" Content="显示高级设置"
-                                      Margin="0,12,0,0"
-                                      Checked="OnShowAdvancedSettingsChanged" Unchecked="OnShowAdvancedSettingsChanged"
-                                      ToolTip="勾选后展开高级选项" />
-
-                            <StackPanel x:Name="AdvancedOptionsPanel" Margin="0,4,0,0" Visibility="Collapsed">
-                                <TextBlock Text="前进方向" Margin="0,6,0,2" />
-                                <ComboBox x:Name="BarDirectionBox" HorizontalAlignment="Stretch"
-                                          SelectionChanged="OnBarDirectionChanged"
-                                          ToolTip="根据位置自动选择默认方向；可手动覆盖">
-                                    <ComboBoxItem Content="默认" Tag="" IsSelected="True" />
-                                    <ComboBoxItem Content="从左到右" Tag="forward" />
-                                    <ComboBoxItem Content="从右到左" Tag="reverse" />
-                                    <ComboBoxItem Content="从上到下" Tag="forward" />
-                                    <ComboBoxItem Content="从下到上" Tag="reverse" />
+                            <DockPanel Margin="0,8,0,0">
+                                <TextBlock Style="{StaticResource SettingsFieldLabel}" Text="起始位置" />
+                                <ComboBox x:Name="BarPositionBox" HorizontalAlignment="Stretch"
+                                          SelectionChanged="OnBarPositionChanged"
+                                          ToolTip="进度条在屏幕上的位置">
+                                    <ComboBoxItem Content="屏幕顶边" Tag="top" IsSelected="True" />
+                                    <ComboBoxItem Content="屏幕底边" Tag="bottom" />
+                                    <ComboBoxItem Content="屏幕左边" Tag="left" />
+                                    <ComboBoxItem Content="屏幕右边" Tag="right" />
                                 </ComboBox>
+                            </DockPanel>
+
+                            <DockPanel x:Name="SingleDirectionPanel" Margin="0,8,0,0">
+                                <TextBlock Style="{StaticResource SettingsFieldLabel}" Text="起始前进方向" />
+                                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                    <RadioButton x:Name="BarForwardRadio" GroupName="BarDirection" Content="→"
+                                                 Tag="forward" IsChecked="True" Margin="0,0,16,0"
+                                                 ToolTip="从左到右 / 从上到下" />
+                                    <RadioButton x:Name="BarReverseRadio" GroupName="BarDirection" Content="←"
+                                                 Tag="reverse"
+                                                 ToolTip="从右到左 / 从下到上" />
+                                </StackPanel>
+                            </DockPanel>
+
+                            <StackPanel x:Name="BarAdvancedOptionsPanel" Margin="0,12,0,0" Visibility="Collapsed">
+                                <DockPanel>
+                                    <TextBlock Style="{StaticResource SettingsFieldLabel}" Text="刷新频率" />
+                                    <TextBlock Style="{StaticResource SettingsUnitLabel}" DockPanel.Dock="Right" Text="秒/次" />
+                                    <TextBlock x:Name="RefreshValueText" DockPanel.Dock="Right"
+                                               Width="20" TextAlignment="Right" VerticalAlignment="Center"
+                                               Margin="8,0,4,0" Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
+                                    <Slider x:Name="RefreshBox" Minimum="1" Maximum="10" TickFrequency="1"
+                                            IsSnapToTickEnabled="True" VerticalAlignment="Center"
+                                            ToolTip="进度条更新频率（秒/次）" />
+                                </DockPanel>
 
                                 <CheckBox x:Name="AllFourCheck" Content="我全都要（四边环绕）"
                                           Margin="0,12,0,0"
@@ -287,17 +307,111 @@
 
                                 <CheckBox x:Name="AdvancedPositionCheck" Content="允许为单个任务指定展示位置"
                                           Margin="0,12,0,0"
-                                          ToolTip="开启后，任务编辑中会出现「展示位置」选项" />
+                                          ToolTip="开启后，任务编辑中可为每个任务指定屏幕边缘；各边前进方向由下方设置决定" />
 
-                                <TextBlock Text="刷新间隔（秒，进度条更新频率）" Margin="0,12,0,2" />
-                                <DockPanel LastChildFill="True">
-                                    <TextBlock x:Name="RefreshValueText" DockPanel.Dock="Right"
-                                               Width="20" TextAlignment="Center" VerticalAlignment="Center"
-                                               Margin="8,0,0,0" Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
-                                    <Slider x:Name="RefreshBox" Minimum="1" Maximum="10" TickFrequency="1"
-                                            IsSnapToTickEnabled="True" VerticalAlignment="Center" />
-                                </DockPanel>
+                                <StackPanel x:Name="PerEdgeDirectionPanel" Margin="0,12,0,0" Visibility="Collapsed">
+                                    <Grid Margin="0,0,0,8">
+                                        <Border Height="1" VerticalAlignment="Center"
+                                                Background="{DynamicResource ControlStrokeColorDefaultBrush}" />
+                                        <TextBlock Text="屏幕各边缘进度条前进方向设置" HorizontalAlignment="Center"
+                                                   Background="{DynamicResource ApplicationBackgroundBrush}"
+                                                   Padding="8,0" Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                                                   FontSize="12" />
+                                    </Grid>
+
+                                    <Grid Margin="0,4,0,0">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="Auto" />
+                                        </Grid.RowDefinitions>
+
+                                        <StackPanel Grid.Row="0" Grid.Column="0" Orientation="Horizontal"
+                                                    VerticalAlignment="Center" Margin="0,0,8,8">
+                                            <TextBlock Width="56" TextAlignment="Right" VerticalAlignment="Center"
+                                                       Margin="0,0,8,0" Text="屏幕顶边" />
+                                            <Grid VerticalAlignment="Center">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="Auto" />
+                                                    <ColumnDefinition Width="20" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                </Grid.ColumnDefinitions>
+                                                <RadioButton Grid.Column="0" x:Name="TopForwardRadio" GroupName="TopDirection" Content="→"
+                                                             Tag="forward" IsChecked="True" VerticalAlignment="Center"
+                                                             MinWidth="0" ToolTip="从左到右" />
+                                                <RadioButton Grid.Column="2" x:Name="TopReverseRadio" GroupName="TopDirection" Content="←"
+                                                             Tag="reverse" VerticalAlignment="Center"
+                                                             MinWidth="0" ToolTip="从右到左" />
+                                            </Grid>
+                                        </StackPanel>
+
+                                        <StackPanel Grid.Row="0" Grid.Column="1" Orientation="Horizontal"
+                                                    VerticalAlignment="Center" Margin="0,0,0,8">
+                                            <TextBlock Width="56" TextAlignment="Right" VerticalAlignment="Center"
+                                                       Margin="0,0,8,0" Text="屏幕底边" />
+                                            <Grid VerticalAlignment="Center">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="Auto" />
+                                                    <ColumnDefinition Width="20" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                </Grid.ColumnDefinitions>
+                                                <RadioButton Grid.Column="0" x:Name="BottomForwardRadio" GroupName="BottomDirection" Content="→"
+                                                             Tag="forward" IsChecked="True" VerticalAlignment="Center"
+                                                             MinWidth="0" ToolTip="从左到右" />
+                                                <RadioButton Grid.Column="2" x:Name="BottomReverseRadio" GroupName="BottomDirection" Content="←"
+                                                             Tag="reverse" VerticalAlignment="Center"
+                                                             MinWidth="0" ToolTip="从右到左" />
+                                            </Grid>
+                                        </StackPanel>
+
+                                        <StackPanel Grid.Row="1" Grid.Column="0" Orientation="Horizontal"
+                                                    VerticalAlignment="Center" Margin="0,0,8,0">
+                                            <TextBlock Width="56" TextAlignment="Right" VerticalAlignment="Center"
+                                                       Margin="0,0,8,0" Text="屏幕左边" />
+                                            <Grid VerticalAlignment="Center">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="Auto" />
+                                                    <ColumnDefinition Width="20" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                </Grid.ColumnDefinitions>
+                                                <RadioButton Grid.Column="0" x:Name="LeftForwardRadio" GroupName="LeftDirection" Content="↓"
+                                                             Tag="forward" IsChecked="True" VerticalAlignment="Center"
+                                                             MinWidth="0" ToolTip="从上到下" />
+                                                <RadioButton Grid.Column="2" x:Name="LeftReverseRadio" GroupName="LeftDirection" Content="↑"
+                                                             Tag="reverse" VerticalAlignment="Center"
+                                                             MinWidth="0" ToolTip="从下到上" />
+                                            </Grid>
+                                        </StackPanel>
+
+                                        <StackPanel Grid.Row="1" Grid.Column="1" Orientation="Horizontal"
+                                                    VerticalAlignment="Center">
+                                            <TextBlock Width="56" TextAlignment="Right" VerticalAlignment="Center"
+                                                       Margin="0,0,8,0" Text="屏幕右边" />
+                                            <Grid VerticalAlignment="Center">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="Auto" />
+                                                    <ColumnDefinition Width="20" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                </Grid.ColumnDefinitions>
+                                                <RadioButton Grid.Column="0" x:Name="RightForwardRadio" GroupName="RightDirection" Content="↓"
+                                                             Tag="forward" IsChecked="True" VerticalAlignment="Center"
+                                                             MinWidth="0" ToolTip="从上到下" />
+                                                <RadioButton Grid.Column="2" x:Name="RightReverseRadio" GroupName="RightDirection" Content="↑"
+                                                             Tag="reverse" VerticalAlignment="Center"
+                                                             MinWidth="0" ToolTip="从下到上" />
+                                            </Grid>
+                                        </StackPanel>
+                                    </Grid>
+                                </StackPanel>
                             </StackPanel>
+
+                            <ui:Button x:Name="ToggleAdvancedOptionsButton" Content="显示高级选项"
+                                         HorizontalAlignment="Stretch" Height="32" Margin="0,12,0,0"
+                                         Click="OnToggleAdvancedOptionsClick"
+                                         ToolTip="展开或收起进度条高级选项" />
 
                             <Grid Margin="0,6,0,8">
                                 <Border Height="1" VerticalAlignment="Center" Background="{DynamicResource ControlStrokeColorDefaultBrush}" />
@@ -307,9 +421,12 @@
                                            FontSize="12" />
                             </Grid>
 
+                            <CheckBox x:Name="GlobalNotifyCheck" Content="系统通知"
+                                      Margin="0,12,0,0"
+                                      ToolTip="到期时弹出一次系统气球通知" />
+
                             <TextBlock Text="到期提醒效果" Margin="0,12,0,2"
                                        TextWrapping="Wrap" />
-                            <!-- 呼吸提醒 / 全屏庆祝 互斥（含「无」复位项）；系统通知可独立叠加。左边距统一为 0 以对齐 -->
                             <RadioButton x:Name="GlobalReminderNoneRadio" GroupName="GlobalReminder" Content="无"
                                          Margin="11,2,0,0"
                                          ToolTip="到期后仅保持满色显示，无额外动效" />
@@ -323,9 +440,6 @@
                                 <TextBlock VerticalAlignment="Center"
                                            Visibility="{Binding IsChecked, ElementName=GlobalCelebrateRadio, Converter={StaticResource BoolToVisibilityConverter}}"><Run Text="⚠️" /><Run Text="光敏性癫痫警告" Foreground="Red" /><Run Text="⚠️" /></TextBlock>
                             </StackPanel>
-                            <CheckBox x:Name="GlobalNotifyCheck" Content="系统通知"
-                                      Margin="0,2,0,0"
-                                      ToolTip="到期时弹出一次系统气球通知" />
 
                             <Grid Margin="0,6,0,8">
                                 <Border Height="1" VerticalAlignment="Center" Background="{DynamicResource ControlStrokeColorDefaultBrush}" />
@@ -346,10 +460,6 @@
 
                             <CheckBox x:Name="AllowTelemetryCheck" Content="允许发送软件活跃信息" Margin="0,12,0,0"
                                       ToolTip="开启后会匿名上报启动/每日活跃与更新结果，仅用于了解装机量、活跃与更新成功率，不含任何可识别个人信息；取消勾选后不发送任何信息" />
-
-                            <ui:Button x:Name="ResetWindowHeightButton" Content="重置窗口高度"
-                                       HorizontalAlignment="Stretch" Height="32" Margin="0,12,0,0"
-                                       Click="OnResetWindowHeight" />
 
                             <TextBlock x:Name="SettingsStatus" Foreground="{DynamicResource TextFillColorSecondaryBrush}"
                                        Margin="0,10,0,4" TextWrapping="Wrap" />
@@ -388,12 +498,12 @@
                             <DockPanel x:Name="TaskPositionRow" Margin="0,6,0,0" Visibility="Collapsed">
                                 <TextBlock Style="{StaticResource FieldLabel}" Text="展示位置" />
                                 <ComboBox x:Name="TaskPositionBox" HorizontalAlignment="Stretch"
-                                          ToolTip="空表示沿用全局位置">
-                                    <ComboBoxItem Content="默认（沿用全局）" Tag="" IsSelected="True" />
-                                    <ComboBoxItem Content="屏幕顶边" Tag="top" />
-                                    <ComboBoxItem Content="屏幕底边" Tag="bottom" />
-                                    <ComboBoxItem Content="屏幕左边" Tag="left" />
-                                    <ComboBoxItem Content="屏幕右边" Tag="right" />
+                                          ToolTip="空表示沿用全局位置；方向由全局各边设置决定">
+                                    <ComboBoxItem Content="沿用全局&#x9;" Tag="" IsSelected="True" />
+                                    <ComboBoxItem Content="屏幕顶边&#x9;" Tag="top" />
+                                    <ComboBoxItem Content="屏幕底边&#x9;" Tag="bottom" />
+                                    <ComboBoxItem Content="屏幕左边&#x9;" Tag="left" />
+                                    <ComboBoxItem Content="屏幕右边&#x9;" Tag="right" />
                                 </ComboBox>
                             </DockPanel>
 

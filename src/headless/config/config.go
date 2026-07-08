@@ -31,12 +31,16 @@ type Settings struct {
 	Monitor             string   `json:"monitor"` // 首版仅 "primary"
 	Autostart           bool     `json:"autostart"`
 	ShowConfigAtRuntime bool     `json:"showConfigAtRuntime"`
+	// ShowAdvancedSettings 为 true 时全局设置窗展开进度条高级选项。
+	ShowAdvancedSettings bool `json:"showAdvancedSettings"`
 	Language            string   `json:"language"`
 	// BarPosition 全局进度条位置：top / bottom / left / right（默认 top）。
 	BarPosition string `json:"barPosition"`
 	// BarDirection 全局进度条方向：forward / reverse。
 	// 在 top/bottom 时默认 forward（水平从左到右/从右到左）；在 left/right 时默认 forward（垂直从上到下/从下到上）。
 	BarDirection string `json:"barDirection"`
+	// BarDirections 各边前进方向（AdvancedPosition 开启时生效）：top/bottom/left/right → forward/reverse。
+	BarDirections map[string]string `json:"barDirections,omitempty"`
 	// AdvancedPosition 为 true 时允许为单个任务指定展示位置（在高级设置中开启）。
 	AdvancedPosition bool `json:"advancedPosition"`
 	// AllFour 为 true 时启用四边环绕（我全都要）。从 BarPosition 出发沿 BarDirection 方向环绕。
@@ -69,6 +73,7 @@ func DefaultSettings() Settings {
 		Language:            "zh-CN",
 		BarPosition:         "top",
 		BarDirection:        "forward",
+		BarDirections:       defaultBarDirections(),
 		AdvancedPosition:    false,
 		AllFour:             false,
 		AutoUpdate:          boolPtr(true),
@@ -157,8 +162,12 @@ func mergeSettings(def, loaded Settings) Settings {
 	if loaded.BarDirection != "" {
 		out.BarDirection = loaded.BarDirection
 	}
+	if len(loaded.BarDirections) > 0 {
+		out.BarDirections = mergeBarDirections(out.BarDirections, loaded.BarDirections)
+	}
 	out.Autostart = loaded.Autostart
 	out.ShowConfigAtRuntime = loaded.ShowConfigAtRuntime
+	out.ShowAdvancedSettings = loaded.ShowAdvancedSettings
 	out.AdvancedPosition = loaded.AdvancedPosition
 	out.AllFour = loaded.AllFour
 	if loaded.AutoUpdate != nil {
@@ -180,6 +189,42 @@ func mergeSettings(def, loaded Settings) Settings {
 		out.ScreenHeight = loaded.ScreenHeight
 	}
 	return out
+}
+
+func defaultBarDirections() map[string]string {
+	return map[string]string{
+		"top": "forward", "bottom": "forward", "left": "forward", "right": "forward",
+	}
+}
+
+func mergeBarDirections(base, loaded map[string]string) map[string]string {
+	out := defaultBarDirections()
+	for k, v := range base {
+		if v != "" {
+			out[k] = v
+		}
+	}
+	for k, v := range loaded {
+		if v == "forward" || v == "reverse" {
+			out[k] = v
+		}
+	}
+	return out
+}
+
+// DirectionFor 返回指定边的有效前进方向。
+// AdvancedPosition 开启时用 BarDirections；否则仅全局 BarPosition 使用 BarDirection。
+func (s Settings) DirectionFor(position string) string {
+	if s.AdvancedPosition {
+		if d, ok := s.BarDirections[position]; ok && d != "" {
+			return d
+		}
+		return "forward"
+	}
+	if position == s.BarPosition && s.BarDirection != "" {
+		return s.BarDirection
+	}
+	return "forward"
 }
 
 // sanitizeBehaviors 仅保留可叠加的有效到期提醒（blink/celebrate/notify），
@@ -292,6 +337,9 @@ func (s *Store) UpdateSettings(ns Settings) {
 	merged := mergeSettings(cur, ns)
 	merged.ExpiredBehaviors = sanitizeBehaviors(ns.ExpiredBehaviors)
 	merged.BarDirection = ns.BarDirection
+	if len(ns.BarDirections) > 0 {
+		merged.BarDirections = mergeBarDirections(merged.BarDirections, ns.BarDirections)
+	}
 	if ns.ScreenWidth <= 0 {
 		merged.ScreenWidth = cur.ScreenWidth
 	}

@@ -34,8 +34,8 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
     private readonly Services.UpdateCoordinator? _updates;
     private readonly ObservableCollection<TaskRow> _rows = new();
     private ICollectionView? _rowsView;
-    // 任务列表过滤模式：all=全部 / active=进行中 / completed=已完成。
-    private string _filterMode = "all";
+    // 任务列表过滤模式：all=全部 / active=进行中 / completed=已完成（与 FilterBox 默认「进行中」一致）。
+    private string _filterMode = "active";
     private readonly HashSet<string> _pendingCompleteIds = new();
     private string? _editingId;
     // 当前编辑任务图片路径（取代原图片地址输入框，作为数据来源）；空串表示无图片。
@@ -47,6 +47,9 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
     private List<string>? _editingBehaviors;
     private SettingsDto _settings = new();
     private bool _loadingSettings;
+    /// <summary>是否已从 Headless 成功加载过至少一次全局设置；此前禁止 CommitSettings 以免默认值覆盖磁盘。</summary>
+    private bool _settingsHydrated;
+    private bool _advancedSettingsVisible;
     private bool _loadingTask;
     // listTasks 刷新后恢复选中行时抑制 OnSelectTask，避免用服务端快照覆盖正在编辑的表单（含图片路径）。
     private bool _suppressTaskSelectionReload;
@@ -75,9 +78,9 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
         _ipc = ipc;
         _updates = updates;
         if (_updates != null) _updates.StateChanged += OnUpdateStateChanged;
-        TaskGrid.ItemsSource = _rows;
         _rowsView = System.Windows.Data.CollectionViewSource.GetDefaultView(_rows);
         _rowsView.Filter = RowMatchesFilter;
+        TaskGrid.ItemsSource = _rowsView;
         _ipc.TasksReceived += OnTasksReceived;
         _ipc.SettingsReceived += OnSettingsReceived;
         _ipc.VersionReceived += OnBackendVersionReceived;
@@ -106,13 +109,28 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
         AllowTelemetryCheck.Checked += OnSettingsControlChanged;
         AllowTelemetryCheck.Unchecked += OnSettingsControlChanged;
         BarPositionBox.SelectionChanged += OnSettingsSelectionChanged;
-        BarDirectionBox.SelectionChanged += OnSettingsSelectionChanged;
+        BarForwardRadio.Checked += OnSettingsControlChanged;
+        BarReverseRadio.Checked += OnSettingsControlChanged;
+        TopForwardRadio.Checked += OnSettingsControlChanged;
+        TopReverseRadio.Checked += OnSettingsControlChanged;
+        BottomForwardRadio.Checked += OnSettingsControlChanged;
+        BottomReverseRadio.Checked += OnSettingsControlChanged;
+        LeftForwardRadio.Checked += OnSettingsControlChanged;
+        LeftReverseRadio.Checked += OnSettingsControlChanged;
+        RightForwardRadio.Checked += OnSettingsControlChanged;
+        RightReverseRadio.Checked += OnSettingsControlChanged;
         AllFourCheck.Checked += OnSettingsControlChanged;
         AllFourCheck.Unchecked += OnSettingsControlChanged;
         AdvancedPositionCheck.Checked += OnSettingsControlChanged;
         AdvancedPositionCheck.Unchecked += OnSettingsControlChanged;
         AdvancedPositionCheck.Checked += OnAdvancedPositionChanged;
         AdvancedPositionCheck.Unchecked += OnAdvancedPositionChanged;
+
+        var initPos = (BarPositionBox.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? "top";
+        UpdateSingleDirectionLabels(initPos);
+        UpdateDirectionPanelsVisibility();
+        ApplyAdvancedSettingsVisibility(false);
+        UpdateAdvancedToggleButtonText();
 
         // 隐藏到托盘时暂停预览动画，重新显示时按需恢复，避免后台空耗。
         IsVisibleChanged += (_, _) =>
@@ -126,6 +144,7 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
         {
             _layoutReady = true;
             ScheduleFitHeightToTaskEditor();
+            if (_ipc.IsConnected) RequestRefresh();
         };
 
         AboutVersionText.Text = FormatAppVersion();
@@ -210,20 +229,57 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
         _ipc.Send(new Command { Action = "getVersion" });
     }
 
-    // 后端（内核）版本来自 IPC 的 getVersion 响应；展示在「关于 · 更新与许可证」区。
-    private void OnBackendVersionReceived(string version)
+    /// <summary>用 App 已缓存的快照即时填充 UI（打开设置窗时调用，随后仍会通过 RequestRefresh 拉最新数据）。</summary>
+    public void ApplyCachedSnapshot(IReadOnlyList<TaskDto> tasks, SettingsDto? settings) =>
+        ApplyCachedSnapshotSync(tasks, settings);
+
+    /// <summary>在 UI 线程同步应用缓存，避免嵌套 BeginInvoke 导致启动时空窗。</summary>
+    public void ApplyCachedSnapshotSync(IReadOnlyList<TaskDto> tasks, SettingsDto? settings)
     {
-        Dispatcher.BeginInvoke(() =>
+        if (!Dispatcher.CheckAccess())
         {
-            var v = string.IsNullOrWhiteSpace(version) ? "未知" : version.TrimStart('v', 'V');
-            BackendVersionText.Text = $"内核版本号 v{v}";
-        });
+            Dispatcher.Invoke(() => ApplyCachedSnapshotSync(tasks, settings));
+            return;
+        }
+        ApplySettingsSnapshot(settings);
+        ApplyTasksSnapshot(tasks);
+    }
+
+    /// <summary>仅同步全局设置，不触碰任务列表（避免用 App 侧可能过期的 _tasks 覆盖列表）。</summary>
+    public void ApplySettingsSnapshot(SettingsDto? settings)
+    {
+        if (settings == null) return;
+        if (!Dispatcher.CheckAccess())
+        {
+            Dispatcher.Invoke(() => ApplySettingsSnapshot(settings));
+            return;
+        }
+        ApplySettingsFromServer(settings);
+    }
+
+    /// <summary>仅同步任务列表。</summary>
+    public void ApplyTasksSnapshot(IReadOnlyList<TaskDto> tasks)
+    {
+        if (!Dispatcher.CheckAccess())
+        {
+            Dispatcher.Invoke(() => ApplyTasksSnapshot(tasks));
+            return;
+        }
+        ApplyTasksFromServer(tasks);
     }
 
     private void OnSettingsReceived(SettingsDto s)
     {
         DesktopLog.Info($"ConfigWindow.OnSettingsReceived barHeightPx={s.BarHeightPx}");
-        Dispatcher.BeginInvoke(() =>
+        if (Dispatcher.CheckAccess())
+            ApplySettingsFromServer(s);
+        else
+            Dispatcher.BeginInvoke(() => ApplySettingsFromServer(s));
+    }
+
+    private void ApplySettingsFromServer(SettingsDto s)
+    {
+        try
         {
             _settings = s;
             _loadingSettings = true;
@@ -240,17 +296,38 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
             AllowTelemetryCheck.IsChecked = s.AllowTelemetry;
             SelectComboByTag(BarPositionBox, s.BarPosition);
             AdvancedPositionCheck.IsChecked = s.AdvancedPosition;
-            TaskPositionRow.Visibility = s.AdvancedPosition ? Visibility.Visible : Visibility.Collapsed;
-            UpdateDirectionOptions(s.BarPosition);
-            SelectComboByTag(BarDirectionBox, s.BarDirection);
+            UpdateSingleDirectionLabels(s.BarPosition);
+            ApplyBarDirection(string.IsNullOrWhiteSpace(s.BarDirection) ? "forward" : s.BarDirection);
+            ApplyBarDirections(s.BarDirections);
             AllFourCheck.IsChecked = s.AllFour;
+            UpdateDirectionPanelsVisibility();
+            ApplyAdvancedSettingsVisibility(s.ShowAdvancedSettings);
+            _settingsHydrated = true;
+            DesktopLog.Info("ConfigWindow.ApplySettingsFromServer applied to UI");
+        }
+        catch (Exception ex)
+        {
+            DesktopLog.Error("ConfigWindow.ApplySettingsFromServer failed", ex);
+        }
+        finally
+        {
             _loadingSettings = false;
-            DesktopLog.Info("ConfigWindow.OnSettingsReceived applied to UI");
+        }
+    }
+
+    // 后端（内核）版本来自 IPC 的 getVersion 响应；展示在「关于 · 更新与许可证」区。
+    private void OnBackendVersionReceived(string version)
+    {
+        Dispatcher.BeginInvoke(() =>
+        {
+            var v = string.IsNullOrWhiteSpace(version) ? "未知" : version.TrimStart('v', 'V');
+            BackendVersionText.Text = $"内核版本号 v{v}";
         });
     }
 
     private void OnSettingsSelectionChanged(object sender, SelectionChangedEventArgs e)
     {
+        if (_loadingSettings || !_settingsHydrated) return;
         if (e.AddedItems.Count > 0) CommitSettings();
     }
 
@@ -259,14 +336,17 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
         if (sender == RefreshBox) RefreshValueText.Text = ((int)RefreshBox.Value).ToString();
         if (sender == BarHeightBox) BarHeightValueText.Text = ((int)BarHeightBox.Value).ToString();
         if (sender == ImageMaxHeightBox) ImageMaxHeightValueText.Text = ((int)ImageMaxHeightBox.Value).ToString();
-        CommitSettings();
+        if (!_loadingSettings && _settingsHydrated) CommitSettings();
     }
 
-    private void OnSettingsControlChanged(object sender, RoutedEventArgs e) => CommitSettings();
+    private void OnSettingsControlChanged(object sender, RoutedEventArgs e)
+    {
+        if (!_loadingSettings && _settingsHydrated) CommitSettings();
+    }
 
     private void CommitSettings()
     {
-        if (_loadingSettings) return;
+        if (_loadingSettings || !_settingsHydrated) return;
         // InitializeComponent() 期间会触发 BarPositionBox 的 SelectionChanged，
         // 此时 _ipc 尚未赋值，连控件也尚未完全构造，因此只能静默返回。
         if (_ipc == null) return;
@@ -285,9 +365,11 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
         _settings.AutoUpdate = AutoUpdateCheck.IsChecked == true;
         _settings.AllowTelemetry = AllowTelemetryCheck.IsChecked == true;
         _settings.BarPosition = (BarPositionBox.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? "top";
-        _settings.BarDirection = (BarDirectionBox.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? "";
+        _settings.BarDirection = CollectBarDirection();
+        _settings.BarDirections = CollectBarDirections();
         _settings.AdvancedPosition = AdvancedPositionCheck.IsChecked == true;
         _settings.AllFour = AllFourCheck.IsChecked == true;
+        _settings.ShowAdvancedSettings = _advancedSettingsVisible;
         var rect = SystemParameters.WorkArea;
         _settings.ScreenWidth = rect.Width;
         _settings.ScreenHeight = rect.Height;
@@ -310,64 +392,130 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
         }
     }
 
-    private void UpdateDirectionOptions(string position)
+    private void UpdateSingleDirectionLabels(string position)
     {
-        if (BarDirectionBox == null) return;
-        var selected = BarDirectionBox.SelectedItem as ComboBoxItem;
-        var selectedTag = selected?.Tag?.ToString() ?? "";
-
-        BarDirectionBox.Items.Clear();
-        BarDirectionBox.Items.Add(new ComboBoxItem { Content = "默认", Tag = "" });
-        switch (position)
-        {
-            case "left":
-            case "right":
-                BarDirectionBox.Items.Add(new ComboBoxItem { Content = "从上到下", Tag = "forward" });
-                BarDirectionBox.Items.Add(new ComboBoxItem { Content = "从下到上", Tag = "reverse" });
-                break;
-            default: // top / bottom
-                BarDirectionBox.Items.Add(new ComboBoxItem { Content = "从左到右", Tag = "forward" });
-                BarDirectionBox.Items.Add(new ComboBoxItem { Content = "从右到左", Tag = "reverse" });
-                break;
-        }
-
-        SelectComboByTag(BarDirectionBox, selectedTag);
-        if (BarDirectionBox.SelectedItem == null) SelectComboByTag(BarDirectionBox, "");
+        if (BarForwardRadio == null || BarReverseRadio == null) return;
+        bool vertical = position is "left" or "right";
+        BarForwardRadio.Content = vertical ? "↓" : "→";
+        BarReverseRadio.Content = vertical ? "↑" : "←";
+        BarForwardRadio.ToolTip = vertical ? "从上到下" : "从左到右";
+        BarReverseRadio.ToolTip = vertical ? "从下到上" : "从右到左";
     }
 
-    private void OnAllFourChanged(object sender, RoutedEventArgs e) => CommitSettings();
+    private void ApplyBarDirection(string direction)
+    {
+        if (BarForwardRadio == null || BarReverseRadio == null) return;
+        if (direction == "reverse")
+            BarReverseRadio.IsChecked = true;
+        else
+            BarForwardRadio.IsChecked = true;
+    }
+
+    private string CollectBarDirection()
+    {
+        if (BarReverseRadio == null) return "forward";
+        return BarReverseRadio.IsChecked == true ? "reverse" : "forward";
+    }
+
+    private static Dictionary<string, string> DefaultBarDirections() => new()
+    {
+        ["top"] = "forward",
+        ["bottom"] = "forward",
+        ["left"] = "forward",
+        ["right"] = "forward",
+    };
+
+    private void ApplyBarDirections(Dictionary<string, string>? directions)
+    {
+        if (TopForwardRadio == null) return;
+        var dirs = DefaultBarDirections();
+        if (directions != null)
+        {
+            foreach (var (key, value) in directions)
+            {
+                if (value is "forward" or "reverse")
+                    dirs[key] = value;
+            }
+        }
+        SetEdgeDirectionRadios(dirs["top"], TopForwardRadio, TopReverseRadio);
+        SetEdgeDirectionRadios(dirs["bottom"], BottomForwardRadio, BottomReverseRadio);
+        SetEdgeDirectionRadios(dirs["left"], LeftForwardRadio, LeftReverseRadio);
+        SetEdgeDirectionRadios(dirs["right"], RightForwardRadio, RightReverseRadio);
+    }
+
+    private static void SetEdgeDirectionRadios(string direction, System.Windows.Controls.RadioButton forward, System.Windows.Controls.RadioButton reverse)
+    {
+        if (forward == null || reverse == null) return;
+        if (direction == "reverse")
+            reverse.IsChecked = true;
+        else
+            forward.IsChecked = true;
+    }
+
+    private Dictionary<string, string> CollectBarDirections()
+    {
+        return new Dictionary<string, string>
+        {
+            ["top"] = TopReverseRadio?.IsChecked == true ? "reverse" : "forward",
+            ["bottom"] = BottomReverseRadio?.IsChecked == true ? "reverse" : "forward",
+            ["left"] = LeftReverseRadio?.IsChecked == true ? "reverse" : "forward",
+            ["right"] = RightReverseRadio?.IsChecked == true ? "reverse" : "forward",
+        };
+    }
+
+    private void UpdateDirectionPanelsVisibility()
+    {
+        if (PerEdgeDirectionPanel == null || AdvancedPositionCheck == null || AllFourCheck == null)
+            return;
+        bool advancedPosition = AdvancedPositionCheck.IsChecked == true;
+        bool allFour = AllFourCheck.IsChecked == true;
+        AdvancedPositionCheck.Visibility = allFour ? Visibility.Collapsed : Visibility.Visible;
+        PerEdgeDirectionPanel.Visibility = advancedPosition && !allFour ? Visibility.Visible : Visibility.Collapsed;
+        if (TaskPositionRow != null)
+            TaskPositionRow.Visibility = advancedPosition && !allFour ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private void OnAllFourChanged(object sender, RoutedEventArgs e)
+    {
+        UpdateDirectionPanelsVisibility();
+        ScheduleFitHeightToTaskEditor();
+        if (!_loadingSettings && _settingsHydrated) CommitSettings();
+    }
 
     private void OnBarPositionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (e.AddedItems.Count == 0) return;
+        if (BarForwardRadio == null) return; // InitializeComponent 期间 AdvancedOptionsPanel 尚未解析
         var pos = (BarPositionBox.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? "top";
-        UpdateDirectionOptions(pos);
-        CommitSettings();
-    }
-
-    private void OnBarDirectionChanged(object sender, SelectionChangedEventArgs e)
-    {
-        if (e.AddedItems.Count > 0) CommitSettings();
+        UpdateSingleDirectionLabels(pos);
+        if (!_loadingSettings && _settingsHydrated) CommitSettings();
     }
 
     private void OnAdvancedPositionChanged(object sender, RoutedEventArgs e)
     {
-        if (TaskPositionRow != null)
-            TaskPositionRow.Visibility = AdvancedPositionCheck.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
-    }
-
-    private void OnShowAdvancedSettingsChanged(object sender, RoutedEventArgs e)
-    {
-        if (AdvancedOptionsPanel != null)
-            AdvancedOptionsPanel.Visibility = ShowAdvancedSettingsCheck.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
-        // 高级设置展开/收起会改变设置面板高度，重算窗口高度以保持表单完整、无滚动条。
+        UpdateDirectionPanelsVisibility();
         ScheduleFitHeightToTaskEditor();
     }
 
-    private void OnResetWindowHeight(object sender, RoutedEventArgs e)
+    private void OnToggleAdvancedOptionsClick(object sender, RoutedEventArgs e)
     {
-        FitHeightToTaskEditor();
-        SettingsStatus.Text = "已按任务编辑区重置窗口高度";
+        ApplyAdvancedSettingsVisibility(!_advancedSettingsVisible);
+        if (_settingsHydrated) CommitSettings();
+        ScheduleFitHeightToTaskEditor();
+    }
+
+    private void ApplyAdvancedSettingsVisibility(bool visible)
+    {
+        _advancedSettingsVisible = visible;
+        if (BarAdvancedOptionsPanel != null)
+            BarAdvancedOptionsPanel.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
+        UpdateAdvancedToggleButtonText();
+    }
+
+    private void UpdateAdvancedToggleButtonText()
+    {
+        if (ToggleAdvancedOptionsButton != null)
+            ToggleAdvancedOptionsButton.Content = _advancedSettingsVisible ? "隐藏高级选项" : "显示高级选项";
     }
 
     private void OnEasterEggClick(object sender, MouseButtonEventArgs e)
@@ -964,26 +1112,33 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.";
     private void OnTasksReceived(List<TaskDto> tasks)
     {
         DesktopLog.Info($"ConfigWindow.OnTasksReceived count={tasks.Count}");
-        Dispatcher.BeginInvoke(() =>
+        if (Dispatcher.CheckAccess())
+            ApplyTasksFromServer(tasks);
+        else
+            Dispatcher.BeginInvoke(() => ApplyTasksFromServer(tasks), DispatcherPriority.Normal);
+    }
+
+    private void ApplyTasksFromServer(IReadOnlyList<TaskDto> tasks)
+    {
+        try
         {
             var editingId = _editingId;
             _suppressTaskSelectionReload = true;
-            try
-            {
-                _rows.Clear();
-                foreach (var t in tasks) _rows.Add(TaskRow.From(t));
-                _rowsView?.Refresh();
 
-                // 仅恢复列表高亮，不重载表单，避免覆盖用户未保存/刚保存的字段（尤其是图片路径）。
-                if (editingId != null)
-                {
-                    var row = _rows.FirstOrDefault(r => r.Id == editingId);
-                    if (row != null) TaskGrid.SelectedItem = row;
-                }
-            }
-            finally
+            var newRows = new List<TaskRow>(tasks.Count);
+            foreach (var t in tasks)
+                newRows.Add(TaskRow.From(t));
+
+            _rows.Clear();
+            foreach (var row in newRows)
+                _rows.Add(row);
+            _rowsView?.Refresh();
+
+            // 仅恢复列表高亮，不重载表单，避免覆盖用户未保存/刚保存的字段（尤其是图片路径）。
+            if (editingId != null)
             {
-                _suppressTaskSelectionReload = false;
+                var row = _rows.FirstOrDefault(r => r.Id == editingId);
+                if (row != null) TaskGrid.SelectedItem = row;
             }
 
             if (_editingId != null)
@@ -998,8 +1153,19 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.";
                     _pendingCompleteIds.Remove(id);
             }
 
-            DesktopLog.Info($"ConfigWindow.OnTasksReceived grid rows={_rows.Count}");
-        }, DispatcherPriority.Background);
+            if (_pendingCompleteIds.Count == 0)
+                _loadingTask = false;
+
+            DesktopLog.Info($"ConfigWindow.ApplyTasksFromServer grid rows={_rows.Count} visible={_rowsView?.Cast<object>().Count() ?? 0}");
+        }
+        catch (Exception ex)
+        {
+            DesktopLog.Error("ConfigWindow.ApplyTasksFromServer failed", ex);
+        }
+        finally
+        {
+            _suppressTaskSelectionReload = false;
+        }
     }
 
     // 任务列表过滤谓词：按 _filterMode 决定行是否显示。
@@ -1129,25 +1295,31 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.";
         _autoSaveTimer?.Stop();
         _loadingTask = true;
         _pendingCompleteIds.Add(id);
-        try
-        {
-            _ipc.Send(new Command { Action = "completeTask", TaskId = row.Id });
-            _ipc.Send(new Command { Action = "listTasks" });
-        }
-        finally
-        {
-            _loadingTask = false;
-        }
+        _ipc.Send(new Command { Action = "completeTask", TaskId = row.Id });
+
+        // 乐观更新列表：后端已成功时重启能读到完成态，但 UI 不能等 listTasks 才反馈。
+        ReplaceRowWithCompleted(row);
+        _rowsView?.Refresh();
 
         bool isRecurring = row.Type == "scheduled" && row.Recurrence != null &&
                            !string.IsNullOrEmpty(row.Recurrence.Mode);
-        StatusText.Text = isRecurring ? "任务已完成并进入下一循环" : "任务已完成";
+        StatusText.Text = _filterMode == "active"
+            ? (isRecurring ? "任务已完成并进入下一循环（已从「进行中」列表移除）" : "任务已完成（可从「已完成」筛选查看）")
+            : (isRecurring ? "任务已完成并进入下一循环" : "任务已完成");
 
         if (_editingId == row.Id)
-        {
-            DuplicateTaskButton.Visibility = Visibility.Visible;
-            CompleteTaskButton.Visibility = Visibility.Collapsed;
-        }
+            UpdateTaskActionButtons(FindRowById(id) ?? row);
+
+        _ipc.Send(new Command { Action = "listTasks" });
+    }
+
+    private TaskRow? FindRowById(string id) => _rows.FirstOrDefault(r => r.Id == id);
+
+    private void ReplaceRowWithCompleted(TaskRow row)
+    {
+        var idx = _rows.IndexOf(row);
+        if (idx < 0) return;
+        _rows[idx] = TaskRow.AsCompleted(row);
     }
 
     private void UpdateTaskActionButtons(TaskRow row)
@@ -1354,6 +1526,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.";
     {
         if (_loadingSettings) return;
         if (_loadingTask) return;
+        if (_editingId != null && _pendingCompleteIds.Contains(_editingId)) return;
         if (_autoSaveTimer == null) return;
         _autoSaveTimer.Stop();
         _autoSaveTimer.Start();
@@ -1363,6 +1536,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.";
     {
         if (_loadingSettings) return;
         if (_loadingTask) return;
+        if (_editingId != null && _pendingCompleteIds.Contains(_editingId)) return;
 
         var dto = BuildCurrentDto();
         if (dto == null)
@@ -1639,6 +1813,30 @@ public sealed class TaskRow : INotifyPropertyChanged
         ExpiredBehaviors = t.ExpiredBehaviors,
         Recurrence = t.Recurrence,
     };
+
+    /// <summary>将进行中行转为已完成（乐观 UI，待 listTasks 确认）。</summary>
+    public static TaskRow AsCompleted(TaskRow row)
+    {
+        var at = DateTimeOffset.Now;
+        return new TaskRow
+        {
+            Id = row.Id,
+            Name = row.Name,
+            Type = row.Type,
+            Color = row.Color,
+            Gif = row.Gif,
+            ImageMaxSize = row.ImageMaxSize,
+            StartAt = row.StartAt,
+            EndAt = row.EndAt,
+            CreatedAt = row.CreatedAt,
+            Status = "completed",
+            Completed = true,
+            CompletedAt = at,
+            Position = row.Position,
+            ExpiredBehaviors = row.ExpiredBehaviors,
+            Recurrence = row.Recurrence,
+        };
+    }
 
     private static string FormatRecurLabel(string type, RecurrenceDto? rec)
     {

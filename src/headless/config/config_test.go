@@ -54,3 +54,42 @@ func TestUnmarshalTaskUpdateWithoutGifClearsGif(t *testing.T) {
 		t.Fatalf("omitted gif should decode as empty string, got %q", incoming.Gif)
 	}
 }
+
+func TestDirectionForAdvancedPerEdge(t *testing.T) {
+	s := DefaultSettings()
+	s.AdvancedPosition = true
+	s.BarDirections = map[string]string{
+		"top": "forward", "bottom": "reverse", "left": "forward", "right": "reverse",
+	}
+	if got := s.DirectionFor("bottom"); got != "reverse" {
+		t.Errorf("bottom: want reverse, got %s", got)
+	}
+	if got := s.DirectionFor("left"); got != "forward" {
+		t.Errorf("left: want forward, got %s", got)
+	}
+}
+
+func TestDirectionForSingleBar(t *testing.T) {
+	s := DefaultSettings()
+	s.BarPosition = "top"
+	s.BarDirection = "reverse"
+	if got := s.DirectionFor("top"); got != "reverse" {
+		t.Errorf("top: want reverse, got %s", got)
+	}
+	if got := s.DirectionFor("left"); got != "forward" {
+		t.Errorf("non-global edge should default forward, got %s", got)
+	}
+}
+
+func TestShowAdvancedSettingsPersisted(t *testing.T) {
+	t.Setenv("APPDATA", t.TempDir())
+	store, err := Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	store.UpdateSettings(Settings{ShowAdvancedSettings: true})
+	settings, _ := store.Snapshot()
+	if !settings.ShowAdvancedSettings {
+		t.Error("showAdvancedSettings should persist as true")
+	}
+}
