@@ -594,6 +594,9 @@ func (e *Engine) HandleCommand(cmd ipc.Command) any {
 		return map[string]any{"type": "version", "version": buildVersion}
 	case "getSettings":
 		return e.settingsResponse(cmd.RequestID)
+	case "requestState":
+		// Desktop 休眠唤醒等场景下立即按墙钟重算一帧，避免等下一轮定时广播。
+		return e.ComputeState()
 	case "updateSettings":
 		if len(cmd.Settings) > 0 {
 			var ns config.Settings

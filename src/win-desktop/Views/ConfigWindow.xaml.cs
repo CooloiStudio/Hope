@@ -5,6 +5,7 @@ using System.IO;
 using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
@@ -27,8 +28,8 @@ namespace Hope.Desktop.Views;
 /// <summary>任务配置窗口：多任务 CRUD，通过 IPC 同步至 Headless（文档 §5.3）。</summary>
 public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
 {
-    private const double MinFitWindowHeight = 400;
-    private const double EditPanelMeasureWidth = 358;
+    private const double MinFitWindowHeight = 280;
+    private const double EditPanelMeasureWidth = 378;
     private const double FluentTitleBarFallbackHeight = 48;
 
     private readonly IpcClient _ipc;
@@ -58,13 +59,22 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
     private bool _layoutReady;
     private readonly DispatcherTimer _autoSaveTimer;
     private DispatcherTimer? _nowClockTimer;
+    private bool _fitHeightPending;
+    private bool _suspendAutoFitHeight;
+    private bool _initialScreenCenterApplied;
+    private DispatcherTimer? _resizeSettleTimer;
+    private DispatcherTimer? _hydrationWatchdog;
+    private int _hydrationWatchdogAttempts;
 
     public ConfigWindow(IpcClient ipc, SessionState session) : this(ipc, session, null) { }
 
     public ConfigWindow(IpcClient ipc, SessionState session, Services.UpdateCoordinator? updates)
     {
         DesktopLog.Info("ConfigWindow ctor: before InitializeComponent");
-        // 必须在 InitializeComponent 之前初始化，因为 XAML 事件在加载期间就可能触发 TryAutoSaveTask
+        // 必须在 InitializeComponent 之前赋值：XAML 加载期间会触发 ColorBox 等事件并调用 TryAutoSaveTask。
+        _ipc = ipc;
+        _session = session;
+        _updates = updates;
         _autoSaveTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
         _autoSaveTimer.Tick += (_, _) => AutoSaveTask();
         InitializeComponent();
@@ -74,9 +84,6 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
         AppIconHelper.ApplyTitleBarIcon(AppTitleBar);
         StartNowClock();
 
-        _ipc = ipc;
-        _session = session;
-        _updates = updates;
         if (_updates != null) _updates.StateChanged += OnUpdateStateChanged;
         _rowsView = System.Windows.Data.CollectionViewSource.GetDefaultView(_rows);
         _rowsView.Filter = RowMatchesFilter;
@@ -126,25 +133,34 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
         AdvancedPositionCheck.Checked += OnAdvancedPositionChanged;
         AdvancedPositionCheck.Unchecked += OnAdvancedPositionChanged;
 
+        MainTabs.SelectionChanged += OnMainTabsSelectionChanged;
+
         var initPos = (BarPositionBox.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? "top";
         UpdateSingleDirectionLabels(initPos);
         UpdateDirectionPanelsVisibility();
         ApplyAdvancedSettingsVisibility(false);
         UpdateAdvancedToggleButtonText();
 
-        // 隐藏到托盘时暂停预览动画，重新显示时按需恢复，避免后台空耗。
-        IsVisibleChanged += (_, _) =>
+        // 隐藏到托盘时暂停预览动画；再次显示时恢复并启动水合看门狗。
+        IsVisibleChanged += (_, e) =>
         {
-            if (IsVisible && _gifPreviewSprite != null) _gifPreviewTimer?.Start();
-            else _gifPreviewTimer?.Stop();
+            if (e.NewValue is true)
+            {
+                if (_gifPreviewSprite != null) _gifPreviewTimer?.Start();
+                StartHydrationWatchdog();
+            }
+            else
+            {
+                _gifPreviewTimer?.Stop();
+                StopHydrationWatchdog();
+            }
         };
 
-        StatusText.SizeChanged += (_, _) => ScheduleFitHeightToTaskEditor();
+        SizeChanged += OnWindowSizeChanged;
         Loaded += (_, _) =>
         {
             _layoutReady = true;
             ScheduleFitHeightToTaskEditor();
-            if (_ipc.IsConnected) RequestRefresh();
         };
 
         AboutVersionText.Text = FormatAppVersion();
@@ -152,8 +168,13 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
 
         ContentRendered += (_, _) => EnsureFluentBackdrop();
         HookTaskFieldEvents();
-        OnNew(this, new RoutedEventArgs());
         DesktopLog.Info("ConfigWindow ctor: done");
+    }
+
+    /// <summary>进入新建任务表单（须在首次 HydrateFromSession 之后调用）。</summary>
+    public void ResetTaskEditorForNew()
+    {
+        OnNew(this, new RoutedEventArgs());
     }
 
     /// <summary>应用 Mica/Acrylic 并跟随系统主题；首帧与再次 Show 时均需调用。</summary>
@@ -223,30 +244,113 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
     /// <summary>从 Headless 拉取任务列表与全局设置（在窗口已显示后调用）。</summary>
     public void RequestRefresh()
     {
+        if (!_ipc.IsConnected)
+        {
+            DesktopLog.Info("ConfigWindow RequestRefresh skipped (not connected)");
+            return;
+        }
         DesktopLog.Info("ConfigWindow RequestRefresh");
         _ipc.Send(new Command { Action = "listTasks" });
         _ipc.Send(new Command { Action = "getSettings" });
         _ipc.Send(new Command { Action = "getVersion" });
     }
 
+    private void StartHydrationWatchdog()
+    {
+        StopHydrationWatchdog();
+        _hydrationWatchdogAttempts = 0;
+        HydrateFromSession(force: true);
+        if (IsUiHydrationSatisfied())
+        {
+            DesktopLog.Info("ConfigWindow hydration watchdog: already satisfied");
+            return;
+        }
+
+        RequestRefresh();
+        _hydrationWatchdog = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(350) };
+        _hydrationWatchdog.Tick += OnHydrationWatchdogTick;
+        _hydrationWatchdog.Start();
+    }
+
+    private bool IsUiHydrationSatisfied()
+    {
+        bool settingsOk = _session.SettingsHydrated &&
+                          _appliedSettingsRevision >= _session.SettingsRevision;
+        bool tasksOk = _session.TasksHydrated &&
+                       _appliedTasksRevision >= _session.TasksRevision &&
+                       (_session.Tasks.Count == 0 || _rows.Count > 0);
+        return settingsOk && tasksOk;
+    }
+
+    private void StopHydrationWatchdog()
+    {
+        if (_hydrationWatchdog == null) return;
+        _hydrationWatchdog.Stop();
+        _hydrationWatchdog.Tick -= OnHydrationWatchdogTick;
+        _hydrationWatchdog = null;
+    }
+
+    private void OnHydrationWatchdogTick(object? sender, EventArgs e)
+    {
+        if (!IsVisible)
+        {
+            StopHydrationWatchdog();
+            return;
+        }
+
+        HydrateFromSession(force: true);
+
+        if (IsUiHydrationSatisfied())
+        {
+            DesktopLog.Info("ConfigWindow hydration watchdog: satisfied");
+            StopHydrationWatchdog();
+            return;
+        }
+
+        if (++_hydrationWatchdogAttempts > 8)
+        {
+            DesktopLog.Warn($"ConfigWindow hydration watchdog: gave up attempts={_hydrationWatchdogAttempts} " +
+                            $"settingsHydrated={_session.SettingsHydrated} tasksHydrated={_session.TasksHydrated} " +
+                            $"appliedSettings={_appliedSettingsRevision} appliedTasks={_appliedTasksRevision} rows={_rows.Count}");
+            StopHydrationWatchdog();
+            return;
+        }
+
+        DesktopLog.Info($"ConfigWindow hydration watchdog: retry attempt={_hydrationWatchdogAttempts}");
+        RequestRefresh();
+    }
+
     /// <summary>从 <see cref="SessionState"/> 同步当前快照到 UI（打开/再次显示设置窗时调用）。</summary>
-    public void HydrateFromSession()
+    public void HydrateFromSession(bool force = false)
     {
         if (!Dispatcher.CheckAccess())
         {
-            Dispatcher.Invoke(HydrateFromSession);
+            Dispatcher.Invoke(() => HydrateFromSession(force));
             return;
         }
-        if (_session.SettingsHydrated && _session.Settings != null)
-            ApplySettingsFromServer(_session.Settings, _session.SettingsRevision);
-        if (_session.TasksHydrated)
-            ApplyTasksFromServer(_session.Tasks, _session.TasksRevision);
+        DesktopLog.Info($"ConfigWindow.HydrateFromSession force={force} " +
+                        $"settingsHydrated={_session.SettingsHydrated} tasksHydrated={_session.TasksHydrated} " +
+                        $"settingsRev={_session.SettingsRevision} tasksRev={_session.TasksRevision} " +
+                        $"appliedSettings={_appliedSettingsRevision} appliedTasks={_appliedTasksRevision} rows={_rows.Count}");
+        if (_session.SettingsHydrated && _session.Settings != null &&
+            (force || NeedsSettingsUiHydrate()))
+            ApplySettingsFromServer(_session.Settings, _session.SettingsRevision, force);
+        if (_session.TasksHydrated &&
+            (force || NeedsTasksUiHydrate()))
+            ApplyTasksFromServer(_session.Tasks, _session.TasksRevision, force);
     }
+
+    private bool NeedsSettingsUiHydrate() =>
+        _appliedSettingsRevision < _session.SettingsRevision;
+
+    private bool NeedsTasksUiHydrate() =>
+        _appliedTasksRevision < _session.TasksRevision ||
+        (_rows.Count == 0 && _session.Tasks.Count > 0);
 
     private void OnSessionSettingsChanged(SettingsDto s)
     {
         DesktopLog.Info($"ConfigWindow.OnSessionSettingsChanged barHeightPx={s.BarHeightPx} rev={_session.SettingsRevision}");
-        if (_session.SettingsRevision <= _appliedSettingsRevision && _session.SettingsHydrated)
+        if (_session.SettingsRevision <= _appliedSettingsRevision && _session.SettingsHydrated && !NeedsSettingsUiHydrate())
             return;
         if (Dispatcher.CheckAccess())
             ApplySettingsFromServer(s, _session.SettingsRevision);
@@ -257,7 +361,7 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
     private void OnSessionTasksChanged(IReadOnlyList<TaskDto> tasks)
     {
         DesktopLog.Info($"ConfigWindow.OnSessionTasksChanged count={tasks.Count} rev={_session.TasksRevision}");
-        if (_session.TasksRevision <= _appliedTasksRevision && _session.TasksHydrated)
+        if (_session.TasksRevision <= _appliedTasksRevision && _session.TasksHydrated && !NeedsTasksUiHydrate())
             return;
         if (Dispatcher.CheckAccess())
             ApplyTasksFromServer(tasks, _session.TasksRevision);
@@ -265,9 +369,9 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
             Dispatcher.BeginInvoke(() => ApplyTasksFromServer(tasks, _session.TasksRevision));
     }
 
-    private void ApplySettingsFromServer(SettingsDto s, int revision)
+    private void ApplySettingsFromServer(SettingsDto s, int revision, bool force = false)
     {
-        if (revision <= _appliedSettingsRevision && _session.SettingsHydrated)
+        if (!force && revision <= _appliedSettingsRevision && _session.SettingsHydrated && !NeedsSettingsUiHydrate())
         {
             DesktopLog.Info($"ConfigWindow.ApplySettingsFromServer skip stale rev={revision} applied={_appliedSettingsRevision}");
             return;
@@ -534,43 +638,231 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
     }
 
     /// <summary>
-    /// 按右侧 Tab 内容实测高度调整窗体高度（§5.3.3 新增 7）。
-    /// 取「任务编辑」与「全局设置」两个面板的较大高度，确保两个 Tab 都无需滚动条即可完整展示。
+    /// 按当前 Tab 表单渲染后的实际高度设置窗体（非 Measure 估算，避免 StackPanel 高估数十像素）。
+    /// 左侧列表随行高拉伸；表单溢出由 ScrollViewer 滚动。
     /// </summary>
-    public void FitHeightToTaskEditor()
+    public void FitHeightToTaskEditor(bool force = false)
     {
-        if (!_layoutReady || TaskEditPanel == null) return;
+        if (!_layoutReady) return;
+        Dispatcher.BeginInvoke(() => ApplyHeightToRenderedForm(force), DispatcherPriority.Loaded);
+    }
 
-        double editContentH = MeasurePanelHeight(TaskEditPanel);
-        double settingsContentH = MeasurePanelHeight(SettingsPanel);
-        double contentH = Math.Max(editContentH, settingsContentH);
+    private void ApplyHeightToRenderedForm(bool force, bool isRetry = false)
+    {
+        var panel = GetActiveFormPanel();
+        if (panel is null) return;
+        var scroll = FindVisualParent<ScrollViewer>(panel);
+        if (scroll is null) return;
 
-        const double tabHeaderH = 28;
-        double panelMarginV = TaskEditPanel.Margin.Top + TaskEditPanel.Margin.Bottom;
-        double gridMarginV = RootGrid.Margin.Top + RootGrid.Margin.Bottom;
-        double leftMinH = 32 + 8 + 32 + 80; // 列表头 + 删除按钮 + 最小表格区
+        MainTabs.UpdateLayout();
+        scroll.UpdateLayout();
+        panel.UpdateLayout();
+
+        // ExtentHeight 对嵌套表单（全局设置）仍偏高；改为仅累加可见子元素真实高度。
+        double contentH = GetScrollContentHeight(scroll, panel);
+        if (contentH < 1 && !isRetry)
+        {
+            double bootstrap = MeasureActiveTabColumnHeight()
+                + RootGrid.Margin.Top + RootGrid.Margin.Bottom
+                + (AppTitleBar?.ActualHeight > 0 ? AppTitleBar.ActualHeight : FluentTitleBarFallbackHeight);
+            Height = Math.Max(MinFitWindowHeight, bootstrap);
+            Dispatcher.BeginInvoke(() => ApplyHeightToRenderedForm(force, isRetry: true), DispatcherPriority.ApplicationIdle);
+            return;
+        }
+        if (contentH < 1) return;
+
+        double tabsColumnH;
+        try
+        {
+            var bottom = scroll.TransformToAncestor(MainTabs).Transform(new System.Windows.Point(0, contentH));
+            tabsColumnH = bottom.Y;
+        }
+        catch (InvalidOperationException)
+        {
+            if (!isRetry)
+                Dispatcher.BeginInvoke(() => ApplyHeightToRenderedForm(force, isRetry: true), DispatcherPriority.ApplicationIdle);
+            return;
+        }
+
+        if (tabsColumnH < 1) return;
+
         double titleBarH = AppTitleBar?.ActualHeight > 0
             ? AppTitleBar.ActualHeight
             : FluentTitleBarFallbackHeight;
+        double targetH = tabsColumnH + RootGrid.Margin.Top + RootGrid.Margin.Bottom + titleBarH;
 
-        double clientH = Math.Max(contentH + tabHeaderH + panelMarginV, leftMinH) + gridMarginV + titleBarH;
-        Height = Math.Max(MinFitWindowHeight, clientH);
+        if (!force)
+            targetH = Math.Max(MinFitWindowHeight, targetH);
+        if (!force && Math.Abs(Height - targetH) < 1.5) return;
+        Height = targetH;
+        TryApplyInitialScreenCenter();
     }
 
-    // 在无限高度约束下测量面板内容的期望高度；面板未排布时退回到约定测量宽度。
-    private static double MeasurePanelHeight(FrameworkElement? panel)
+    /// <summary>应用启动后首次展示时，在主屏工作区内水平+垂直居中（补充 CenterScreen，仅执行一次）。</summary>
+    private void TryApplyInitialScreenCenter()
     {
+        if (_initialScreenCenterApplied || WindowState != WindowState.Normal) return;
+        _initialScreenCenterApplied = true;
+
+        UpdateLayout();
+        double w = ActualWidth > 0 ? ActualWidth : Width;
+        double h = ActualHeight > 0 ? ActualHeight : Height;
+        var area = SystemParameters.WorkArea;
+        Left = area.Left + Math.Max(0, (area.Width - w) / 2);
+        Top = area.Top + Math.Max(0, (area.Height - h) / 2);
+    }
+
+    /// <summary>ScrollViewer 内表单真实高度：累加可见子元素，避免 ExtentHeight / Measure 对嵌套 StackPanel 高估。</summary>
+    private static double GetScrollContentHeight(ScrollViewer scroll, FrameworkElement panel)
+    {
+        if (panel is StackPanel sp)
+        {
+            sp.UpdateLayout();
+            double h = panel.Margin.Top + MeasureStackPanelVisibleHeight(sp) + panel.Margin.Bottom;
+            if (h > 0) return h;
+        }
+        scroll.UpdateLayout();
+        return scroll.ExtentHeight;
+    }
+
+    /// <summary>纵向 StackPanel：仅累加 Visible 直接子项（含嵌套 StackPanel 递归）。</summary>
+    private static double MeasureStackPanelVisibleHeight(StackPanel panel)
+    {
+        double y = 0;
+        foreach (UIElement child in panel.Children)
+        {
+            if (child is not FrameworkElement fe || fe.Visibility != Visibility.Visible)
+                continue;
+            y += fe.Margin.Top;
+            y += MeasureElementSubtreeHeight(fe);
+            y += fe.Margin.Bottom;
+        }
+        return y;
+    }
+
+    private static double MeasureElementSubtreeHeight(FrameworkElement fe)
+    {
+        if (fe.Visibility != Visibility.Visible) return 0;
+        fe.UpdateLayout();
+
+        if (fe is StackPanel sp)
+            return MeasureStackPanelVisibleHeight(sp);
+
+        if (fe.ActualHeight > 0)
+            return fe.ActualHeight;
+
+        double w = fe.ActualWidth > 0 ? fe.ActualWidth : EditPanelMeasureWidth;
+        fe.Measure(new System.Windows.Size(w, double.PositiveInfinity));
+        return fe.DesiredSize.Height;
+    }
+
+    /// <summary>右侧 Tab 列总高 = Tab 标签栏实测 + 表单边距 + 表单内容实测。</summary>
+    private double MeasureActiveTabColumnHeight()
+    {
+        var panel = GetActiveFormPanel();
         if (panel == null) return 0;
+
+        double formH = MeasureFormPanelHeight(panel);
+        double tabStripH = GetTabStripHeight();
+        double panelMarginV = panel.Margin.Top + panel.Margin.Bottom;
+        return tabStripH + panelMarginV + formH;
+    }
+
+    private FrameworkElement? GetActiveFormPanel() => MainTabs.SelectedItem switch
+    {
+        TabItem t when t == TaskTab => TaskEditPanel,
+        TabItem t when t == SettingsTab => SettingsPanel,
+        _ => null,
+    };
+
+    private double GetTabStripHeight()
+    {
+        MainTabs.UpdateLayout();
+        var tabPanel = FindVisualChild<TabPanel>(MainTabs);
+        if (tabPanel?.ActualHeight > 0)
+            return tabPanel.ActualHeight;
+        return 28;
+    }
+
+    private double MeasureFormPanelHeight(FrameworkElement panel)
+    {
+        if (panel is StackPanel sp)
+        {
+            sp.UpdateLayout();
+            double h = MeasureStackPanelVisibleHeight(sp);
+            if (h > 0) return h;
+        }
         panel.UpdateLayout();
         double w = panel.ActualWidth > 0 ? panel.ActualWidth : EditPanelMeasureWidth;
         panel.Measure(new System.Windows.Size(w, double.PositiveInfinity));
         return panel.DesiredSize.Height;
     }
 
-    private void ScheduleFitHeightToTaskEditor()
+    private static T? FindVisualParent<T>(DependencyObject? child) where T : DependencyObject
+    {
+        while (child is not null)
+        {
+            if (child is T match) return match;
+            child = VisualTreeHelper.GetParent(child);
+        }
+        return null;
+    }
+
+    private static T? FindVisualChild<T>(DependencyObject parent) where T : DependencyObject
+    {
+        for (int i = 0; i < VisualTreeHelper.GetChildrenCount(parent); i++)
+        {
+            var child = VisualTreeHelper.GetChild(parent, i);
+            if (child is T match) return match;
+            var found = FindVisualChild<T>(child);
+            if (found != null) return found;
+        }
+        return null;
+    }
+
+    private void OnMainTabsSelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (!_layoutReady || e.AddedItems.Count == 0) return;
+        // 「关于」页内容可滚动，切换时不改窗口高度。
+        if (e.AddedItems[0] == AboutTab) return;
+        ScheduleFitHeightToTaskEditor(force: true);
+    }
+
+    /// <summary>用户拖拽改变窗体尺寸时暂停自动增高，避免与 FitHeight 争用 UI 线程。</summary>
+    private void OnWindowSizeChanged(object sender, SizeChangedEventArgs e)
     {
         if (!_layoutReady) return;
-        Dispatcher.BeginInvoke(FitHeightToTaskEditor, DispatcherPriority.Loaded);
+        _suspendAutoFitHeight = true;
+        _resizeSettleTimer ??= new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(400) };
+        _resizeSettleTimer.Stop();
+        _resizeSettleTimer.Tick -= OnResizeSettled;
+        _resizeSettleTimer.Tick += OnResizeSettled;
+        _resizeSettleTimer.Start();
+    }
+
+    private void OnResizeSettled(object? sender, EventArgs e)
+    {
+        _resizeSettleTimer?.Stop();
+        _suspendAutoFitHeight = false;
+    }
+
+    private double MeasurePanelHeight(FrameworkElement? panel)
+    {
+        if (panel == null) return 0;
+        return MeasureFormPanelHeight(panel);
+    }
+
+    private void ScheduleFitHeightToTaskEditor(bool force = false)
+    {
+        if (!_layoutReady || _fitHeightPending) return;
+        if (!force && _suspendAutoFitHeight) return;
+        _fitHeightPending = true;
+        Dispatcher.BeginInvoke(() =>
+        {
+            _fitHeightPending = false;
+            if (force || !_suspendAutoFitHeight)
+                FitHeightToTaskEditor(force);
+        }, DispatcherPriority.ApplicationIdle);
     }
 
     private static int ParseIntItem(ComboBox box, int fallback) =>
@@ -887,6 +1179,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.";
         OnNew(sender, e);
         MainTabs.SelectedItem = TaskTab;
         NameBox.Focus();
+        ScheduleFitHeightToTaskEditor(force: true);
     }
 
     private void OnPresetName(object sender, RoutedEventArgs e)
@@ -1101,9 +1394,9 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.";
         return true;
     }
 
-    private void ApplyTasksFromServer(IReadOnlyList<TaskDto> tasks, int revision)
+    private void ApplyTasksFromServer(IReadOnlyList<TaskDto> tasks, int revision, bool force = false)
     {
-        if (revision <= _appliedTasksRevision && _session.TasksHydrated)
+        if (!force && revision <= _appliedTasksRevision && _session.TasksHydrated && !NeedsTasksUiHydrate())
         {
             DesktopLog.Info($"ConfigWindow.ApplyTasksFromServer skip stale rev={revision} applied={_appliedTasksRevision}");
             return;
@@ -1220,6 +1513,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.";
 
         _lastSavedDto = BuildCurrentDto();
         _session.Write.LoadingTask = false;
+        ScheduleFitHeightToTaskEditor(force: true);
     }
 
     private void OnNew(object sender, RoutedEventArgs e)
@@ -1243,6 +1537,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.";
         DuplicateTaskButton.Visibility = Visibility.Collapsed;
         CompleteTaskButton.Visibility = Visibility.Collapsed;
         StatusText.Text = "新建任务";
+        ScheduleFitHeightToTaskEditor(force: true);
     }
 
     private void OnDelete(object sender, RoutedEventArgs e)

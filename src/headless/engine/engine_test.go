@@ -548,3 +548,26 @@ func TestMutatingCommandsReturnTasksSnapshot(t *testing.T) {
 		t.Fatalf("expected one completed task in response, got %+v", tasks)
 	}
 }
+
+func TestRequestStateReturnsComputedFrame(t *testing.T) {
+	t.Setenv("APPDATA", t.TempDir())
+	store, err := config.Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	eng := New(store, nil)
+
+	start := mustTime("2026-06-25T08:00:00+08:00")
+	end := mustTime("2026-06-25T18:00:00+08:00")
+	tk := makeTask("t1", start, start, end)
+	eng.HandleCommand(ipc.Command{Action: "createTask", Task: tk})
+
+	resp := eng.HandleCommand(ipc.Command{Action: "requestState"})
+	st, ok := resp.(ipc.State)
+	if !ok {
+		t.Fatalf("requestState should return ipc.State, got %T", resp)
+	}
+	if !st.Visible || len(st.Segments) == 0 {
+		t.Fatalf("expected visible state with segments, got visible=%v segs=%d", st.Visible, len(st.Segments))
+	}
+}

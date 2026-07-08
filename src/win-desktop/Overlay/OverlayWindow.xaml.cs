@@ -29,8 +29,11 @@ public partial class OverlayWindow : Window
     public const string PositionLeft = "left";
     public const string PositionRight = "right";
 
-    // 颜色轮换呼吸：相邻颜色之间过渡的单步时长（一个半周期），保持与原单任务呼吸一致的节拍。
-    private const double BlinkStepSec = 0.8;
+    // 颜色轮换：整周期目标时长（多色时按颜色数均分步长）；单色呼吸用原色↔暗色（不用透明，避免透出下层非到期段）。
+    private const double BlinkCycleTargetSec = 4.0;
+    private const double BlinkStepMinSec = 0.55;
+    private const double BlinkStepMaxSec = 1.15;
+    private const double BlinkSingleBreatheStepSec = 0.85;
     // 全局相位锚点（App 启动时刻，跨所有 OverlayWindow 共享）：各边按同一墙钟相位轮换；
     // 当各边颜色序列相同时（四边环绕 / 全屏庆祝）即同步显示同一颜色。
     private static readonly DateTime BlinkAnchorUtc = DateTime.UtcNow;
@@ -145,7 +148,7 @@ public partial class OverlayWindow : Window
         // 以便任务被重新设定时间后再次到期可重新闪烁。
         _blinkingIds.Clear();
         foreach (var s in _segments)
-            if (s.Expired && IsBlinkBehavior(s))
+            if (IsExpiredBlinkPaletteSegment(s))
                 _blinkingIds.Add(s.TaskId);
         _acknowledgedBlink.IntersectWith(_blinkingIds);
 
@@ -203,16 +206,25 @@ public partial class OverlayWindow : Window
         }
     }
 
+    /// <summary>清除渲染缓存，强制下次按当前分段重绘（休眠唤醒等场景）。</summary>
+    public void InvalidateVisualCache()
+    {
+        _lastRenderSig = "";
+        _lastGifTickMs = 0;
+    }
+
     /// <summary>在屏幕布局变化时立即重算窗口位置与尺寸，并触发一次重绘。</summary>
     public void RefreshLayout()
     {
+        InvalidateVisualCache();
         UpdateWindowBounds();
         Render();
         UpdateSprites(IsVisible);
+        if (IsVisible) HookGifRendering();
     }
 
     // 用「颜色序列」驱动本边共享画刷的轮换呼吸：在 seq 各颜色间循环平滑过渡（正弦缓动），
-    // 每步 BlinkStepSec。序列未变则保持动画连续；变化才重建并按全局锚点 Seek 对齐相位，
+    // 步长随颜色数调整，使整周期约 BlinkCycleTargetSec。序列未变则保持动画连续；变化才重建并按全局锚点 Seek 对齐相位，
     // 使颜色序列相同的各边（四边环绕 / 全屏庆祝）同步显示同一颜色。
     private void UpdateBlinkBrush(List<Color> seq)
     {
@@ -220,7 +232,8 @@ public partial class OverlayWindow : Window
         if (sig == _blinkSeqSig) return; // 序列未变 → 不重启，相位连续
         _blinkSeqSig = sig;
 
-        double total = seq.Count * BlinkStepSec;
+        double stepSec = BlinkStepSeconds(seq.Count);
+        double total = seq.Count * stepSec;
         var ease = new SineEase { EasingMode = EasingMode.EaseInOut };
         var anim = new ColorAnimationUsingKeyFrames
         {
@@ -228,7 +241,7 @@ public partial class OverlayWindow : Window
             RepeatBehavior = RepeatBehavior.Forever,
         };
         for (int i = 0; i < seq.Count; i++)
-            anim.KeyFrames.Add(new EasingColorKeyFrame(seq[i], KeyTime.FromTimeSpan(TimeSpan.FromSeconds(i * BlinkStepSec)), ease));
+            anim.KeyFrames.Add(new EasingColorKeyFrame(seq[i], KeyTime.FromTimeSpan(TimeSpan.FromSeconds(i * stepSec)), ease));
         // 末尾回到首色，形成闭环。
         anim.KeyFrames.Add(new EasingColorKeyFrame(seq[0], KeyTime.FromTimeSpan(TimeSpan.FromSeconds(total)), ease));
         anim.Freeze();
@@ -399,9 +412,10 @@ public partial class OverlayWindow : Window
         if (sig == _lastRenderSig && BarCanvas.Children.Count > 0) return;
         _lastRenderSig = sig;
 
-        // 本边需闪烁的段（到期 + 含 blink/celebrate + 未确认）；按 taskId 取去重颜色，组成轮换序列。
+        // 呼吸/庆祝渐变色：仅「已到期且未完成」且启用 blink/celebrate 的段（Expired=true）。
+        // 单色用原色↔暗色脉冲（不用透明，避免全屏庆祝时透出进行中/未开始段的颜色）。
         var blinkSegs = _segments
-            .Where(s => s.Expired && !_acknowledgedBlink.Contains(s.TaskId) && IsBlinkBehavior(s))
+            .Where(s => IsExpiredBlinkPaletteSegment(s) && !_acknowledgedBlink.Contains(s.TaskId))
             .ToList();
         var blinkSet = new HashSet<string>(blinkSegs.Select(s => s.TaskId));
         var blinkColors = blinkSegs
@@ -416,10 +430,7 @@ public partial class OverlayWindow : Window
         }
         else
         {
-            // 单色补一个透明 → 色↔透明呼吸；多色直接在各色间轮换（不插透明）。
-            var seq = blinkColors.Count == 1
-                ? new List<Color> { blinkColors[0], Colors.Transparent }
-                : blinkColors;
+            var seq = BuildBlinkColorSequence(blinkColors);
             UpdateBlinkBrush(seq);
         }
 
@@ -499,6 +510,28 @@ public partial class OverlayWindow : Window
     private static bool IsBlinkBehavior(Segment seg) =>
         seg.Behaviors != null && (seg.Behaviors.Contains("blink") || seg.Behaviors.Contains("celebrate"));
 
+    /// <summary>是否纳入呼吸/庆祝渐变色板：已到期未完成（Segment.Expired）且含 blink/celebrate。</summary>
+    private static bool IsExpiredBlinkPaletteSegment(Segment seg) =>
+        seg.Expired && IsBlinkBehavior(seg);
+
+    private static List<Color> BuildBlinkColorSequence(IReadOnlyList<Color> expiredColors)
+    {
+        if (expiredColors.Count == 0) return new List<Color>();
+        if (expiredColors.Count == 1)
+            return new List<Color> { expiredColors[0], DimColor(expiredColors[0]) };
+        return expiredColors.ToList();
+    }
+
+    private static double BlinkStepSeconds(int seqLength)
+    {
+        if (seqLength <= 2)
+            return BlinkSingleBreatheStepSec;
+        return Math.Clamp(BlinkCycleTargetSec / seqLength, BlinkStepMinSec, BlinkStepMaxSec);
+    }
+
+    private static Color DimColor(Color c, double factor = 0.38) =>
+        Color.FromArgb(c.A, (byte)(c.R * factor), (byte)(c.G * factor), (byte)(c.B * factor));
+
     // 渲染签名：涵盖所有影响绘制与闪烁判定的输入；据此决定是否需要重建。
     private string BuildRenderSignature(double w, double h)
     {
@@ -507,7 +540,7 @@ public partial class OverlayWindow : Window
           .Append(w).Append('|').Append(h).Append('|').Append(_barHeightPx).Append('|');
         foreach (var s in _segments)
         {
-            bool blink = IsBlinkBehavior(s);
+            bool blink = IsExpiredBlinkPaletteSegment(s);
             sb.Append(s.TaskId).Append(':').Append(s.BarStart).Append(':').Append(s.FillEnd)
               .Append(':').Append(s.Color).Append(':').Append(s.Expired ? 1 : 0)
               .Append(':').Append(blink && !_acknowledgedBlink.Contains(s.TaskId) ? 1 : 0)

@@ -46,13 +46,19 @@ type Command struct {
 // CommandHandler 处理一条命令，可返回需要单播给该客户端的响应（如 listTasks）。
 type CommandHandler func(cmd Command) any
 
+// clientConn 单条管道连接：写操作须持 mu，避免 serveConn 回包与 Broadcast 并发写同一 bufio.Writer。
+type clientConn struct {
+	w  *bufio.Writer
+	mu sync.Mutex
+}
+
 // Server 管理命名管道监听与客户端连接。
 type Server struct {
 	log     *slog.Logger
 	handler CommandHandler
 
 	mu      sync.Mutex
-	clients map[net.Conn]*bufio.Writer
+	clients map[net.Conn]*clientConn
 	last    *State
 }
 
@@ -61,7 +67,7 @@ func NewServer(log *slog.Logger, handler CommandHandler) *Server {
 	return &Server{
 		log:     log,
 		handler: handler,
-		clients: make(map[net.Conn]*bufio.Writer),
+		clients: make(map[net.Conn]*clientConn),
 	}
 }
 
@@ -91,16 +97,16 @@ func (s *Server) Listen() error {
 }
 
 func (s *Server) serveConn(conn net.Conn) {
-	w := bufio.NewWriter(conn)
+	cc := &clientConn{w: bufio.NewWriter(conn)}
 	s.mu.Lock()
-	s.clients[conn] = w
+	s.clients[conn] = cc
 	last := s.last
 	s.mu.Unlock()
 	s.log.Info("client connected")
 
 	// 新连接立即推送最近一次状态，避免空窗。
 	if last != nil {
-		s.writeTo(conn, w, last)
+		s.writeTo(conn, cc, last)
 	}
 
 	defer func() {
@@ -127,7 +133,7 @@ func (s *Server) serveConn(conn net.Conn) {
 			continue
 		}
 		if resp := s.handler(cmd); resp != nil {
-			s.writeTo(conn, w, resp)
+			s.writeTo(conn, cc, resp)
 		}
 	}
 }
@@ -143,23 +149,25 @@ func (s *Server) Broadcast(st State) {
 	s.mu.Unlock()
 	for _, c := range conns {
 		s.mu.Lock()
-		w := s.clients[c]
+		cc := s.clients[c]
 		s.mu.Unlock()
-		if w != nil {
-			s.writeTo(c, w, st)
+		if cc != nil {
+			s.writeTo(c, cc, st)
 		}
 	}
 }
 
-func (s *Server) writeTo(conn net.Conn, w *bufio.Writer, v any) {
+func (s *Server) writeTo(conn net.Conn, cc *clientConn, v any) {
 	b, err := json.Marshal(v)
 	if err != nil {
 		return
 	}
 	b = append(b, '\n')
-	if _, err := w.Write(b); err != nil {
+	cc.mu.Lock()
+	defer cc.mu.Unlock()
+	if _, err := cc.w.Write(b); err != nil {
 		s.log.Warn("write failed", "err", err)
 		return
 	}
-	_ = w.Flush()
+	_ = cc.w.Flush()
 }

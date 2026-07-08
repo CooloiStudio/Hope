@@ -47,9 +47,16 @@ public partial class App : Application
 
     private ScreenLayoutInfo? _currentScreenLayout;
     private DispatcherTimer? _layoutTimer;
+    private DispatcherTimer? _displayChangeDebounce;
 
-    /// <summary>启动后是否已检查过空任务列表；仅第一次为空时自动打开设置窗口。</summary>
-    private bool _checkedEmptyTasks;
+    /// <summary>启动后是否已决定是否自动打开设置窗（须 settings+tasks 均水合后再判）。</summary>
+    private bool _startupConfigOpenDecided;
+
+    private DispatcherTimer? _sessionSnapshotRetry;
+    private int _sessionSnapshotAttempts;
+
+    /// <summary>最近一次 Headless 广播状态，供唤醒时兜底重绘。</summary>
+    private StateMessage? _lastStateMessage;
 
     /// <summary>是否已经因致命错误进入退出流程，避免重复弹窗。</summary>
     private bool _fatalExiting;
@@ -106,6 +113,7 @@ public partial class App : Application
         _layoutTimer.Start();
 
         SystemEvents.DisplaySettingsChanged += OnDisplaySettingsChanged;
+        SystemEvents.PowerModeChanged += OnPowerModeChanged;
 
         SetupTray();
         SetupUpdates();
@@ -156,30 +164,79 @@ public partial class App : Application
         DesktopLog.Info($"IPC connection changed connected={connected}");
         if (connected)
         {
-            _ipc.Send(new Command { Action = "getSettings" });
-            _ipc.Send(new Command { Action = "getVersion" });
-            _ipc.Send(new Command { Action = "listTasks" });
-            SendScreenSize();
+            _sessionSnapshotAttempts = 0;
+            RequestSessionSnapshot();
+            StartSessionSnapshotRetry();
         }
+        else
+        {
+            StopSessionSnapshotRetry();
+        }
+    }
+
+    private void RequestSessionSnapshot()
+    {
+        _ipc.Send(new Command { Action = "getSettings" });
+        _ipc.Send(new Command { Action = "getVersion" });
+        _ipc.Send(new Command { Action = "listTasks" });
+        SendScreenSize();
+    }
+
+    private void StartSessionSnapshotRetry()
+    {
+        StopSessionSnapshotRetry();
+        _sessionSnapshotRetry = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(400) };
+        _sessionSnapshotRetry.Tick += OnSessionSnapshotRetryTick;
+        _sessionSnapshotRetry.Start();
+    }
+
+    private void StopSessionSnapshotRetry()
+    {
+        if (_sessionSnapshotRetry == null) return;
+        _sessionSnapshotRetry.Stop();
+        _sessionSnapshotRetry.Tick -= OnSessionSnapshotRetryTick;
+        _sessionSnapshotRetry = null;
+    }
+
+    private void OnSessionSnapshotRetryTick(object? sender, EventArgs e)
+    {
+        if (!_ipc.IsConnected)
+        {
+            StopSessionSnapshotRetry();
+            return;
+        }
+
+        if (_session.SettingsHydrated && _session.TasksHydrated)
+        {
+            DesktopLog.Info("App session snapshot retry: satisfied");
+            StopSessionSnapshotRetry();
+            TryOpenStartupConfigWindow();
+            return;
+        }
+
+        if (++_sessionSnapshotAttempts > 10)
+        {
+            DesktopLog.Warn($"App session snapshot retry: gave up attempts={_sessionSnapshotAttempts} " +
+                            $"settingsHydrated={_session.SettingsHydrated} tasksHydrated={_session.TasksHydrated}");
+            StopSessionSnapshotRetry();
+            return;
+        }
+
+        DesktopLog.Info($"App session snapshot retry attempt={_sessionSnapshotAttempts}");
+        _ipc.Send(new Command { Action = "getSettings" });
+        _ipc.Send(new Command { Action = "listTasks" });
     }
 
     private void OnTasksReceived(List<TaskDto> tasks)
     {
+        DesktopLog.Info($"App.OnTasksReceived count={tasks.Count}");
         Dispatcher.BeginInvoke(() =>
         {
-            if (!_checkedEmptyTasks)
-            {
-                _checkedEmptyTasks = true;
-                if (tasks.Count == 0)
-                {
-                    DesktopLog.Info("No tasks found at startup, opening config window automatically");
-                    ShowConfig();
-                }
-            }
-
             _session.ApplyTasks(tasks);
+            SyncConfigWindowFromSession();
             UpdateTrayTooltipFromTasks();
-        }, DispatcherPriority.Background);
+            TryOpenStartupConfigWindow();
+        });
     }
 
     private void OnHeadlessFatalFailure(string reason)
@@ -222,7 +279,30 @@ public partial class App : Application
         });
     }
 
-    private bool _startupConfigHandled;
+
+    /// <summary>IPC 写入 Session 后，若设置窗已打开则强制同步 UI（弥补订阅前已水合或 revision 跳过）。</summary>
+    private void SyncConfigWindowFromSession()
+    {
+        if (_config is not { IsVisible: true }) return;
+        _config.HydrateFromSession(force: true);
+    }
+
+    /// <summary>settings 与 tasks 均水合后，再按「启动打开设置」或空任务列表决定是否开窗。</summary>
+    private void TryOpenStartupConfigWindow()
+    {
+        if (_startupConfigOpenDecided) return;
+        if (!_session.SettingsHydrated || !_session.TasksHydrated) return;
+
+        _startupConfigOpenDecided = true;
+        var settings = _session.Settings;
+        bool showAtRuntime = settings?.ShowConfigAtRuntime == true;
+        bool noTasks = _session.Tasks.Count == 0;
+        if (showAtRuntime || noTasks)
+        {
+            DesktopLog.Info($"TryOpenStartupConfigWindow showAtRuntime={showAtRuntime} noTasks={noTasks}");
+            ShowConfig();
+        }
+    }
 
     /// <summary>检测主屏布局变化；变化时同步后端尺寸并让各 Overlay 立即重算位置。</summary>
     private void RefreshScreenLayout()
@@ -269,9 +349,59 @@ public partial class App : Application
                Math.Abs(a.Height - b.Height) < 0.01;
     }
 
-    private void OnDisplaySettingsChanged(object? sender, EventArgs e)
+    private void OnDisplaySettingsChanged(object? sender, EventArgs e) =>
+        Dispatcher.BeginInvoke(() => ScheduleRefreshScreenLayout("DisplaySettingsChanged"));
+
+    private void OnPowerModeChanged(object sender, PowerModeChangedEventArgs e)
     {
-        Dispatcher.BeginInvoke(() => RefreshScreenLayout());
+        if (e.Mode != PowerModes.Resume) return;
+        DesktopLog.Info("Power resume detected, refreshing overlay state and screen layout");
+        Dispatcher.BeginInvoke(() =>
+        {
+            RequestOverlayStateRefresh();
+            ScheduleRefreshScreenLayout("PowerResume", delayMs: 800);
+        });
+    }
+
+    /// <summary>按当前墙钟向 Headless 索取一帧顶栏状态并刷新 Overlay（休眠唤醒后进度条/图片停滞）。</summary>
+    private void RequestOverlayStateRefresh()
+    {
+        foreach (var overlay in _overlays.Values)
+            overlay.InvalidateVisualCache();
+
+        if (_ipc.IsConnected)
+        {
+            DesktopLog.Info("App.RequestOverlayStateRefresh via IPC requestState");
+            _ipc.Send(new Command { Action = "requestState" });
+            return;
+        }
+
+        if (_lastStateMessage != null)
+        {
+            DesktopLog.Warn("App.RequestOverlayStateRefresh: IPC disconnected, re-dispatching last state");
+            var all = _lastStateMessage.Segments ?? new List<Segment>();
+            DispatchState(_lastStateMessage, IsCelebrateActive(all));
+        }
+    }
+
+    /// <summary>合并短时间内的多次屏幕布局变更（唤醒、分辨率切换等），减轻 UI 线程突发负载。</summary>
+    private void ScheduleRefreshScreenLayout(string reason, int delayMs = 400)
+    {
+        _displayChangeDebounce ??= new DispatcherTimer();
+        _displayChangeDebounce.Interval = TimeSpan.FromMilliseconds(delayMs);
+        _displayChangeDebounce.Stop();
+        _displayChangeDebounce.Tick -= OnDisplayChangeDebounceTick;
+        _displayChangeDebounce.Tag = reason;
+        _displayChangeDebounce.Tick += OnDisplayChangeDebounceTick;
+        _displayChangeDebounce.Start();
+    }
+
+    private void OnDisplayChangeDebounceTick(object? sender, EventArgs e)
+    {
+        _displayChangeDebounce?.Stop();
+        var reason = _displayChangeDebounce?.Tag as string ?? "unknown";
+        DesktopLog.Info($"Screen layout refresh scheduled reason={reason}");
+        RefreshScreenLayout();
     }
 
     private void OnSessionSettingsChanged(SettingsDto s)
@@ -310,11 +440,8 @@ public partial class App : Application
                 }
             }
 
-            if (!_startupConfigHandled)
-            {
-                _startupConfigHandled = true;
-                if (s.ShowConfigAtRuntime) ShowConfig();
-            }
+            SyncConfigWindowFromSession();
+            TryOpenStartupConfigWindow();
         });
     }
 
@@ -409,6 +536,7 @@ public partial class App : Application
     {
         Dispatcher.BeginInvoke(() =>
         {
+            _lastStateMessage = msg;
             var all = msg.Segments ?? new List<Segment>();
             bool celebrate = IsCelebrateActive(all);
             if (_session.OverlayAllFour || celebrate)
@@ -652,7 +780,8 @@ public partial class App : Application
             {
                 DesktopLog.Info("ShowConfigCore: creating ConfigWindow");
                 _config = new ConfigWindow(_ipc, _session, _updates);
-                _config.HydrateFromSession();
+                _config.HydrateFromSession(force: true);
+                _config.ResetTaskEditorForNew();
             }
 
             if (_config == null)
@@ -679,9 +808,9 @@ public partial class App : Application
                 _config.WindowState = WindowState.Normal;
                 _config.Activate();
                 _config.EnsureFluentBackdrop();
-                _config.HydrateFromSession();
+                _config.HydrateFromSession(force: true);
                 _config.RequestRefresh();
-                _config.FitHeightToTaskEditor();
+                _config.FitHeightToTaskEditor(force: true);
                 DesktopLog.Info($"ShowConfigCore: done IsVisible={_config.IsVisible} IsActive={_config.IsActive}");
             }, System.Windows.Threading.DispatcherPriority.ApplicationIdle);
         }
@@ -703,6 +832,9 @@ public partial class App : Application
         ApplicationThemeManager.Changed -= OnAppThemeChanged;
         SystemEvents.UserPreferenceChanged -= OnUserPreferenceChanged;
         SystemEvents.DisplaySettingsChanged -= OnDisplaySettingsChanged;
+        SystemEvents.PowerModeChanged -= OnPowerModeChanged;
+        _displayChangeDebounce?.Stop();
+        StopSessionSnapshotRetry();
 
         _layoutTimer?.Stop();
         _updateTimer?.Stop();
