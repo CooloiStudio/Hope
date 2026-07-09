@@ -117,6 +117,7 @@ jobs:
         env:
           HOPE_MSIX_IDENTITY_NAME: ${{ secrets.HOPE_MSIX_IDENTITY_NAME }}
           HOPE_MSIX_PUBLISHER: ${{ secrets.HOPE_MSIX_PUBLISHER }}
+          HOPE_MSIX_PUBLISHER_DISPLAY_NAME: ${{ secrets.HOPE_MSIX_PUBLISHER_DISPLAY_NAME }}
         run: |
           & "${{ github.workspace }}\scripts\pack-msix.ps1" `
             -StageDir "${{ github.workspace }}\stage" `

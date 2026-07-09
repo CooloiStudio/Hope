@@ -4,6 +4,7 @@
 # 可选环境变量（须与 Partner Center → 产品身份 一致）：
 #   HOPE_MSIX_IDENTITY_NAME  包身份 Name（默认 CooloiStudio.Hope）
 #   HOPE_MSIX_PUBLISHER      发布者 DN（默认占位，上架前请在 CI Secrets 中配置真实值）
+#   HOPE_MSIX_PUBLISHER_DISPLAY_NAME  发布者显示名（须与 Partner Center 一致，默认 Cooloi）
 
 param(
     [Parameter(Mandatory = $true)][string]$StageDir,
@@ -21,6 +22,7 @@ $packageName = if ($env:HOPE_MSIX_IDENTITY_NAME) { $env:HOPE_MSIX_IDENTITY_NAME 
 $publisher = if ($env:HOPE_MSIX_PUBLISHER) { $env:HOPE_MSIX_PUBLISHER } else {
     "CN=00000000-0000-0000-0000-000000000000"
 }
+$publisherDisplayName = if ($env:HOPE_MSIX_PUBLISHER_DISPLAY_NAME) { $env:HOPE_MSIX_PUBLISHER_DISPLAY_NAME } else { "Cooloi" }
 
 # MSIX 版本须为四段式：0.13.83 → 0.13.83.0
 $parts = $Version.Split(".")
@@ -69,6 +71,7 @@ try {
     $manifest = Get-Content $templatePath -Raw -Encoding UTF8
     $manifest = $manifest.Replace("{{PACKAGE_NAME}}", [System.Security.SecurityElement]::Escape($packageName))
     $manifest = $manifest.Replace("{{PUBLISHER}}", [System.Security.SecurityElement]::Escape($publisher))
+    $manifest = $manifest.Replace("{{PUBLISHER_DISPLAY_NAME}}", [System.Security.SecurityElement]::Escape($publisherDisplayName))
     $manifest = $manifest.Replace("{{PACKAGE_VERSION}}", $packageVersion)
     $manifestPath = Join-Path $layout "AppxManifest.xml"
     [System.IO.File]::WriteAllText($manifestPath, $manifest, (New-Object System.Text.UTF8Encoding $false))

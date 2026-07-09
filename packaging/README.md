@@ -29,6 +29,7 @@ pwsh scripts/pack-msix.ps1 -StageDir stage -OutputDir dist -Version 0.13.83
 
 - **包身份名称** → 环境变量 `HOPE_MSIX_IDENTITY_NAME`（默认 `CooloiStudio.Hope`）
 - **发布者** → 环境变量 `HOPE_MSIX_PUBLISHER`（`CN=...` 完整 DN）
+- **发布者显示名称** → 环境变量 `HOPE_MSIX_PUBLISHER_DISPLAY_NAME`（产品身份页 **Package/Properties/PublisherDisplayName**，默认 `Cooloi`）
 
 在 GitHub Actions Secrets 中配置上述两项后，CI 生成的清单会与商店预留身份一致。
 

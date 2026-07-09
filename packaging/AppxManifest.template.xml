@@ -11,7 +11,7 @@
     ProcessorArchitecture="x64" />
   <Properties>
     <DisplayName>Hope · 盼头</DisplayName>
-    <PublisherDisplayName>Hope</PublisherDisplayName>
+    <PublisherDisplayName>{{PUBLISHER_DISPLAY_NAME}}</PublisherDisplayName>
     <Logo>Assets\StoreLogo.png</Logo>
   </Properties>
   <Dependencies>
