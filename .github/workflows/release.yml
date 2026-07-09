@@ -1,9 +1,11 @@
 name: release
 
-# Phase 1 简化流水线：编译 Go 核心 + WPF 桌面端，用 Inno Setup 打成单个安装包。
+# Phase 1 流水线：编译 Go 核心 + WPF 桌面端，产出双通道制品：
+#   - Inno Setup → Hope_Setup.exe（官网 / 自动更新）
+#   - MSIX → Hope_<版本>_x64.msix（微软商店 Package URL）
 # 发布版本号取自桌面端 Hope.Desktop.csproj 的 <Version>（后端版本独立、无需一致）。
 # Release 正文取自 CHANGELOG.md 中与该版本号匹配的小节（### v<版本>）。
-# 不含 UWP / MSIX 签名（见方案文档 §8）。
+# MSIX 身份见 packaging/README.md（HOPE_MSIX_IDENTITY_NAME / HOPE_MSIX_PUBLISHER）。
 #
 # 触发方式：向 release 分支上的提交打 tag 并推送（tag 形如 v0.13.83）。
 # 仅推送到 release 分支、未打 tag 的提交不会发版。
@@ -110,6 +112,17 @@ jobs:
       - name: Build installer
         run: iscc /DStageDir="${{ github.workspace }}\stage" /DOutputDir="${{ github.workspace }}\dist" /DAppVersion="${{ steps.ver.outputs.version }}" setup.iss
 
+      - name: Build MSIX (Store)
+        shell: pwsh
+        env:
+          HOPE_MSIX_IDENTITY_NAME: ${{ secrets.HOPE_MSIX_IDENTITY_NAME }}
+          HOPE_MSIX_PUBLISHER: ${{ secrets.HOPE_MSIX_PUBLISHER }}
+        run: |
+          & "${{ github.workspace }}\scripts\pack-msix.ps1" `
+            -StageDir "${{ github.workspace }}\stage" `
+            -OutputDir "${{ github.workspace }}\dist" `
+            -Version "${{ steps.ver.outputs.version }}"
+
       - name: Compute installer SHA-256
         shell: pwsh
         run: |
@@ -123,10 +136,12 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Hope_Setup
+          name: Hope_Release
           path: |
             dist/*.exe
             dist/*.sha256
+            dist/*.msix
+            dist/*.msixupload
 
       - name: Create release
         uses: softprops/action-gh-release@v2
@@ -138,3 +153,5 @@ jobs:
           files: |
             dist/*.exe
             dist/*.sha256
+            dist/*.msix
+            dist/*.msixupload

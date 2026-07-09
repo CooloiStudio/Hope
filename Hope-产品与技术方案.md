@@ -37,7 +37,8 @@
 | Desktop 单实例 | ✅ | `Global\HopeDesktop` Mutex |
 | WPF-UI Fluent 主题（配置窗） | ✅ | `App.xaml` 合并主题字典；`FluentWindow` + `TitleBar`；首帧后延迟应用 Mica（Win11）/ Acrylic（Win10），托盘延迟打开 + 隐藏时 `UnWatch`，规避 `Show()` 卡死 |
 | CI 编译 & 单测 | ✅ | `.github/workflows/release.yml`：`go test` + `dotnet publish` |
-| Inno Setup 安装包 | ✅ | `setup.iss`（含可选开机自启任务、`AppMutex` 静默升级）；合并到 `release` 分支触发，按桌面端版本号生成 `v<版本>` Release，正文取自 `CHANGELOG.md`，附 `Hope_Setup.exe.sha256` |
+| Inno Setup 安装包 | ✅ | `setup.iss`（含可选开机自启任务、`AppMutex` 静默升级）；tag 触发发版，附 `Hope_Setup.exe` + `.sha256`（官网 / 自动更新） |
+| MSIX 商店包 | ✅ | `scripts/pack-msix.ps1` + `packaging/`；CI 同 Release 产出 `Hope_<版本>_x64.msix` / `.msixupload`（Partner Center Package URL） |
 | 自动更新（全量） | ✅ | `Services/UpdateService` + `UpdateCoordinator`：多通道检测（GitHub API/网页 + Gitee 兜底）、GitHub/Gitee 下载、SHA-256 校验、静默就地升级；全局「自动下载更新」开关（默认开）、每日检查，详见 §8.1 |
 | VS Code 调试配置 | ✅ | `Hope.sln` + `.vscode/launch.json`（net10.0-windows） |
 | **进度条位置选择** | 🔲 | 全局设置：顶边/底边/左边/右边；默认顶边 |
@@ -194,7 +195,7 @@
 | 单实例 | Go `Global\HopeHeadless`；Desktop `Global\HopeDesktop` | 防止多开 | ✅ |
 | Phase 2 插件协议 | **独立 exe + 同一 IPC 契约** | 隔离崩溃与反作弊风险 | ❌ 仅占位 |
 | 配置存储 | 本地 JSON 文件 | 简单、可备份；路径见 4.4 | ✅ |
-| 首版安装包 | **Inno Setup** | 仅打包 exe，无 MSIX 证书链 | ✅ 脚本就绪 |
+| 首版安装包 | **Inno Setup + MSIX** | Inno：官网与自动更新；MSIX：微软商店（商店重签，无需本地证书链） | ✅ |
 | 仓库结构 | **Monorepo** | 统一 CI、统一版本 | ✅ |
 
 ### 4.2 待选型（剩余）
@@ -726,7 +727,9 @@ Hope/
 │   │   └── Interop/NativeMethods.cs
 │   └── plugins/fullscreen/         # ❌ Phase 2 占位 README
 ├── docs/plugin-ipc.md
-├── setup.iss                       # ✅
+├── setup.iss                       # ✅ Inno Setup（Hope_Setup.exe）
+├── packaging/                      # ✅ MSIX 清单模板与说明
+├── scripts/pack-msix.ps1           # ✅ MSIX 打包（商店）
 ├── Hope-产品与技术方案.md
 └── README.md
 ```
@@ -975,25 +978,33 @@ Hope/
 
 ---
 
-## 8. CI/CD（Phase 1 简化版）✅
+## 8. CI/CD（Phase 1）✅
 
-**`release.yml` 步骤（触发：代码合并 / 推送到 `release` 分支）：**
+**`release.yml` 步骤（触发：在 `release` 分支可达的提交上打 tag `v*` 并推送）：**
 
-1. [x] Checkout
+1. [x] Checkout；校验 tag 提交在 `release` 分支上
 2. [x] Setup Go、.NET 10 SDK
-3. [x] 读取桌面端 `Hope.Desktop.csproj` 的 `<Version>` 作为**发布版本号**（后端 Go 版本独立维护、无需一致）
+3. [x] 读取桌面端 `Hope.Desktop.csproj` 的 `<Version>`，并与 tag 版本一致
 4. [x] 从 `CHANGELOG.md` 抽取 `### v<版本>` 小节作为 Release 正文（抽不到则回退 GitHub 自动生成说明）
 5. [x] 编译 `hope-headless.exe`
 6. [x] `go test ./...`
-7. [x] 编译 `hope-desktop`（`dotnet publish`，自动内嵌 csproj 版本）
-8. [x] Inno Setup 打 `Hope_Setup.exe`（`/DAppVersion=<桌面端版本>` 注入安装包版本；`setup.iss` 设 `AppMutex=Global\HopeDesktop` + `CloseApplications=yes` 以支持静默就地升级）
-9. [x] 计算 `Hope_Setup.exe.sha256`（小写十六进制摘要，供自动更新器校验）
-10. [x] 以 `v<桌面端版本>` 创建 / 更新 GitHub Release 并上传安装包与 `.sha256`
+7. [x] 编译 `hope-desktop`（`dotnet publish` → `stage/`）
+8. [x] Inno Setup 打 **`Hope_Setup.exe`**（官网 / 自动更新；`setup.iss` 设 `AppMutex=Global\HopeDesktop` + `CloseApplications=yes`）
+9. [x] **`scripts/pack-msix.ps1`** 打 **`Hope_<版本>_x64.msix`** 与 **`.msixupload`**（微软商店；身份见 `packaging/README.md` 与 Secrets `HOPE_MSIX_IDENTITY_NAME` / `HOPE_MSIX_PUBLISHER`）
+10. [x] 计算 `Hope_Setup.exe.sha256` 与 `*.msix.sha256`
+11. [x] 以 `v<桌面端版本>` 创建 GitHub Release，上传 **`.exe`、`.sha256`、`.msix`、`.msixupload`**
 
-**首版不需要：**
+**双通道制品：**
 
-- UWP / MSIX 签名
-- 自签名证书注入脚本
+| 制品 | 渠道 | 说明 |
+|------|------|------|
+| `Hope_Setup.exe` | GitHub / Gitee Release、自动更新 | 保留现有 Inno 流程，不变 |
+| `Hope_<版本>_x64.msix` | 微软商店 Package URL | 未签名 MSIX，可由商店重签 |
+| `Hope_<版本>_x64.msixupload` | Partner Center 手动上传 | zip：msix + AppxManifest |
+
+**仍不需要：**
+
+- 本地 MSIX 自签名证书链（商店托管签名）
 - `Add-AppDevPackage.ps1`
 
 ---
@@ -1094,7 +1105,7 @@ Hope/
 | Game Bar UWP 为唯一覆盖层 | Phase 1 改为 DWM 透明窗；Game Bar 降为插件备选 |
 | 首版即覆盖独占全屏 | 独占全屏移至插件 Phase 2 |
 | 三进程 + UWP 沙盒管道 | 首版简化 IPC，无 AppContainer ACL |
-| CI 含 MSIX 签名链 | 首版仅 Inno Setup |
+| CI 含 MSIX 商店包（与 Inno 并行） | 首版无本地 MSIX 签名，商店重签 |
 
 ## 附录 B：参考链接
 

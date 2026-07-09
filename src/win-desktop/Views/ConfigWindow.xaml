@@ -772,6 +772,9 @@
                                     <ui:Button x:Name="DownloadUpdateButton" Content="下载并更新"
                                                Appearance="Primary" Margin="0,0,8,8"
                                                Visibility="Collapsed" Click="OnDownloadUpdate" />
+                                    <ui:Button x:Name="StoreUpdateButton" Content="前往 Microsoft Store 更新"
+                                               Appearance="Primary" Margin="0,0,8,8"
+                                               Visibility="Collapsed" Click="OnOpenStoreUpdate" />
                                     <ui:Button x:Name="InstallUpdateButton" Content="立即安装"
                                                Appearance="Primary" Margin="0,0,8,8"
                                                Visibility="Collapsed" Click="OnInstallUpdate" />

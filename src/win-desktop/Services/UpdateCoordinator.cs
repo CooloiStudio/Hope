@@ -30,8 +30,11 @@ public sealed class UpdateCoordinator
         _telemetry = telemetry;
     }
 
-    /// <summary>是否自动下载更新（来自全局设置，默认开）。关闭后仅检测并提示，不自动下载。</summary>
+    /// <summary>是否自动下载更新（来自全局设置，默认开）。商店版忽略此项，仅提示前往 Microsoft Store。</summary>
     public bool AutoUpdateEnabled { get; set; } = true;
+
+    /// <summary>是否通过 Microsoft Store 分发（MSIX 包身份）。</summary>
+    public static bool IsStoreManaged => InstallChannel.IsStoreManaged;
 
     public UpdateStatus Status { get; private set; } = UpdateStatus.Idle;
     public double DownloadProgress { get; private set; }
@@ -94,15 +97,18 @@ public sealed class UpdateCoordinator
                 }
             }
 
-            SetState(UpdateStatus.Available, $"发现新版本 {info.Tag}。");
+            SetState(UpdateStatus.Available, IsStoreManaged
+                ? $"发现新版本 {info.Tag}，请前往 Microsoft Store 更新。"
+                : $"发现新版本 {info.Tag}。");
             _telemetry?.TrackEvent("update_available", new Dictionary<string, object>
             {
                 ["tag"] = info.Tag,
                 ["source"] = info.Source,
+                ["channel"] = IsStoreManaged ? "store" : "sideload",
             });
             NewVersionAnnounced?.Invoke(info.Tag);
 
-            if (AutoUpdateEnabled)
+            if (AutoUpdateEnabled && !IsStoreManaged)
                 await DownloadAsync().ConfigureAwait(false);
         }
         catch (OperationCanceledException)
@@ -117,10 +123,19 @@ public sealed class UpdateCoordinator
         finally { _busy = false; }
     }
 
-    /// <summary>下载并校验安装包（手动「下载并更新」或自动更新时调用）。</summary>
+    /// <summary>下载并校验安装包（手动「下载并更新」或自动更新时调用）。商店版改为打开 Microsoft Store。</summary>
     public async Task DownloadAsync()
     {
         if (Latest == null) return;
+        if (IsStoreManaged)
+        {
+            if (InstallChannel.TryOpenMicrosoftStore())
+                SetState(UpdateStatus.Available, $"新版本 {Latest.Tag} 请在 Microsoft Store 中安装。");
+            else
+                SetState(UpdateStatus.Failed, "无法打开 Microsoft Store，请从开始菜单打开「Microsoft Store」搜索 Hope 更新。");
+            await Task.CompletedTask;
+            return;
+        }
         var info = Latest;
         try
         {
@@ -165,9 +180,15 @@ public sealed class UpdateCoordinator
         }
     }
 
-    /// <summary>立即安装：拉起安装包静默就地升级并退出当前进程。需先处于 Ready 状态。</summary>
+    /// <summary>立即安装：侧载版拉起 Inno 安装包；商店版打开 Microsoft Store。</summary>
     public void InstallNow()
     {
+        if (IsStoreManaged)
+        {
+            if (Latest != null)
+                InstallChannel.TryOpenMicrosoftStore();
+            return;
+        }
         if (Status != UpdateStatus.Ready || string.IsNullOrEmpty(_installerPath)) return;
         _telemetry?.TrackEvent("update_install", new Dictionary<string, object>
         {

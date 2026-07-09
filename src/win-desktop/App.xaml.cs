@@ -148,9 +148,11 @@ public partial class App : Application
         Dispatcher.BeginInvoke(() =>
         {
             if (_tray == null) return;
-            string msg = _updates.Status == UpdateStatus.Ready
-                ? $"新版本 {tag} 已下载，打开「设置 · 关于」即可安装"
-                : $"发现新版本 {tag}，可在「设置 · 关于」中更新";
+            string msg = Services.InstallChannel.IsStoreManaged
+                ? $"发现新版本 {tag}，请打开 Microsoft Store 更新"
+                : _updates.Status == UpdateStatus.Ready
+                    ? $"新版本 {tag} 已下载，打开「设置 · 关于」即可安装"
+                    : $"发现新版本 {tag}，可在「设置 · 关于」中更新";
             _tray.ShowBalloonTip(5000, "Hope · 有可用更新", msg, ToolTipIcon.Info);
         });
     }

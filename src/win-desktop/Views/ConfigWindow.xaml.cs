@@ -164,6 +164,7 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
         };
 
         AboutVersionText.Text = FormatAppVersion();
+        ApplyInstallChannelSettingsUi();
         RenderUpdateUi();
 
         ContentRendered += (_, _) => EnsureFluentBackdrop();
@@ -998,6 +999,13 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
 
     private void OnUpdateStateChanged() => Dispatcher.BeginInvoke(RenderUpdateUi);
 
+    private void ApplyInstallChannelSettingsUi()
+    {
+        if (!Services.InstallChannel.IsStoreManaged) return;
+        AutoUpdateCheck.IsEnabled = false;
+        AutoUpdateCheck.ToolTip = "Microsoft Store 版由商店推送更新；仍会检查并提示新版本。";
+    }
+
     // 根据协调器状态刷新「关于」页的更新区：状态文本、进度、按钮与更新说明的可见性。
     private void RenderUpdateUi()
     {
@@ -1005,7 +1013,9 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
         var st = _updates.Status;
 
         UpdateStatusText.Text = string.IsNullOrEmpty(_updates.Message)
-            ? "点击「检查更新」获取最新版本。"
+            ? (Services.InstallChannel.IsStoreManaged
+                ? "本版本通过 Microsoft Store 分发，更新由商店托管。"
+                : "点击「检查更新」获取最新版本。")
             : _updates.Message;
 
         bool downloading = st == Services.UpdateStatus.Downloading;
@@ -1014,9 +1024,14 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
 
         CheckUpdateButton.IsEnabled = st != Services.UpdateStatus.Checking && !downloading;
 
+        bool storeManaged = Services.InstallChannel.IsStoreManaged;
         bool hasNew = st is Services.UpdateStatus.Available or Services.UpdateStatus.Ready;
-        DownloadUpdateButton.Visibility = st == Services.UpdateStatus.Available ? Visibility.Visible : Visibility.Collapsed;
-        InstallUpdateButton.Visibility = st == Services.UpdateStatus.Ready ? Visibility.Visible : Visibility.Collapsed;
+        DownloadUpdateButton.Visibility = !storeManaged && st == Services.UpdateStatus.Available
+            ? Visibility.Visible : Visibility.Collapsed;
+        StoreUpdateButton.Visibility = storeManaged && st == Services.UpdateStatus.Available
+            ? Visibility.Visible : Visibility.Collapsed;
+        InstallUpdateButton.Visibility = !storeManaged && st == Services.UpdateStatus.Ready
+            ? Visibility.Visible : Visibility.Collapsed;
         SkipVersionButton.Visibility = hasNew ? Visibility.Visible : Visibility.Collapsed;
 
         var notes = _updates.Latest?.Notes ?? "";
@@ -1036,6 +1051,12 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
 
     private void OnDownloadUpdate(object sender, RoutedEventArgs e) =>
         _ = _updates?.DownloadAsync();
+
+    private void OnOpenStoreUpdate(object sender, RoutedEventArgs e)
+    {
+        if (_updates == null) return;
+        _updates.InstallNow();
+    }
 
     private void OnInstallUpdate(object sender, RoutedEventArgs e)
     {
