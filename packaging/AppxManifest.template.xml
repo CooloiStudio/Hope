@@ -10,7 +10,7 @@
     Version="{{PACKAGE_VERSION}}"
     ProcessorArchitecture="x64" />
   <Properties>
-    <DisplayName>Hope · 盼头</DisplayName>
+    <DisplayName>{{DISPLAY_NAME}}</DisplayName>
     <PublisherDisplayName>{{PUBLISHER_DISPLAY_NAME}}</PublisherDisplayName>
     <Logo>Assets\StoreLogo.png</Logo>
   </Properties>
@@ -24,7 +24,7 @@
   <Applications>
     <Application Id="HopeDesktop" Executable="hope-desktop.exe" EntryPoint="Windows.FullTrustApplication">
       <uap:VisualElements
-        DisplayName="Hope · 盼头"
+        DisplayName="{{DISPLAY_NAME}}"
         Description="任务进度顶栏与时间管理"
         BackgroundColor="transparent"
         Square150x150Logo="Assets\Square150x150Logo.png"

@@ -6,8 +6,8 @@
 
 | 文件 | 用途 |
 |------|------|
-| `Hope_<版本>_x64.msix` | 商店 Package URL（x64） |
-| `Hope_<版本>_x64.msixupload` | Partner Center 上传包（zip：msix + AppxManifest） |
+| `Hope_<版本>_x64.msix` | Partner Center **直接上传**（推荐） |
+| `Hope_<版本>_x64.msixupload` | 同上；实为仅含 `.msix` 的 zip，**不要**内含独立 `AppxManifest.xml` |
 | `Hope_<版本>_x64.msix.sha256` | 校验摘要 |
 
 GitHub Release 仍保留 **`Hope_Setup.exe`**（官网 / 自动更新），互不影响。
@@ -29,7 +29,8 @@ pwsh scripts/pack-msix.ps1 -StageDir stage -OutputDir dist -Version 0.13.83
 
 - **包身份名称** → 环境变量 `HOPE_MSIX_IDENTITY_NAME`（默认 `CooloiStudio.Hope`）
 - **发布者** → 环境变量 `HOPE_MSIX_PUBLISHER`（`CN=...` 完整 DN）
-- **发布者显示名称** → 环境变量 `HOPE_MSIX_PUBLISHER_DISPLAY_NAME`（产品身份页 **Package/Properties/PublisherDisplayName**，默认 `Cooloi`）
+- **发布者显示名称** → `HOPE_MSIX_PUBLISHER_DISPLAY_NAME`（默认 `Cooloi`）
+- **应用显示名称** → `HOPE_MSIX_DISPLAY_NAME`（须在 Partner Center **Manage app names** 中已预留的名称，默认 `Hope`）
 
 在 GitHub Actions Secrets 中配置上述两项后，CI 生成的清单会与商店预留身份一致。
 
@@ -39,4 +40,4 @@ pwsh scripts/pack-msix.ps1 -StageDir stage -OutputDir dist -Version 0.13.83
 
 `https://github.com/CooloiStudio/Hope/releases/download/v0.13.83/Hope_0_13_83_x64.msix`
 
-或使用 `.msixupload` 文件上传。勾选 **由 Microsoft 签名** 时，可上传未签名 MSIX，由商店重签。
+或使用 `.msixupload`（仅含 msix 的 zip）。**不要**上传内含独立 `AppxManifest.xml` 的包。

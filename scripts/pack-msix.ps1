@@ -5,6 +5,7 @@
 #   HOPE_MSIX_IDENTITY_NAME  包身份 Name（默认 CooloiStudio.Hope）
 #   HOPE_MSIX_PUBLISHER      发布者 DN（默认占位，上架前请在 CI Secrets 中配置真实值）
 #   HOPE_MSIX_PUBLISHER_DISPLAY_NAME  发布者显示名（须与 Partner Center 一致，默认 Cooloi）
+#   HOPE_MSIX_DISPLAY_NAME  应用显示名（须在 Partner Center 已预留，默认 Hope）
 
 param(
     [Parameter(Mandatory = $true)][string]$StageDir,
@@ -23,6 +24,7 @@ $publisher = if ($env:HOPE_MSIX_PUBLISHER) { $env:HOPE_MSIX_PUBLISHER } else {
     "CN=00000000-0000-0000-0000-000000000000"
 }
 $publisherDisplayName = if ($env:HOPE_MSIX_PUBLISHER_DISPLAY_NAME) { $env:HOPE_MSIX_PUBLISHER_DISPLAY_NAME } else { "Cooloi" }
+$displayName = if ($env:HOPE_MSIX_DISPLAY_NAME) { $env:HOPE_MSIX_DISPLAY_NAME } else { "Hope" }
 
 # MSIX 版本须为四段式：0.13.83 → 0.13.83.0
 $parts = $Version.Split(".")
@@ -72,6 +74,7 @@ try {
     $manifest = $manifest.Replace("{{PACKAGE_NAME}}", [System.Security.SecurityElement]::Escape($packageName))
     $manifest = $manifest.Replace("{{PUBLISHER}}", [System.Security.SecurityElement]::Escape($publisher))
     $manifest = $manifest.Replace("{{PUBLISHER_DISPLAY_NAME}}", [System.Security.SecurityElement]::Escape($publisherDisplayName))
+    $manifest = $manifest.Replace("{{DISPLAY_NAME}}", [System.Security.SecurityElement]::Escape($displayName))
     $manifest = $manifest.Replace("{{PACKAGE_VERSION}}", $packageVersion)
     $manifestPath = Join-Path $layout "AppxManifest.xml"
     [System.IO.File]::WriteAllText($manifestPath, $manifest, (New-Object System.Text.UTF8Encoding $false))
@@ -101,16 +104,14 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "makeappx pack 失败，退出码 $LASTEXITCODE" }
     if (-not (Test-Path $msixPath)) { throw "未生成 $msixPath" }
 
-    # .msixupload：供 Partner Center「Package URL」或手动上传（内含 msix + 清单副本）
+    # .msixupload：Partner Center 用 zip（仅含 .msix，勿放独立 AppxManifest.xml）
     $uploadName = "Hope_${safeVersion}_x64.msixupload"
     $uploadPath = Join-Path $OutputDir $uploadName
-    $uploadStaging = Join-Path $env:TEMP "hope-msixupload-$([Guid]::NewGuid().ToString('N'))"
-    New-Item -ItemType Directory -Force -Path $uploadStaging | Out-Null
-    Copy-Item $msixPath (Join-Path $uploadStaging $msixName)
-    Copy-Item $manifestPath (Join-Path $uploadStaging "AppxManifest.xml")
+    $uploadZip = Join-Path $env:TEMP "hope-msixupload-$([Guid]::NewGuid().ToString('N')).zip"
     if (Test-Path $uploadPath) { Remove-Item $uploadPath -Force }
-    Compress-Archive -Path (Join-Path $uploadStaging "*") -DestinationPath $uploadPath -Force
-    Remove-Item $uploadStaging -Recurse -Force
+    if (Test-Path $uploadZip) { Remove-Item $uploadZip -Force }
+    Compress-Archive -Path $msixPath -DestinationPath $uploadZip -Force
+    Move-Item -LiteralPath $uploadZip -Destination $uploadPath -Force
 
     $hash = (Get-FileHash -Algorithm SHA256 -Path $msixPath).Hash.ToLower()
     "$hash  $msixName" | Set-Content -Path "$msixPath.sha256" -Encoding ascii -NoNewline
