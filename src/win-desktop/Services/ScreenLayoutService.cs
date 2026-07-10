@@ -1,4 +1,6 @@
+using System.Diagnostics;
 using System.Runtime.InteropServices;
+using System.Text;
 using System.Windows;
 using System.Windows.Forms;
 using Hope.Desktop.Interop;
@@ -26,13 +28,28 @@ public class ScreenLayoutInfo
     public bool HasFullScreenOnPrimary { get; set; }
 
     /// <summary>
-    /// 获取进度条应使用的有效区域。
-    /// 当任务栏自动隐藏或存在全屏应用时，返回完整屏幕 Bounds；否则返回 WorkArea。
+    /// 获取进度条所在边应使用的有效区域（DIP）。
+    /// 任务栏自动隐藏 → Bounds；常显任务栏 → WorkArea，仅真全屏且与任务栏同边冲突时扩展到 Bounds。
     /// </summary>
     public Rect EffectiveArea(string barPosition)
     {
-        bool useFullScreen = TaskbarAutoHide || HasFullScreenOnPrimary;
-        return useFullScreen ? Bounds : WorkArea;
+        if (TaskbarAutoHide)
+            return Bounds;
+
+        if (!HasFullScreenOnPrimary)
+            return WorkArea;
+
+        return ScreenLayoutService.EdgesConflict(barPosition, TaskbarEdge) ? Bounds : WorkArea;
+    }
+
+    /// <summary>进度条是否应贴物理屏幕边并抬升至任务栏之上（P3 Z-order）。</summary>
+    public bool ShouldRenderAboveTaskbar(string barPosition)
+    {
+        if (TaskbarAutoHide)
+            return true;
+
+        return HasFullScreenOnPrimary &&
+               ScreenLayoutService.EdgesConflict(barPosition, TaskbarEdge);
     }
 }
 
@@ -50,12 +67,28 @@ public static class ScreenLayoutService
     private const uint ABE_RIGHT = 2;
     private const uint ABE_BOTTOM = 3;
 
-    private const uint MONITOR_DEFAULTTOPRIMARY = 1;
-
     // 窗口样式
     private const int WS_CAPTION = 0x00C00000;
     private const int WS_THICKFRAME = 0x00040000;
     private const int WS_VISIBLE = 0x10000000;
+
+    /// <summary>进度条边与任务栏边是否冲突（同边才需避让/扩展）。</summary>
+    internal static bool EdgesConflict(string barPosition, string taskbarEdge)
+    {
+        var bar = NormalizeEdge(barPosition);
+        var taskbar = NormalizeEdge(taskbarEdge);
+        return taskbar != "none" && bar == taskbar;
+    }
+
+    internal static string NormalizeEdge(string edge) =>
+        edge.Trim().ToLowerInvariant() switch
+        {
+            "top" => "top",
+            "bottom" => "bottom",
+            "left" => "left",
+            "right" => "right",
+            _ => "none",
+        };
 
     /// <summary>获取当前主屏布局信息（DIP 单位）。</summary>
     public static ScreenLayoutInfo GetCurrent()
@@ -148,6 +181,8 @@ public static class ScreenLayoutService
         IntPtr fg = NativeMethods.GetForegroundWindow();
         if (fg == IntPtr.Zero) return false;
 
+        if (IsShellDesktopWindow(fg)) return false;
+
         // 先判断窗口是否可见。
         int style = NativeMethods.GetWindowLong(fg, NativeMethods.GWL_STYLE);
         if ((style & WS_VISIBLE) == 0) return false;
@@ -175,5 +210,49 @@ public static class ScreenLayoutService
         if (hasCaption && hasThickFrame) return false;
 
         return true;
+    }
+
+    /// <summary>排除点击桌面时前台变为的 Shell 宿主窗口（Progman / WorkerW 等）。</summary>
+    private static bool IsShellDesktopWindow(IntPtr hwnd)
+    {
+        var className = GetWindowClassName(hwnd);
+        if (className.Length == 0) return false;
+
+        if (className is "Progman" or "WorkerW" or "Shell_TrayWnd" or "Shell_SecondaryTrayWnd")
+            return true;
+
+        if (className is "CabinetWClass" or "ExploreWClass")
+            return false;
+
+        return IsExplorerDesktopLayer(hwnd, className);
+    }
+
+    private static bool IsExplorerDesktopLayer(IntPtr hwnd, string className)
+    {
+        NativeMethods.GetWindowThreadProcessId(hwnd, out uint pid);
+        if (pid == 0) return false;
+
+        try
+        {
+            using var proc = Process.GetProcessById((int)pid);
+            if (!proc.ProcessName.Equals("explorer", StringComparison.OrdinalIgnoreCase))
+                return false;
+        }
+        catch
+        {
+            return false;
+        }
+
+        // Explorer 下无标题栏的铺满屏窗口，通常是桌面壁纸层而非应用全屏。
+        int style = NativeMethods.GetWindowLong(hwnd, NativeMethods.GWL_STYLE);
+        bool hasCaption = (style & WS_CAPTION) != 0;
+        bool hasThickFrame = (style & WS_THICKFRAME) != 0;
+        return !hasCaption && !hasThickFrame;
+    }
+
+    private static string GetWindowClassName(IntPtr hwnd)
+    {
+        var sb = new StringBuilder(256);
+        return NativeMethods.GetClassName(hwnd, sb, sb.Capacity) > 0 ? sb.ToString() : "";
     }
 }

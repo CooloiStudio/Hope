@@ -77,6 +77,7 @@ public partial class OverlayWindow : Window
     private string _blinkSeqSig = ""; // 当前颜色序列签名；变化才重建动画，否则保持相位连续
     // 上次渲染的分段签名：未变化时跳过重建，避免每秒重置闪烁动画导致渐变不连续。
     private string _lastRenderSig = "";
+    private IntPtr _hwnd;
 
     public OverlayWindow()
     {
@@ -116,7 +117,8 @@ public partial class OverlayWindow : Window
     {
         base.OnSourceInitialized(e);
         var helper = new WindowInteropHelper(this);
-        NativeMethods.ApplyOverlayStyles(helper.Handle);
+        _hwnd = helper.Handle;
+        NativeMethods.ApplyOverlayStyles(_hwnd);
 
         var src = HwndSource.FromHwnd(helper.Handle);
         src?.AddHook(WndProc);
@@ -204,6 +206,9 @@ public partial class OverlayWindow : Window
             Left = screen.Left;
             Top = Position == PositionTop ? screen.Top : screen.Bottom - Height;
         }
+
+        if (ScreenLayout?.ShouldRenderAboveTaskbar(Position) == true)
+            NativeMethods.EnsureOverlayTopmost(_hwnd);
     }
 
     /// <summary>清除渲染缓存，强制下次按当前分段重绘（休眠唤醒等场景）。</summary>
