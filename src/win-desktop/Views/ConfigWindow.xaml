@@ -464,9 +464,6 @@
 
                             <CheckBox x:Name="AllowTelemetryCheck" Content="允许发送软件活跃信息" Margin="0,12,0,0"
                                       ToolTip="开启后会匿名上报启动/每日活跃与更新结果，仅用于了解装机量、活跃与更新成功率，不含任何可识别个人信息；取消勾选后不发送任何信息" />
-
-                            <TextBlock x:Name="SettingsStatus" Foreground="{DynamicResource TextFillColorSecondaryBrush}"
-                                       Margin="0,10,0,4" TextWrapping="Wrap" />
                         </StackPanel>
                     </ScrollViewer>
                 </TabItem>

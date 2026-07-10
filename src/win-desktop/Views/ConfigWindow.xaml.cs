@@ -448,11 +448,8 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
         // InitializeComponent() 期间会触发 BarPositionBox 的 SelectionChanged，
         // 此时 _ipc 尚未赋值，连控件也尚未完全构造，因此只能静默返回。
         if (_ipc == null) return;
-        if (!_ipc.IsConnected)
-        {
-            SettingsStatus.Text = "未连接到核心进程（hope-headless），无法保存设置";
-            return;
-        }
+        // 持久断连由 App.FatalExit 处理；短暂未连接时静默跳过，避免页底空状态行占位。
+        if (!_ipc.IsConnected) return;
 
         _settings.RefreshSec = (int)RefreshBox.Value;
         _settings.BarHeightPx = (int)BarHeightBox.Value;
@@ -476,7 +473,6 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
 
         _ipc.Send(new Command { Action = "updateSettings", Settings = _settings });
         ApplyAutostart(_settings.Autostart);
-        SettingsStatus.Text = "";
     }
 
     private static void SelectComboByTag(ComboBox box, string? tag)

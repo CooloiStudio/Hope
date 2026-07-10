@@ -36,14 +36,35 @@ ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 PrivilegesRequired=lowest
 WizardStyle=modern
+; 按系统 UI 语言自动选择；多语言时仍可在向导首屏切换。
+LanguageDetectionMethod=uilanguage
+ShowLanguageDialog=yes
 
 [Languages]
-Name: "chinesesimplified"; MessagesFile: "compiler:Default.isl"
+Name: "english"; MessagesFile: "compiler:Default.isl"
+Name: "chinesesimplified"; MessagesFile: "compiler:Languages\ChineseSimplified.isl"
+
+[CustomMessages]
+english.CreateDesktopIcon=Create a desktop shortcut
+english.CreateStartMenuIcon=Add to Start Menu
+english.AdditionalIcons=Shortcuts:
+english.AutoStart=Start Hope automatically at logon
+english.StartupOptions=Startup options:
+english.LaunchHope=Launch Hope now
+english.UninstallHope=Uninstall Hope
+
+chinesesimplified.CreateDesktopIcon=创建桌面快捷方式
+chinesesimplified.CreateStartMenuIcon=添加到开始菜单
+chinesesimplified.AdditionalIcons=快捷方式:
+chinesesimplified.AutoStart=开机自动启动 Hope
+chinesesimplified.StartupOptions=启动选项:
+chinesesimplified.LaunchHope=立即启动 Hope
+chinesesimplified.UninstallHope=卸载 Hope
 
 [Tasks]
-Name: "desktopicon"; Description: "创建桌面快捷方式"; GroupDescription: "快捷方式:"
-Name: "startmenuicon"; Description: "添加到开始菜单"; GroupDescription: "快捷方式:"
-Name: "autostart"; Description: "开机自动启动 Hope"; GroupDescription: "启动选项:"
+Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"
+Name: "startmenuicon"; Description: "{cm:CreateStartMenuIcon}"; GroupDescription: "{cm:AdditionalIcons}"
+Name: "autostart"; Description: "{cm:AutoStart}"; GroupDescription: "{cm:StartupOptions}"
 
 [Files]
 Source: "{#StageDir}\*"; DestDir: "{app}"; Flags: recursesubdirs ignoreversion
@@ -51,7 +72,7 @@ Source: "{#StageDir}\*"; DestDir: "{app}"; Flags: recursesubdirs ignoreversion
 [Icons]
 ; 开始菜单（可选，默认勾选）
 Name: "{group}\Hope"; Filename: "{app}\{#DesktopExe}"; Tasks: startmenuicon
-Name: "{group}\卸载 Hope"; Filename: "{uninstallexe}"; Tasks: startmenuicon
+Name: "{group}\{cm:UninstallHope}"; Filename: "{uninstallexe}"; Tasks: startmenuicon
 ; 桌面快捷方式（可选，默认勾选）
 Name: "{autodesktop}\Hope"; Filename: "{app}\{#DesktopExe}"; Tasks: desktopicon
 
@@ -62,7 +83,7 @@ Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; \
   Flags: uninsdeletevalue; Tasks: autostart
 
 [Run]
-Filename: "{app}\{#DesktopExe}"; Description: "立即启动 Hope"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\{#DesktopExe}"; Description: "{cm:LaunchHope}"; Flags: nowait postinstall skipifsilent
 
 [UninstallRun]
 ; 卸载前结束进程，确保文件可删除
