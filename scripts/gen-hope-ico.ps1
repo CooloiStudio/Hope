@@ -1,13 +1,7 @@
-Add-Type -AssemblyName System.Drawing
-$src = Join-Path $PSScriptRoot "..\src\resources\hope.png"
-$dst = Join-Path $PSScriptRoot "..\src\resources\hope.ico"
-$bmp = [System.Drawing.Bitmap]::FromFile($src)
-$resized = New-Object System.Drawing.Bitmap $bmp, 32, 32
-$icon = [System.Drawing.Icon]::FromHandle($resized.GetHicon())
-$fs = [System.IO.File]::Open($dst, [System.IO.FileMode]::Create)
-$icon.Save($fs)
-$fs.Close()
-$icon.Dispose()
-$resized.Dispose()
-$bmp.Dispose()
-Write-Host "Created $dst"
+$ErrorActionPreference = "Stop"
+$root = Resolve-Path (Join-Path $PSScriptRoot "..")
+$proj = Join-Path $PSScriptRoot "generate-hope-ico\GenerateHopeIco.csproj"
+$full = Join-Path $root "src\resources\hope.png"
+$mini = Join-Path $root "src\resources\hope-mini.png"
+$ico = Join-Path $root "src\resources\hope.ico"
+dotnet run --project $proj -c Release -- $full $mini $ico

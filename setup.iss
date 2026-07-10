@@ -42,7 +42,8 @@ ShowLanguageDialog=yes
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
-Name: "chinesesimplified"; MessagesFile: "compiler:Languages\ChineseSimplified.isl"
+; 简体中文为非官方语言包，CI 安装的 Inno Setup 不含此文件；随仓库打包以保证可复现构建。
+Name: "chinesesimplified"; MessagesFile: "packaging\innosetup\ChineseSimplified.isl"
 
 [CustomMessages]
 english.CreateDesktopIcon=Create a desktop shortcut

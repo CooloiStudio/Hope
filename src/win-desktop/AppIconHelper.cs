@@ -4,8 +4,6 @@ using System.IO;
 using System.Windows;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
-using Microsoft.Win32;
-using Wpf.Ui.Appearance;
 using Color = System.Drawing.Color;
 using PixelFormat = System.Drawing.Imaging.PixelFormat;
 
@@ -17,50 +15,20 @@ namespace Hope.Desktop;
 internal static class AppIconHelper
 {
     private const string ResourcesDir = "resources";
+    private const int TraySizePx = 32;
 
-    /// <summary>深色系统主题下托盘用白色，浅色主题用黑色。以系统模式（任务栏颜色）为准。</summary>
-    public static bool IsDarkTheme()
-    {
-        // 任务栏实际颜色由 Windows 系统模式决定，优先读取该键。
-        try
-        {
-            using var key = Registry.CurrentUser.OpenSubKey(
-                @"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize");
-            if (key?.GetValue("SystemUsesLightTheme") is int systemLight)
-                return systemLight == 0;
-        }
-        catch { /* 回退应用主题 */ }
-
-        try
-        {
-            var theme = ApplicationThemeManager.GetAppTheme();
-            if (theme == ApplicationTheme.Dark) return true;
-            if (theme == ApplicationTheme.Light) return false;
-        }
-        catch { /* 回退注册表 */ }
-
-        try
-        {
-            using var key = Registry.CurrentUser.OpenSubKey(
-                @"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize");
-            if (key?.GetValue("AppsUseLightTheme") is int useLight)
-                return useLight == 0;
-        }
-        catch { /* 默认浅色 */ }
-
-        return false;
-    }
-
-    /// <summary>托盘图标：hope-h.png 按主题着黑/白。</summary>
+    /// <summary>
+    /// 托盘图标：直接使用 hope-mini.png（白底黑字），不做主题着色。
+    /// </summary>
     public static Icon CreateTrayIcon()
     {
-        var path = ResolveResource("hope-h.png");
+        var path = ResolveResource("hope-mini.png");
         using var source = LoadBitmap(path);
-        using var tinted = TintMonochrome(source, IsDarkTheme() ? Color.White : Color.Black);
-        return ToIcon(tinted);
+        using var scaled = ResizeHighQuality(source, TraySizePx, TraySizePx);
+        return ToIcon(scaled);
     }
 
-    /// <summary>任务栏/窗口标题栏彩色图标：多尺寸 hope.ico 中选最接近目标像素的一帧；回退 hope.png。</summary>
+    /// <summary>任务栏/窗口标题栏图标：多尺寸 hope.ico 中选最接近目标像素的一帧；回退 hope-mini / hope.png。</summary>
     public static ImageSource? LoadAppChromeIconSource(int preferPx = 32)
     {
         var icoPath = ResolveResource("hope.ico");
@@ -91,7 +59,10 @@ internal static class AppIconHelper
             catch { /* 回退 PNG */ }
         }
 
-        var pngPath = ResolveResource("hope.png");
+        var pngName = preferPx >= 256 ? "hope.png" : "hope-mini.png";
+        var pngPath = ResolveResource(pngName);
+        if (!File.Exists(pngPath))
+            pngPath = ResolveResource("hope.png");
         if (!File.Exists(pngPath)) return null;
         try
         {
@@ -151,51 +122,25 @@ internal static class AppIconHelper
         return prod;
     }
 
-    /// <summary>将单色模板图（亮部=字形）着色为 foreground，暗部透明。</summary>
-    private static Bitmap TintMonochrome(Bitmap source, Color foreground)
-    {
-        const int traySize = 32;
-        using var scaled = new Bitmap(source, traySize, traySize);
-        var result = new Bitmap(traySize, traySize, PixelFormat.Format32bppArgb);
-
-        var srcData = scaled.LockBits(
-            new Rectangle(0, 0, traySize, traySize), ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
-        var dstData = result.LockBits(
-            new Rectangle(0, 0, traySize, traySize), ImageLockMode.WriteOnly, PixelFormat.Format32bppArgb);
-
-        try
-        {
-            for (int y = 0; y < traySize; y++)
-            {
-                for (int x = 0; x < traySize; x++)
-                {
-                    var c = Color.FromArgb(
-                        System.Runtime.InteropServices.Marshal.ReadInt32(srcData.Scan0, y * srcData.Stride + x * 4));
-                    double lum = 0.299 * c.R + 0.587 * c.G + 0.114 * c.B;
-                    int alpha = (int)(c.A * Math.Clamp(lum / 255.0, 0, 1));
-                    int packed = alpha < 8
-                        ? 0
-                        : Color.FromArgb(alpha, foreground.R, foreground.G, foreground.B).ToArgb();
-                    System.Runtime.InteropServices.Marshal.WriteInt32(
-                        dstData.Scan0, y * dstData.Stride + x * 4, packed);
-                }
-            }
-        }
-        finally
-        {
-            scaled.UnlockBits(srcData);
-            result.UnlockBits(dstData);
-        }
-
-        return result;
-    }
-
     private static Bitmap LoadBitmap(string path)
     {
         if (!File.Exists(path))
             throw new FileNotFoundException("图标资源不存在", path);
         using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
         return new Bitmap(fs);
+    }
+
+    private static Bitmap ResizeHighQuality(Bitmap source, int width, int height)
+    {
+        var result = new Bitmap(width, height, PixelFormat.Format32bppArgb);
+        using var g = Graphics.FromImage(result);
+        g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
+        g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.HighQuality;
+        g.PixelOffsetMode = System.Drawing.Drawing2D.PixelOffsetMode.HighQuality;
+        g.CompositingQuality = System.Drawing.Drawing2D.CompositingQuality.HighQuality;
+        g.Clear(Color.Transparent);
+        g.DrawImage(source, new Rectangle(0, 0, width, height));
+        return result;
     }
 
     private static Icon ToIcon(Bitmap bitmap)

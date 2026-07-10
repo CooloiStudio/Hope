@@ -76,8 +76,6 @@ public partial class App : Application
 
         // 应用 Windows 11 Fluent 主题，跟随系统亮 / 暗（WPF-UI，文档 §5.3.2）。
         Wpf.Ui.Appearance.ApplicationThemeManager.ApplySystemTheme();
-        ApplicationThemeManager.Changed += OnAppThemeChanged;
-        SystemEvents.UserPreferenceChanged += OnUserPreferenceChanged;
 
         _supervisor = new HeadlessSupervisor();
         _supervisor.FatalFailure += OnHeadlessFatalFailure;
@@ -728,31 +726,6 @@ public partial class App : Application
         _tray.DoubleClick += (_, _) => ShowConfig();
     }
 
-    private void OnAppThemeChanged(ApplicationTheme currentTheme, System.Windows.Media.Color systemAccent) =>
-        UpdateTrayIcon();
-
-    private void OnUserPreferenceChanged(object sender, UserPreferenceChangedEventArgs e)
-    {
-        if (e.Category == UserPreferenceCategory.General)
-            Dispatcher.BeginInvoke(() => UpdateTrayIcon());
-    }
-
-    private void UpdateTrayIcon()
-    {
-        if (_tray == null) return;
-        try
-        {
-            var old = _tray.Icon;
-            _tray.Icon = CreateTrayIconSafe();
-            old?.Dispose();
-            DesktopLog.Info($"Tray icon updated dark={AppIconHelper.IsDarkTheme()}");
-        }
-        catch (Exception ex)
-        {
-            DesktopLog.Warn($"Tray icon update failed: {ex.Message}");
-        }
-    }
-
     private static Icon CreateTrayIconSafe()
     {
         try { return AppIconHelper.CreateTrayIcon(); }
@@ -835,8 +808,6 @@ public partial class App : Application
         _ipc.Send(new Command { Action = "quit" }); // 通知 Headless 正常退出
         _supervisor.StopWatching();
 
-        ApplicationThemeManager.Changed -= OnAppThemeChanged;
-        SystemEvents.UserPreferenceChanged -= OnUserPreferenceChanged;
         SystemEvents.DisplaySettingsChanged -= OnDisplaySettingsChanged;
         SystemEvents.PowerModeChanged -= OnPowerModeChanged;
         _displayChangeDebounce?.Stop();
