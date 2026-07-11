@@ -31,6 +31,8 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
     private const double MinFitWindowHeight = 280;
     private const double EditPanelMeasureWidth = 378;
     private const double FluentTitleBarFallbackHeight = 48;
+    /// <summary>高 DPI / 布局取整时内容实测常略低估，预留余量避免全局设置页贴底出现滚动条。</summary>
+    private const double FitHeightSlackPx = 6;
 
     private readonly IpcClient _ipc;
     private readonly SessionState _session;
@@ -686,12 +688,24 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
         double titleBarH = AppTitleBar?.ActualHeight > 0
             ? AppTitleBar.ActualHeight
             : FluentTitleBarFallbackHeight;
-        double targetH = tabsColumnH + RootGrid.Margin.Top + RootGrid.Margin.Bottom + titleBarH;
+        double targetH = tabsColumnH + RootGrid.Margin.Top + RootGrid.Margin.Bottom + titleBarH
+            + FitHeightSlackPx;
+        targetH = Math.Ceiling(targetH);
 
         if (!force)
             targetH = Math.Max(MinFitWindowHeight, targetH);
         if (!force && Math.Abs(Height - targetH) < 1.5) return;
         Height = targetH;
+
+        // 布局生效后再核对：若仍差几像素导致可滚动，按实际 ScrollableHeight 补齐。
+        UpdateLayout();
+        scroll.UpdateLayout();
+        if (scroll.ScrollableHeight > 0.5)
+        {
+            Height = Math.Ceiling(Height + scroll.ScrollableHeight + 2);
+            UpdateLayout();
+        }
+
         TryApplyInitialScreenCenter();
     }
 
