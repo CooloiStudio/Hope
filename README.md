@@ -6,7 +6,7 @@ DT小工具系列 / DT Tools
 
 ## 预览
 
-![Windows](media/PV_Windows.gif)
+![Windows](media/preview/PV_Windows.gif)
 
 
 ## 项目地址
@@ -22,6 +22,8 @@ https://github.com/CooloiStudio/Hope
 
 Hope（盼头）会在屏幕最上方显示一根分段彩色进度条，提示距离死线已经消耗了多少时间。  
 简洁、非侵入式占屏，十分友好。及时提醒用户注意时间，提高效率，充满正能量。
+
+「进度条」创意来自某微博用户，年代久远，已无法考证出处。
 
 A lightweight tool that reminds you when you can go home.   
 A little hope for leaving work on time.
@@ -64,14 +66,6 @@ A little hope for leaving work on time.
   真香！  
   Q: Translate server error  
   A: Awesome!
-
----
-
-## 图标原图
-
-![HOPE](media/Hope.jpg)
-
-另一个未来的布尔玛在时光机器上写下的 HOPE（截图出自《龙珠·改》）
 
 ---
 
