@@ -56,6 +56,34 @@ public sealed class SessionState
     /// <summary>是否允许单任务指定展示位置。</summary>
     public bool OverlayAdvancedPosition => _settings?.AdvancedPosition ?? false;
 
+    /// <summary>是否允许单任务覆盖图片最大高度。</summary>
+    public bool OverlayAdvancedImageHeight => _settings?.AdvancedImageHeight ?? false;
+
+    /// <summary>全局图片最大高度（px，已钳制到 15–30）。</summary>
+    public int OverlayImageMaxHeightPx
+    {
+        get
+        {
+            var v = _settings?.ImageMaxHeightPx ?? 15;
+            return v <= 0 ? 15 : Math.Clamp(v, 15, 30);
+        }
+    }
+
+    /// <summary>
+    /// 解析 segment/任务图片最大高度：未开启任务级覆盖或值为 ≤0 时用全局。
+    /// </summary>
+    public static int ResolveImageMaxSize(bool advancedImageHeight, int taskOrSegmentSize, int globalPx)
+    {
+        var global = globalPx <= 0 ? 15 : Math.Clamp(globalPx, 15, 30);
+        if (!advancedImageHeight) return global;
+        if (taskOrSegmentSize > 0) return Math.Clamp(taskOrSegmentSize, 15, 30);
+        return global;
+    }
+
+    /// <summary>按当前会话设置解析一段图片高度。</summary>
+    public int ResolveImageMaxSize(int taskOrSegmentSize) =>
+        ResolveImageMaxSize(OverlayAdvancedImageHeight, taskOrSegmentSize, OverlayImageMaxHeightPx);
+
     /// <summary>各边独立方向表（已归一化）。</summary>
     public IReadOnlyDictionary<string, string> OverlayBarDirections =>
         NormalizeBarDirections(_settings?.BarDirections);

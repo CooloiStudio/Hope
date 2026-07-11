@@ -55,6 +55,39 @@
                 </Setter.Value>
             </Setter>
         </Style>
+        <!-- 危险操作按钮：自定义模板保证悬停为更深红色（避免主题浅色悬停像禁用） -->
+        <Style x:Key="HopeDangerButton" TargetType="{x:Type ui:Button}">
+            <Setter Property="Foreground" Value="White" />
+            <Setter Property="Background" Value="#C42B1C" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Padding" Value="12,4" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="{x:Type ui:Button}">
+                        <Border x:Name="Bd"
+                                Background="{TemplateBinding Background}"
+                                CornerRadius="4"
+                                Padding="{TemplateBinding Padding}"
+                                SnapsToDevicePixels="True">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"
+                                              RecognizesAccessKey="True" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="#9A1F14" />
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="#7A1810" />
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="Bd" Property="Opacity" Value="0.45" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
         <!-- 布尔值与 Visibility 转换器：用于列表中根据完成状态显隐按钮/文本。 -->
         <converters:BoolToVisibilityConverter x:Key="BoolToVisibilityConverter" />
         <converters:BoolToVisibilityConverter x:Key="InvertedBoolToVisibilityConverter" Inverted="True" />
@@ -99,18 +132,12 @@
                                Icon="{ui:SymbolIcon Add24}"
                                Padding="12,4" Click="OnAddTask" />
                 </Grid>
-                <Grid x:Name="TaskListBottomGrid" DockPanel.Dock="Bottom" Margin="0,8,0,0">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*" />
-                        <ColumnDefinition Width="*" />
-                    </Grid.ColumnDefinitions>
-                    <ui:Button Grid.Column="0" x:Name="DeleteButton" Content="删除选中任务"
-                               HorizontalAlignment="Stretch" Height="32" Margin="0,0,6,0"
-                               Click="OnDelete" />
-                    <ui:Button Grid.Column="1" x:Name="DeleteCompletedButton"
+                <Grid x:Name="TaskListBottomGrid" DockPanel.Dock="Bottom" Margin="0,8,0,0"
+                      Visibility="Collapsed">
+                    <ui:Button x:Name="DeleteCompletedButton"
                                Content="一键删除所有已完成任务"
-                               HorizontalAlignment="Stretch" Height="32" Margin="6,0,0,0"
-                               Background="#D13438" Foreground="White"
+                               Style="{StaticResource HopeDangerButton}"
+                               HorizontalAlignment="Stretch" Height="32"
                                Click="OnDeleteCompleted" />
                 </Grid>
                 <ui:DataGrid x:Name="TaskGrid" AutoGenerateColumns="False" IsReadOnly="True"
@@ -265,7 +292,7 @@
                                            Margin="8,0,4,0" Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
                                 <Slider x:Name="ImageMaxHeightBox" Minimum="15" Maximum="30" TickFrequency="1"
                                         IsSnapToTickEnabled="True" VerticalAlignment="Center"
-                                        ToolTip="所有任务图片统一的最大高度，超出按比例缩放" />
+                                        ToolTip="默认图片最大高度；开启「允许为单个任务设置图片高度」后可被单个任务覆盖" />
                             </DockPanel>
 
                             <DockPanel Margin="0,8,0,0">
@@ -312,6 +339,10 @@
                                 <CheckBox x:Name="AdvancedPositionCheck" Content="允许为单个任务指定展示位置"
                                           Margin="0,12,0,0"
                                           ToolTip="开启后，任务编辑中可为每个任务指定屏幕边缘；各边前进方向由下方设置决定" />
+
+                                <CheckBox x:Name="AdvancedImageHeightCheck" Content="允许为单个任务设置图片高度"
+                                          Margin="0,12,0,0"
+                                          ToolTip="开启后，任务编辑中可取消「使用全局图片高度」，为单个任务单独设定图片最大高度" />
 
                                 <StackPanel x:Name="PerEdgeDirectionPanel" Margin="0,12,0,0" Visibility="Collapsed">
                                     <Grid Margin="0,0,0,8">
@@ -513,9 +544,20 @@
                                 </ComboBox>
                             </DockPanel>
 
+                            <!-- 开启「允许为单个任务设置图片高度」时，图片相关控件归为同一分区 -->
+                            <Grid x:Name="TaskImageSectionSeparator" Margin="0,14,0,10" Visibility="Collapsed">
+                                <Border Height="2" VerticalAlignment="Center"
+                                        Background="{DynamicResource ControlStrokeColorDefaultBrush}"
+                                        CornerRadius="1" />
+                                <TextBlock Text="当前任务图片设置" HorizontalAlignment="Center"
+                                           Background="{DynamicResource ApplicationBackgroundBrush}"
+                                           Padding="8,0"
+                                           Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                                           FontSize="12" />
+                            </Grid>
                             <!-- 图片 / 动图：预览框，展示 30px 高度的图片预览（动图可动） -->
                             <DockPanel Margin="0,6,0,0"
-                                        ToolTip="支持任意图片格式&#x0a;图片跟随该任务进度移动&#x0a;动图循环播放&#x0a;超过全局预设自动缩放">
+                                        ToolTip="支持任意图片格式&#x0a;图片跟随该任务进度移动&#x0a;动图循环播放&#x0a;超过设定最大高度自动缩放">
                                 <TextBlock Style="{StaticResource FieldLabel}" Text="图片" />
                                 <ui:Button DockPanel.Dock="Right" Content="清除" Width="52" Margin="6,0,0,0" Click="OnClearGif" />
                                 <ui:Button DockPanel.Dock="Right" Content="选择" Width="52" Margin="6,0,0,0" Click="OnBrowseGif" />
@@ -533,6 +575,23 @@
                                     </Grid>
                                 </Border>
                             </DockPanel>
+
+                            <!-- 任务级图片高度（仅在高级设置中开启后显示） -->
+                            <StackPanel x:Name="TaskImageHeightPanel" Margin="0,6,0,0" Visibility="Collapsed">
+                                <CheckBox x:Name="TaskUseGlobalImageHeightCheck" Content="使用全局图片高度"
+                                          IsChecked="True"
+                                          ToolTip="勾选时沿用全局「图片最大高度」；取消后可为本任务单独设定" />
+                                <DockPanel x:Name="TaskImageMaxHeightRow" Margin="0,8,0,0" Visibility="Collapsed">
+                                    <TextBlock Style="{StaticResource FieldLabel}" Text="最大高度" />
+                                    <TextBlock Style="{StaticResource SettingsUnitLabel}" DockPanel.Dock="Right" Text="px" />
+                                    <TextBlock x:Name="TaskImageMaxHeightValueText" DockPanel.Dock="Right"
+                                               Width="20" TextAlignment="Right" VerticalAlignment="Center"
+                                               Margin="8,0,4,0" Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
+                                    <Slider x:Name="TaskImageMaxHeightBox" Minimum="15" Maximum="30" TickFrequency="1"
+                                            IsSnapToTickEnabled="True" VerticalAlignment="Center"
+                                            ToolTip="本任务图片的最大高度，超出按比例缩放" />
+                                </DockPanel>
+                            </StackPanel>
 
                             <Separator Style="{StaticResource TaskEditSeparator}" />
 
@@ -670,15 +729,19 @@
                                 </WrapPanel>
                             </DockPanel>
 
-                            <!-- 操作按钮：可见者在同一行等宽并排（UniformGrid 自动按可见数量分列） -->
-                            <UniformGrid Rows="1" Margin="0,14,0,0">
+                            <!-- 操作按钮：仅可见项等宽并排（见 LayoutTaskActionButtons） -->
+                            <Grid x:Name="TaskActionBar" Margin="0,14,0,0">
                                 <ui:Button x:Name="DuplicateTaskButton" Content="重建为新任务"
                                            HorizontalAlignment="Stretch" Height="30" Margin="3,0"
                                            Click="OnDuplicateTask" Visibility="Collapsed" />
                                 <ui:Button x:Name="CompleteTaskButton" Content="完成任务"
                                            HorizontalAlignment="Stretch" Height="30" Margin="3,0"
                                            Click="OnCompleteTask" Visibility="Collapsed" />
-                            </UniformGrid>
+                                <ui:Button x:Name="DeleteEditingTaskButton" Content="删除该任务"
+                                           Style="{StaticResource HopeDangerButton}"
+                                           HorizontalAlignment="Stretch" Height="30" Margin="3,0"
+                                           Click="OnDeleteEditingTask" Visibility="Collapsed" />
+                            </Grid>
                         </StackPanel>
                     </ScrollViewer>
                 </TabItem>

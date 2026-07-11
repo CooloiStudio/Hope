@@ -75,16 +75,8 @@ func (e *Engine) ComputeState() ipc.State {
 		}
 	}
 
-	// 图片最大高度收敛为全局设置：覆盖所有带图片段的 ImageMaxSize。
-	imgMax := settings.ImageMaxHeightPx
-	if imgMax <= 0 {
-		imgMax = 15
-	}
-	for i := range segments {
-		if segments[i].Gif != "" {
-			segments[i].ImageMaxSize = imgMax
-		}
-	}
+	// 图片高度：原样保留任务 imageMaxSize（0＝沿用全局）。最终像素由 Desktop 按
+	// advancedImageHeight + 全局 ImageMaxHeightPx 解析，Headless 不强制覆盖。
 
 	e.mu.Lock()
 	events := e.collectExpiredLocked(tasks, now, behaviorsOf)

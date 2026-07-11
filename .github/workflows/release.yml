@@ -1,4 +1,4 @@
-name: release
+﻿name: release
 
 # Phase 1 流水线：编译 Go 核心 + WPF 桌面端，产出双通道制品：
 #   - Inno Setup → Hope_Setup.exe（官网 / 自动更新）
@@ -68,29 +68,10 @@ jobs:
         shell: pwsh
         run: |
           $version = "${{ steps.ver.outputs.version }}"
-          $found = $false
-          if (Test-Path CHANGELOG.md) {
-            $lines = Get-Content CHANGELOG.md -Encoding utf8
-            $pattern = '^###\s+v' + [regex]::Escape($version) + '(\s|\(|$)'
-            $start = -1
-            for ($i = 0; $i -lt $lines.Count; $i++) {
-              if ($lines[$i] -match $pattern) { $start = $i; break }
-            }
-            if ($start -ge 0) {
-              $end = $lines.Count
-              for ($j = $start + 1; $j -lt $lines.Count; $j++) {
-                if ($lines[$j] -match '^(##|###)\s') { $end = $j; break }
-              }
-              $body = if ($end -gt $start + 1) { ($lines[($start + 1)..($end - 1)] -join "`n").Trim() } else { "" }
-              if (-not [string]::IsNullOrWhiteSpace($body)) {
-                Set-Content -Path release-notes.md -Value $body -Encoding utf8
-                $found = $true
-                Write-Host "已抽取 CHANGELOG v$version 小节作为 Release 正文"
-              }
-            }
-          }
+          $out = & ./scripts/extract-release-notes.ps1 -Version $version -OutFile release-notes.md
+          $found = ($out | Select-String -Pattern '^found=true$' -Quiet)
           if (-not $found) {
-            Write-Host "未能在 CHANGELOG.md 找到 v$version 小节，回退到自动生成说明"
+            Write-Host "未能抽取 v$version 说明，回退到自动生成"
           }
           "found=$($found.ToString().ToLower())" >> $env:GITHUB_OUTPUT
 

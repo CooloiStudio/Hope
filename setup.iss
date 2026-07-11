@@ -15,6 +15,9 @@
 #define AppName "Hope"
 #define AppPublisher "Hope"
 #define DesktopExe "hope-desktop.exe"
+; 桌面/开始菜单快捷方式使用独立 ico（非 exe 内嵌），升级换图标时可绕过按 exe 路径缓存的旧图。
+; 与桌面端 Content 输出路径一致：dotnet publish → stage\resources\hope.ico
+#define AppIconRel "resources\hope.ico"
 
 [Setup]
 AppId={{B7E4F2A1-9C3D-4E5F-8A6B-1D2C3E4F5A6B}}
@@ -36,6 +39,10 @@ ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 PrivilegesRequired=lowest
 WizardStyle=modern
+; 安装向导自身图标（编译机相对仓库根目录）。
+SetupIconFile=src\resources\hope.ico
+; 安装结束通知 Shell 刷新关联/图标缓存（与下方 SHChangeNotify 互补）。
+ChangesAssociations=yes
 ; 按系统 UI 语言自动选择；多语言时仍可在向导首屏切换。
 LanguageDetectionMethod=uilanguage
 ShowLanguageDialog=yes
@@ -72,10 +79,10 @@ Source: "{#StageDir}\*"; DestDir: "{app}"; Flags: recursesubdirs ignoreversion
 
 [Icons]
 ; 开始菜单（可选，默认勾选）
-Name: "{group}\Hope"; Filename: "{app}\{#DesktopExe}"; Tasks: startmenuicon
+Name: "{group}\Hope"; Filename: "{app}\{#DesktopExe}"; IconFilename: "{app}\{#AppIconRel}"; Tasks: startmenuicon
 Name: "{group}\{cm:UninstallHope}"; Filename: "{uninstallexe}"; Tasks: startmenuicon
 ; 桌面快捷方式（可选，默认勾选）
-Name: "{autodesktop}\Hope"; Filename: "{app}\{#DesktopExe}"; Tasks: desktopicon
+Name: "{autodesktop}\Hope"; Filename: "{app}\{#DesktopExe}"; IconFilename: "{app}\{#AppIconRel}"; Tasks: desktopicon
 
 [Registry]
 ; 开机自启（HKCU，免管理员）
@@ -93,3 +100,47 @@ Filename: "{cmd}"; Parameters: "/C taskkill /IM hope-desktop.exe /IM hope-headle
 [UninstallDelete]
 ; 清理用户数据（文档 §7.7：完全清理 %APPDATA%\Hope）
 Type: filesandordirs; Name: "{userappdata}\Hope"
+
+[Code]
+const
+  SHCNE_ASSOCCHANGED = $08000000;
+  SHCNF_IDLIST = $00000000;
+
+procedure SHChangeNotify(wEventId: Integer; uFlags: Cardinal; dwItem1, dwItem2: Cardinal);
+  external 'SHChangeNotify@shell32.dll stdcall';
+
+{ 升级时即使用户未勾选「创建桌面快捷方式」，也可能已有旧 .lnk（仍指向 exe 内嵌图标）。
+  主动改写已存在快捷方式的 IconLocation，指向独立 ico，避免继续显示旧缓存图。 }
+procedure UpdateExistingShortcutIcon(const LnkPath, IconPath: string);
+var
+  Shell: Variant;
+  Shortcut: Variant;
+begin
+  if not FileExists(LnkPath) then Exit;
+  if not FileExists(IconPath) then Exit;
+  try
+    Shell := CreateOleObject('WScript.Shell');
+    Shortcut := Shell.CreateShortcut(LnkPath);
+    Shortcut.IconLocation := IconPath + ',0';
+    Shortcut.Save;
+  except
+  end;
+end;
+
+procedure RefreshHopeShortcutIcons;
+var
+  IconPath: string;
+begin
+  IconPath := ExpandConstant('{app}\{#AppIconRel}');
+  UpdateExistingShortcutIcon(ExpandConstant('{autodesktop}\Hope.lnk'), IconPath);
+  UpdateExistingShortcutIcon(ExpandConstant('{group}\Hope.lnk'), IconPath);
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);
+begin
+  if CurStep = ssPostInstall then
+  begin
+    RefreshHopeShortcutIcons;
+    SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, 0, 0);
+  end;
+end;

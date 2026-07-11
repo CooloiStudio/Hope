@@ -633,3 +633,39 @@ func TestRequestStateReturnsComputedFrame(t *testing.T) {
 		t.Fatalf("expected visible state with segments, got visible=%v segs=%d", st.Visible, len(st.Segments))
 	}
 }
+
+// TestComputeStatePreservesTaskImageMaxSize 回归：不再强制把段图片高度盖成全局值。
+func TestComputeStatePreservesTaskImageMaxSize(t *testing.T) {
+	t.Setenv("APPDATA", t.TempDir())
+	store, err := config.Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	store.UpdateSettings(config.Settings{ImageMaxHeightPx: 15, AdvancedImageHeight: true})
+	eng := New(store, nil)
+
+	start := mustTime("2026-06-25T08:00:00+08:00")
+	end := mustTime("2026-06-25T18:00:00+08:00")
+	tk := makeTask("img1", start, start, end)
+	tk.Gif = "C:\\pics\\a.gif"
+	tk.ImageMaxSize = 28
+	eng.HandleCommand(ipc.Command{Action: "createTask", Task: tk})
+
+	st := eng.ComputeState()
+	if len(st.Segments) == 0 {
+		t.Fatal("expected segments")
+	}
+	found := false
+	for _, s := range st.Segments {
+		if s.TaskID == "img1" {
+			found = true
+			if s.ImageMaxSize != 28 {
+				t.Fatalf("ImageMaxSize=%d, want 28 (must not force global 15)", s.ImageMaxSize)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("segment img1 not found")
+	}
+}
+

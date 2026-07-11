@@ -88,7 +88,7 @@ public sealed class RecurrenceDto
 public sealed class SettingsDto
 {
     [JsonPropertyName("barHeightPx")] public int BarHeightPx { get; set; } = 4;
-    // 图片最大高度（px，全局统一）。
+    // 图片最大高度（px）全局默认；开启 advancedImageHeight 后任务可覆盖。
     [JsonPropertyName("imageMaxHeightPx")] public int ImageMaxHeightPx { get; set; } = 15;
     // 全局默认到期提醒（可叠加：blink/celebrate/notify）；默认空＝到期自动显示，无附加效果。
     [JsonPropertyName("expiredBehaviors")] public List<string> ExpiredBehaviors { get; set; } = new();
@@ -102,6 +102,8 @@ public sealed class SettingsDto
     [JsonPropertyName("barDirection")] public string BarDirection { get; set; } = "forward";
     [JsonPropertyName("barDirections")] public Dictionary<string, string>? BarDirections { get; set; }
     [JsonPropertyName("advancedPosition")] public bool AdvancedPosition { get; set; }
+    /// <summary>为 true 时允许单个任务覆盖图片最大高度。</summary>
+    [JsonPropertyName("advancedImageHeight")] public bool AdvancedImageHeight { get; set; }
     [JsonPropertyName("allFour")] public bool AllFour { get; set; }
     // 是否自动下载更新（默认开）；关闭后仅检测并提示，不自动下载。
     [JsonPropertyName("autoUpdate")] public bool AutoUpdate { get; set; } = true;

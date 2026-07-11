@@ -105,6 +105,7 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
         RefreshBox.ValueChanged += OnSliderValueChanged;
         BarHeightBox.ValueChanged += OnSliderValueChanged;
         ImageMaxHeightBox.ValueChanged += OnSliderValueChanged;
+        TaskImageMaxHeightBox.ValueChanged += OnTaskImageMaxHeightChanged;
         GlobalReminderNoneRadio.Checked += OnSettingsControlChanged;
         GlobalBlinkRadio.Checked += OnSettingsControlChanged;
         GlobalCelebrateRadio.Checked += OnSettingsControlChanged;
@@ -135,6 +136,12 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
         AdvancedPositionCheck.Unchecked += OnSettingsControlChanged;
         AdvancedPositionCheck.Checked += OnAdvancedPositionChanged;
         AdvancedPositionCheck.Unchecked += OnAdvancedPositionChanged;
+        AdvancedImageHeightCheck.Checked += OnSettingsControlChanged;
+        AdvancedImageHeightCheck.Unchecked += OnSettingsControlChanged;
+        AdvancedImageHeightCheck.Checked += OnAdvancedImageHeightChanged;
+        AdvancedImageHeightCheck.Unchecked += OnAdvancedImageHeightChanged;
+        TaskUseGlobalImageHeightCheck.Checked += OnTaskUseGlobalImageHeightChanged;
+        TaskUseGlobalImageHeightCheck.Unchecked += OnTaskUseGlobalImageHeightChanged;
 
         MainTabs.SelectionChanged += OnMainTabsSelectionChanged;
 
@@ -224,10 +231,11 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
         _nowClockTimer.Start();
     }
 
-    /// <summary>读取程序集版本信息并格式化为「应用程序版本号 vX.Y.Z」。</summary>
+    /// <summary>读取程序集版本信息并格式化为「应用程序版本号 vX.Y.Z」，Debug 构建附加 Debug。</summary>
     private static string FormatAppVersion()
     {
         var assembly = System.Reflection.Assembly.GetExecutingAssembly();
+        string ver;
 
         // 优先使用 InformationalVersion，它直接来自 csproj 的 <Version>。
         var infoAttr = Attribute.GetCustomAttribute(assembly, typeof(System.Reflection.AssemblyInformationalVersionAttribute))
@@ -238,11 +246,25 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
             // 去掉 commit hash（如 0.8.1+abcd1234 → 0.8.1）
             var plus = v.IndexOf('+');
             if (plus > 0) v = v[..plus];
-            return $"应用程序版本号 v{v}";
+            ver = v;
+        }
+        else
+        {
+            var av = assembly.GetName().Version;
+            ver = av != null ? $"{av.Major}.{av.Minor}.{av.Build}" : "0.0.0";
         }
 
-        var av = assembly.GetName().Version;
-        return av != null ? $"应用程序版本号 v{av.Major}.{av.Minor}.{av.Build}" : "应用程序版本号 v0.0.0";
+        return $"应用程序版本号 v{ver}{DebugVersionSuffix()}";
+    }
+
+    /// <summary>Debug 构建时附加「 Debug」，Release 为空。</summary>
+    private static string DebugVersionSuffix()
+    {
+#if DEBUG
+        return " Debug";
+#else
+        return "";
+#endif
     }
 
     /// <summary>从 Headless 拉取任务列表与全局设置（在窗口已显示后调用）。</summary>
@@ -397,11 +419,13 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
             AllowTelemetryCheck.IsChecked = s.AllowTelemetry;
             SelectComboByTag(BarPositionBox, s.BarPosition);
             AdvancedPositionCheck.IsChecked = s.AdvancedPosition;
+            AdvancedImageHeightCheck.IsChecked = s.AdvancedImageHeight;
             UpdateSingleDirectionLabels(s.BarPosition);
             ApplyBarDirection(string.IsNullOrWhiteSpace(s.BarDirection) ? "forward" : s.BarDirection);
             ApplyBarDirections(s.BarDirections);
             AllFourCheck.IsChecked = s.AllFour;
             UpdateDirectionPanelsVisibility();
+            UpdateTaskImageHeightVisibility();
             ApplyAdvancedSettingsVisibility(s.ShowAdvancedSettings);
             _appliedSettingsRevision = revision;
             DesktopLog.Info("ConfigWindow.ApplySettingsFromServer applied to UI");
@@ -422,7 +446,7 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
         Dispatcher.BeginInvoke(() =>
         {
             var v = string.IsNullOrWhiteSpace(version) ? "未知" : version.TrimStart('v', 'V');
-            BackendVersionText.Text = $"内核版本号 v{v}";
+            BackendVersionText.Text = $"内核版本号 v{v}{DebugVersionSuffix()}";
         });
     }
 
@@ -438,6 +462,13 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
         if (sender == BarHeightBox) BarHeightValueText.Text = ((int)BarHeightBox.Value).ToString();
         if (sender == ImageMaxHeightBox) ImageMaxHeightValueText.Text = ((int)ImageMaxHeightBox.Value).ToString();
         if (_session.Write.CanCommitSettings(_session)) CommitSettings();
+    }
+
+    private void OnTaskImageMaxHeightChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+    {
+        if (TaskImageMaxHeightValueText != null)
+            TaskImageMaxHeightValueText.Text = ((int)TaskImageMaxHeightBox.Value).ToString();
+        TryAutoSaveTask();
     }
 
     private void OnSettingsControlChanged(object sender, RoutedEventArgs e)
@@ -466,6 +497,7 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
         _settings.BarDirection = CollectBarDirection();
         _settings.BarDirections = CollectBarDirections();
         _settings.AdvancedPosition = AdvancedPositionCheck.IsChecked == true;
+        _settings.AdvancedImageHeight = AdvancedImageHeightCheck.IsChecked == true;
         _settings.AllFour = AllFourCheck.IsChecked == true;
         _settings.ShowAdvancedSettings = _advancedSettingsVisible;
         var rect = SystemParameters.WorkArea;
@@ -569,6 +601,70 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
         PerEdgeDirectionPanel.Visibility = advancedPosition && !allFour ? Visibility.Visible : Visibility.Collapsed;
         if (TaskPositionRow != null)
             TaskPositionRow.Visibility = advancedPosition && !allFour ? Visibility.Visible : Visibility.Collapsed;
+        UpdateTaskImageHeightVisibility();
+    }
+
+    private void UpdateTaskImageHeightVisibility()
+    {
+        if (TaskImageHeightPanel == null || AdvancedImageHeightCheck == null) return;
+        bool allow = AdvancedImageHeightCheck.IsChecked == true;
+        var vis = allow ? Visibility.Visible : Visibility.Collapsed;
+        TaskImageHeightPanel.Visibility = vis;
+        if (TaskImageSectionSeparator != null)
+            TaskImageSectionSeparator.Visibility = vis;
+        UpdateTaskImageMaxHeightRowVisibility();
+    }
+
+    private void UpdateTaskImageMaxHeightRowVisibility()
+    {
+        if (TaskImageMaxHeightRow == null || TaskUseGlobalImageHeightCheck == null) return;
+        bool useGlobal = TaskUseGlobalImageHeightCheck.IsChecked != false;
+        TaskImageMaxHeightRow.Visibility = useGlobal ? Visibility.Collapsed : Visibility.Visible;
+    }
+
+    private void OnAdvancedImageHeightChanged(object sender, RoutedEventArgs e)
+    {
+        UpdateTaskImageHeightVisibility();
+        ScheduleFitHeightToTaskEditor();
+    }
+
+    private void OnTaskUseGlobalImageHeightChanged(object sender, RoutedEventArgs e)
+    {
+        if (TaskUseGlobalImageHeightCheck.IsChecked == false)
+        {
+            // 切到自定义：初值取当前全局高度。
+            var global = (int)ImageMaxHeightBox.Value;
+            if (global < 15) global = 15;
+            TaskImageMaxHeightBox.Value = Math.Clamp(global, 15, 30);
+            TaskImageMaxHeightValueText.Text = ((int)TaskImageMaxHeightBox.Value).ToString();
+        }
+        UpdateTaskImageMaxHeightRowVisibility();
+        ScheduleFitHeightToTaskEditor();
+        TryAutoSaveTask();
+    }
+
+    private void LoadTaskImageHeight(int imageMaxSize)
+    {
+        bool useGlobal = imageMaxSize <= 0;
+        TaskUseGlobalImageHeightCheck.IsChecked = useGlobal;
+        if (!useGlobal)
+        {
+            TaskImageMaxHeightBox.Value = Math.Clamp(imageMaxSize, 15, 30);
+            TaskImageMaxHeightValueText.Text = ((int)TaskImageMaxHeightBox.Value).ToString();
+        }
+        UpdateTaskImageMaxHeightRowVisibility();
+    }
+
+    private int CollectTaskImageMaxSize()
+    {
+        if (AdvancedImageHeightCheck.IsChecked != true)
+        {
+            // 全局关闭任务级覆盖时不改已存值，避免误抹。
+            var existing = _editingId != null ? _rows.FirstOrDefault(r => r.Id == _editingId) : null;
+            return existing?.ImageMaxSize ?? 0;
+        }
+        if (TaskUseGlobalImageHeightCheck.IsChecked != false) return 0;
+        return (int)TaskImageMaxHeightBox.Value;
     }
 
     private void OnAllFourChanged(object sender, RoutedEventArgs e)
@@ -1456,6 +1552,15 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.";
         if (sender is not ComboBox box || box.SelectedItem is not ComboBoxItem item) return;
         _filterMode = item.Tag?.ToString() ?? "all";
         _rowsView?.Refresh();
+        UpdateDeleteCompletedButtonVisibility();
+    }
+
+    /// <summary>仅在筛选为「全部 / 已完成」时显示一键删除已完成。</summary>
+    private void UpdateDeleteCompletedButtonVisibility()
+    {
+        if (TaskListBottomGrid == null) return;
+        bool show = _filterMode is "all" or "completed";
+        TaskListBottomGrid.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
     }
 
     private void OnDeleteCompleted(object sender, RoutedEventArgs e)
@@ -1496,6 +1601,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.";
         _editingBehaviors = row.ExpiredBehaviors; // 保留任务已有覆盖，表单不展示
         LoadRecurrence(row.Recurrence);
         SelectComboByTag(TaskPositionBox, row.Position);
+        LoadTaskImageHeight(row.ImageMaxSize);
         UpdateTaskActionButtons(row);
         StatusText.Text = $"正在编辑：{row.Name}";
         MainTabs.SelectedItem = TaskTab;
@@ -1522,16 +1628,36 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.";
         _editingBehaviors = null; // 新任务默认沿用全局
         LoadRecurrence(null);    // 新任务默认不循环
         SelectComboByTag(TaskPositionBox, "");
+        LoadTaskImageHeight(0);
         TaskGrid.SelectedItem = null;
         DuplicateTaskButton.Visibility = Visibility.Collapsed;
         CompleteTaskButton.Visibility = Visibility.Collapsed;
+        DeleteEditingTaskButton.Visibility = Visibility.Collapsed;
+        LayoutTaskActionButtons();
         StatusText.Text = "新建任务";
         ScheduleFitHeightToTaskEditor(force: true);
     }
 
-    private void OnDelete(object sender, RoutedEventArgs e)
+    private void OnDeleteEditingTask(object sender, RoutedEventArgs e)
     {
-        if (TaskGrid.SelectedItem is not TaskRow row) { StatusText.Text = "请先选择任务"; return; }
+        if (_editingId == null)
+        {
+            StatusText.Text = "当前为新建任务，无需删除";
+            return;
+        }
+        if (_rows.FirstOrDefault(r => r.Id == _editingId) is not TaskRow row)
+        {
+            StatusText.Text = "任务不存在或已删除";
+            return;
+        }
+
+        var result = System.Windows.MessageBox.Show(
+            $"确认删除任务「{row.Name}」？此操作不可撤销。",
+            "删除该任务",
+            System.Windows.MessageBoxButton.YesNo,
+            System.Windows.MessageBoxImage.Warning);
+        if (result != System.Windows.MessageBoxResult.Yes) return;
+
         _ipc.Send(new Command { Action = "deleteTask", TaskId = row.Id });
         OnNew(sender, e);
         StatusText.Text = "已删除";
@@ -1594,6 +1720,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.";
 
     private void UpdateTaskActionButtons(TaskRow row)
     {
+        DeleteEditingTaskButton.Visibility = Visibility.Visible;
         if (row.Completed)
         {
             DuplicateTaskButton.Visibility = Visibility.Visible;
@@ -1604,6 +1731,23 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.";
             DuplicateTaskButton.Visibility = Visibility.Collapsed;
             CompleteTaskButton.Visibility = Visibility.Visible;
         }
+        LayoutTaskActionButtons();
+    }
+
+    /// <summary>按可见按钮重建等宽列，避免 Collapsed 占位导致空隙。</summary>
+    private void LayoutTaskActionButtons()
+    {
+        if (TaskActionBar == null) return;
+        var visible = new[] { DuplicateTaskButton, CompleteTaskButton, DeleteEditingTaskButton }
+            .Where(b => b.Visibility == Visibility.Visible)
+            .ToArray();
+        TaskActionBar.ColumnDefinitions.Clear();
+        for (int i = 0; i < visible.Length; i++)
+            TaskActionBar.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        foreach (var b in new[] { DuplicateTaskButton, CompleteTaskButton, DeleteEditingTaskButton })
+            Grid.SetColumn(b, 0);
+        for (int i = 0; i < visible.Length; i++)
+            Grid.SetColumn(visible[i], i);
     }
 
     private void OnDuplicateTask(object sender, RoutedEventArgs e)
@@ -1660,6 +1804,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.";
             Type = row.Type,
             Color = row.Color,
             Gif = row.Gif,
+            ImageMaxSize = row.ImageMaxSize,
             Position = row.Position,
             StartTs = newStartTs,
             EndTs = newEndTs,
@@ -1872,7 +2017,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.";
             Color = color,
             // 必须显式序列化 gif（含空串），否则 JSON 省略该字段会导致 Go 端整任务替换时清空图片。
             Gif = gif,
-            ImageMaxSize = existing?.ImageMaxSize ?? 0,
+            ImageMaxSize = CollectTaskImageMaxSize(),
             Position = position,
             StartTs = startTs,
             EndTs = endTs,
@@ -1892,6 +2037,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.";
         if (a.Type != b.Type) return false;
         if (a.Color != b.Color) return false;
         if (!string.Equals(a.Gif ?? "", b.Gif ?? "", StringComparison.Ordinal)) return false;
+        if (a.ImageMaxSize != b.ImageMaxSize) return false;
         if (a.Position != b.Position) return false;
         if (a.StartTs != b.StartTs) return false;
         if (a.EndTs != b.EndTs) return false;

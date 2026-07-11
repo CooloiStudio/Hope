@@ -24,7 +24,7 @@ func boolPtr(b bool) *bool { return &b }
 // ExpiredBehaviors 为「全局默认」到期提醒（多选）；任务可在 task.Task.ExpiredBehaviors 单独覆盖。
 type Settings struct {
 	BarHeightPx         int      `json:"barHeightPx"`
-	// ImageMaxHeightPx 为图片最大高度（px，全局统一）；段图片按此高度等比缩放。
+	// ImageMaxHeightPx 为图片最大高度（px）全局默认；开启 AdvancedImageHeight 后任务可覆盖。
 	ImageMaxHeightPx    int      `json:"imageMaxHeightPx"`
 	ExpiredBehaviors    []string `json:"expiredBehaviors"`
 	RefreshSec          int      `json:"refreshSec"`
@@ -43,6 +43,8 @@ type Settings struct {
 	BarDirections map[string]string `json:"barDirections,omitempty"`
 	// AdvancedPosition 为 true 时允许为单个任务指定展示位置（在高级设置中开启）。
 	AdvancedPosition bool `json:"advancedPosition"`
+	// AdvancedImageHeight 为 true 时允许为单个任务设置图片最大高度（在高级设置中开启）。
+	AdvancedImageHeight bool `json:"advancedImageHeight"`
 	// AllFour 为 true 时启用四边环绕（我全都要）。从 BarPosition 出发沿 BarDirection 方向环绕。
 	AllFour bool `json:"allFour"`
 	// AutoUpdate 是否自动下载更新（默认开）；关闭后仅检测并提示，不自动下载。
@@ -74,8 +76,9 @@ func DefaultSettings() Settings {
 		BarPosition:         "top",
 		BarDirection:        "forward",
 		BarDirections:       defaultBarDirections(),
-		AdvancedPosition:    false,
-		AllFour:             false,
+		AdvancedPosition:     false,
+		AdvancedImageHeight:  false,
+		AllFour:              false,
 		AutoUpdate:          boolPtr(true),
 		AllowTelemetry:      boolPtr(true),
 		ScreenWidth:         0,
@@ -172,6 +175,7 @@ func mergeSettings(def, loaded Settings) Settings {
 	out.ShowConfigAtRuntime = loaded.ShowConfigAtRuntime
 	out.ShowAdvancedSettings = loaded.ShowAdvancedSettings
 	out.AdvancedPosition = loaded.AdvancedPosition
+	out.AdvancedImageHeight = loaded.AdvancedImageHeight
 	out.AllFour = loaded.AllFour
 	if loaded.AutoUpdate != nil {
 		out.AutoUpdate = loaded.AutoUpdate

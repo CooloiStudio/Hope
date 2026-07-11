@@ -627,7 +627,10 @@ public partial class App : Application
 
     private void DispatchState(StateMessage msg, bool celebrate)
     {
+        ResolveSegmentImageHeights(msg.Segments);
         var all = celebrate && !_session.OverlayAllFour ? ExpandForCelebrate(msg.Segments ?? new List<Segment>()) : (msg.Segments ?? new List<Segment>());
+        if (celebrate && !_session.OverlayAllFour)
+            ResolveSegmentImageHeights(all);
         if (_session.OverlayAdvancedPosition && !_session.OverlayAllFour && !celebrate)
         {
             var positions = all
@@ -650,6 +653,14 @@ public partial class App : Application
             };
             overlay.UpdateState(windowMsg, _session.OverlayBarHeightPx);
         }
+    }
+
+    /// <summary>按会话设置把 segment.ImageMaxSize 解析为最终展示像素（原地写入）。</summary>
+    private void ResolveSegmentImageHeights(List<Segment>? segments)
+    {
+        if (segments == null) return;
+        foreach (var s in segments)
+            s.ImageMaxSize = _session.ResolveImageMaxSize(s.ImageMaxSize);
     }
 
     // 庆祝模式（非四边环绕）：把「触发庆祝的到期段」复制到四条边做满填 + 闪烁。

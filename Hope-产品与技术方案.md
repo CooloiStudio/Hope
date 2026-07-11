@@ -1,56 +1,54 @@
 # Hope（盼头）产品与技术方案
 
-> 版本：v0.8  
-> 更新说明：新增进度条位置/方向设置、四边环绕图片旋转、庆祝模式、任务级位置覆盖、任务完成按钮、颜色去重优化
+> 版本：v0.14.93  
+> 更新日期：2026-07-11  
+> 更新说明：对齐当前已交付能力——时间戳进度模型、任务级位置/图片高度、完成与循环、自动更新与双通道安装包、安装向导中英、稳定性测试门禁等
 
 **图例：** ✅ 已实现并合入代码　⚠️ 后端或局部已有，UI/联调未完成　❌ 未实现（含 Phase 2）
 
 ---
 
-## 0. 实现状态（截至 2026-06-26，v0.8 施工中）
+## 0. 实现状态（截至 2026-07-11，v0.14.93）
 
-> 对照 `src/headless`、`src/win-desktop`、`.github/workflows/release.yml`、`setup.iss`。
+> 对照 `src/headless`、`src/win-desktop`、`.github/workflows/`、`setup.iss`、`scripts/test.ps1`。
 
 ### 0.1 Phase 1 总览
 
 | 模块 | 状态 | 代码位置 / 备注 |
 |------|------|-----------------|
 | Headless 核心（Go） | ✅ | `src/headless/`：`engine`、`task`、`config`、`ipc` |
-| 墙钟实时进度 & 多任务分段 | ✅ | `task.BuildLayout`、`task.Percent`；单测见 `task_test.go` |
+| 墙钟实时进度 & 多任务分段 | ✅ | Unix `startTs`/`endTs`；`task.BuildLayout` / `Percent`；单测见 `task_*_test.go` |
 | 配置持久化（JSON） | ✅ | `%APPDATA%\Hope\config.json` + `tasks.json`；含 UTF-8 BOM 剥离 |
-| IPC 命名管道广播 & 命令 | ✅ | `\\.\pipe\Hope\progress`；`hide`/`show`/`getSettings`/`updateSettings` 已实现 |
+| IPC 命名管道广播 & 命令 | ✅ | `\\.\pipe\Hope\progress`；读写命令、`requestId`、写后单播快照；`screenSize` 独立于 `updateSettings` |
 | Headless 单实例 | ✅ | `Global\HopeHeadless` Mutex |
 | Headless 日志 | ✅ | `logs/hope-headless.log`；`--debug` 额外输出控制台 |
-| WPF 配置窗体 & 任务 CRUD | ✅ | `Views/ConfigWindow`：双 Tab、取色盘、日期时间选择器、快填、实时预览 |
-| 全局设置 UI | ✅ | 条高 / 图片最大高度 / 起始位置 / 到期提醒；高级设置含前进方向、刷新间隔、四边模式、任务级位置；开机自启 / 运行时显示配置窗 / 重置窗高；**修改即生效** |
-| 全局设置持久化 | ✅ | 修复「启动被默认值覆盖」：屏幕尺寸上报改用独立 `screenSize` 命令，不再经 `updateSettings` 触发 `mergeSettings`（旧实现每次启动用 `SettingsDto` 默认值覆盖用户设置） |
-| 系统托盘 | ✅ | `App.xaml.cs`：主题自适应图标、打开设置、暂停/继续、隐藏/显示、关于、退出 |
-| 应用 / 托盘品牌图标 | ✅ | `src/resources/` + `AppIconHelper`；托盘随系统亮暗着色 |
-| DWM 分段顶栏 Overlay | ✅ | `Overlay/OverlayWindow`：多色填充、透明未完成区、条高读回 |
-| 点击穿透 & 不出 Alt+Tab | ✅ | `NativeMethods` + `WM_NCHITTEST` → `HTTRANSPARENT` |
-| 悬停展示任务名 + 倒计时 | ✅ | `OverlayWindow`：`endAt` 倒计时 Tooltip |
-| 跟随图片/动图 | ✅ | `Overlay/ImageSprite`：Bgra32 保留 alpha；>15px 等比缩放、GIF 播放 |
-| 截止后行为 `expiredBehaviors`（可叠加） | ✅ | 默认自动显示 + 叠加勾选 `blink`/`celebrate`/`notify`（已移除 `keep`/`hide` 与显示模式下拉）；全局默认 + 任务级覆盖（「使用全局默认」勾选框）；`blink` 为柔和 alpha 渐变持续到查看 |
-| 循环任务 `recurrence` | ✅ | 仅定时任务；每期由 `startTs`/`endTs` 定义绝对窗口；完成时累加 n×86400 生成下一期（详见 §7.2） |
-| Desktop → Headless 互拉 | ✅ | `HeadlessSupervisor`：检测进程缺失则拉起 |
-| Headless → Desktop 互拉 | ✅ | `main.go --desktop` 已实现；`HeadlessSupervisor` 拉起 Headless 时传入自身路径，双向互拉已接通 |
+| WPF 配置窗体 & 任务 CRUD | ✅ | `Views/ConfigWindow`：任务列表筛选、取色盘、日期时间（可编辑下拉）、快填、自动保存 |
+| 全局设置 UI | ✅ | 条高 / 图片最大高度 / 起始位置 / 到期提醒；高级：前进方向、刷新、四边、任务级位置、**任务级图片高度**；开机自启 / 运行时显示配置窗 / 自动更新 / 遥测；**修改即生效** |
+| 全局设置持久化 | ✅ | 启动屏幕尺寸走 `screenSize`，避免默认值经 `updateSettings` 抹掉用户设置 |
+| 系统托盘 | ✅ | 打开设置、暂停/继续、隐藏/显示、检查更新、关于、退出 |
+| 应用 / 托盘品牌图标 | ✅ | 水墨「盼」/ Hope；托盘用 Mini 原图（不随主题染色） |
+| DWM 分段 Overlay | ✅ | 多边位置、方向、四边环绕、任务栏避让与 Z-order |
+| 点击穿透 & 不出 Alt+Tab | ✅ | `WM_NCHITTEST` → `HTTRANSPARENT` |
+| 悬停展示任务名 + 倒计时 | ✅ | Overlay Tooltip |
+| 跟随图片/动图 | ✅ | `ImageSprite`；高度由全局默认或任务覆盖（15–30px）等比缩放 |
+| 截止后行为 `expiredBehaviors` | ✅ | 默认自动显示 + 可叠加 blink/celebrate/notify；全局默认 + 任务级覆盖 |
+| 循环任务 `recurrence` | ✅ | 仅定时任务；完成时累加 n×86400 进入下一期 |
+| 任务完成 / 重建 | ✅ | 列表与编辑区「完成」；循环进下一期；已完成可「创建为新任务」 |
+| Desktop ↔ Headless 互拉 | ✅ | `HeadlessSupervisor` + `--desktop` |
 | Desktop 单实例 | ✅ | `Global\HopeDesktop` Mutex |
-| WPF-UI Fluent 主题（配置窗） | ✅ | `App.xaml` 合并主题字典；`FluentWindow` + `TitleBar`；首帧后延迟应用 Mica（Win11）/ Acrylic（Win10），托盘延迟打开 + 隐藏时 `UnWatch`，规避 `Show()` 卡死 |
-| CI 编译 & 单测 | ✅ | `.github/workflows/release.yml`：`go test` + `dotnet publish` |
-| Inno Setup 安装包 | ✅ | `setup.iss`（含可选开机自启任务、`AppMutex` 静默升级）；tag 触发发版，附 `Hope_Setup.exe` + `.sha256`（官网 / 自动更新） |
-| MSIX 商店包 | ✅ | `scripts/pack-msix.ps1` + `packaging/`；CI 同 Release 产出 `Hope_<版本>_x64.msix` / `.msixupload`（Partner Center Package URL） |
-| 自动更新（全量） | ✅ | `Services/UpdateService` + `UpdateCoordinator`：多通道检测（GitHub API/网页 + Gitee 兜底）、GitHub/Gitee 下载、SHA-256 校验、静默就地升级；全局「自动下载更新」开关（默认开）、每日检查，详见 §8.1 |
-| VS Code 调试配置 | ✅ | `Hope.sln` + `.vscode/launch.json`（net10.0-windows） |
-| **进度条位置选择** | 🔲 | 全局设置：顶边/底边/左边/右边；默认顶边 |
-| **进度条方向选择** | ✅ | 高级设置内；默认智能设定（上下时左→右，左右时上→下） |
-| **四边模式（我全都要）** | ✅ | 高级设置；4 个 Overlay 吸附四边；按 pct 降序生成段，使「低进度覆盖高进度」（重叠区低进度在上层） |
-| **全屏庆祝（四边闪烁）** | ✅ | 可叠加勾选项 `celebrate`；到期时四边同步闪烁 |
-| **任务级位置覆盖** | 🔲 | 高级设置开启后，允许为单个任务指定展示位置 |
-| **任务完成按钮** | 🔲 | 任务列表增加「完成」按钮；重复任务自动进入下个循环 |
-| **颜色去重优化** | 🔲 | 不再限制重复颜色；保存时弹出对话框提示用户确认 |
-| Phase 2 全屏插件 | ❌ | `src/plugins/fullscreen/` 仅占位 README |
+| WPF-UI Fluent 主题 | ✅ | FluentWindow + Mica/Acrylic |
+| 单测与一键测试 | ✅ | `go test` + `Hope.Desktop.Tests`；`scripts/test.ps1`；CI `ci.yml` / release 发版前跑 |
+| Inno Setup 安装包 | ✅ | `setup.iss`；简体中文 + 英文向导；`Hope_Setup.exe` + `.sha256` |
+| MSIX 商店包 | ✅ | `pack-msix.ps1`；`.msix` / `.msixupload` |
+| 自动更新（全量） | ✅ | 多通道检测、SHA-256、静默升级；商店通道引导 Store |
+| 进度条位置 / 方向 / 四边 | ✅ | 全局位置 + 方向；高级「我全都要」；各边独立方向（任务级位置开启时） |
+| 任务级位置覆盖 | ✅ | 高级「允许为单个任务指定展示位置」 |
+| 任务级图片高度 | ✅ | 高级「允许为单个任务设置图片高度」；编辑区「使用全局图片高度」+ 滑动条；桌面解析最终高度 |
+| 全屏庆祝 | ✅ | `celebrate`：非四边时复制到四边闪烁 |
+| 颜色 | ✅ | 取色盘；仍校验不与其他任务重复（未改为「允许重复+确认框」） |
+| Phase 2 全屏插件 | ❌ | `src/plugins/fullscreen/` 仅占位 |
 
-**当前可交付边界：** v0.6 已完成循环任务、到期提醒升级；v0.7 新增进度条位置/方向设置（含四边模式）、庆祝模式、任务级位置覆盖、任务完成按钮、颜色去重优化。距 v1.0 尚差帮助文档与验收清单人工回归。
+**当前可交付边界：** v0.14 已覆盖时间戳进度与循环、位置/图片任务级覆盖、完成流、安装与更新、稳定性门禁。距 v1.0 主要差帮助/Onboarding 与验收清单人工回归。
 
 ### 0.2 验收标准对照（§9）
 
@@ -60,15 +58,17 @@
 | 2 | 点击穿透 | ✅ |
 | 3 | 不出 Alt+Tab / Win+Tab | ✅ |
 | 4 | 悬停展示任务名 + 倒计时 | ✅ |
-| 5 | 墙钟 90% 示例 | ✅（单测覆盖） |
-| 6 | 无边框全屏可见 | ⚠️ 未自动化测；设计支持，需人工验证 |
+| 5 | 墙钟进度示例 | ✅（单测覆盖） |
+| 6 | 无边框全屏可见 | ⚠️ 设计支持；真全屏检测已收紧（排除桌面 Shell） |
 | 7 | 托盘隐藏顶栏 | ✅ |
 | 8 | 托盘退出 & 互拉停止 | ✅ |
 | 9 | 单实例 | ✅ |
 | 10 | 无任务不显示 | ✅ |
-| 11 | 到期提醒 `expiredBehaviors`（可叠加） | ✅（默认自动显示 + 叠加 闪烁/全屏庆祝/系统通知；全局默认 + 任务级覆盖） |
-| 12 | Headless 崩溃拉起 | ✅（Desktop 侧） |
+| 11 | 到期提醒 `expiredBehaviors` | ✅ |
+| 12 | Headless 崩溃拉起 | ✅ |
 | 13 | 暂停不冻结墙钟 | ✅ |
+| 14 | 任务级位置 / 图片高度 | ✅ |
+| 15 | 点击桌面时进度条不被任务栏遮挡 | ✅ |
 
 ---
 
@@ -403,7 +403,7 @@ go build -ldflags="-s -w -H=windowsgui" -o hope-headless.exe .
 - [x] 支持多任务列表：新建 / 编辑 / 删除
 - [x] 保存后通过 IPC 同步至 Headless
 - [x] 关闭窗口时 **最小化到托盘**，不退出进程
-- [x] 全局设置 Tab：进度条高度、图片最大高度、起始位置、到期提醒、开机自启、运行时显示配置窗、重置窗高；**高级设置** 内含前进方向、刷新间隔、四边模式、任务级位置；**修改即 `updateSettings`**（无保存按钮）。屏幕尺寸上报走独立 `screenSize` 命令，避免覆盖用户设置
+- [x] 全局设置 Tab：进度条高度、图片最大高度、起始位置、到期提醒、开机自启、运行时显示配置窗、自动更新、遥测；**高级设置** 含前进方向、刷新间隔、四边、任务级位置、**任务级图片高度**；**修改即 `updateSettings`**。屏幕尺寸上报走独立 `screenSize` 命令，避免覆盖用户设置
 - [x] `expiredBehaviors` 全局设置项：**呼吸提醒 / 全屏庆祝 互斥（radio，含「仅自动显示」复位项）**，系统通知为独立可叠加勾选框；默认「仅自动显示」（空集合）。选中呼吸或庆祝时在其后追加 **红色「⚠️光敏性癫痫警告⚠️」** 文案——此为全局默认值
 - [x] 任务编辑区**不再暴露到期提醒选项**，所有任务默认沿用全局；任务级覆盖能力仍保留于数据模型与后端（`task.expiredBehaviors` 非空即覆盖全局），编辑既有任务时原样保留其覆盖、不被表单清空
 - [x] 任务编辑区「循环」（仅定时任务）：模式下拉（不循环 / 每天 / 间隔若干天循环 / 按星期）+ 条件行（间隔天数输入框，范围 3~799；按星期周一~周日两行多选）。详见 §7.2「循环任务」
@@ -633,8 +633,8 @@ WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE
   - [x] **闪烁连续性**：闪烁矩形按 `taskId`（+所在边）**持久化复用**，几何/颜色/到期态未变时不重建、不重启动画——即使**其他未完成任务每秒推进进度触发刷新**，已完成任务的闪烁相位也不被打断、不被重置（详见 §5.4.1 实现要点）
 - [x] **跟随图片/动图：** 含 `gif` 的段在进度条**下方**渲染（`ImageSprite`），水平中心对齐 `fillEnd`、随进度移动
   - [x] 支持常见图片格式（GIF / PNG / JPG / BMP / WebP / TIFF 等）；**动画 WebP / APNG 仅首帧**（`System.Drawing` 限制）
-  - [x] 图片高度 **超过 15px 时等比缩放到 15px**，不超过则保持原始尺寸
-  - [x] 存在图片时窗口向下扩展（高度 = 条高 + 图片区 ≤15px）；图片区点击穿透
+  - [x] 图片高度默认取全局 `imageMaxHeightPx`（15–30）；任务可覆盖（见高级选项）
+  - [x] 存在图片时窗口向外侧扩展（条高 + 图片区）；图片区点击穿透
 
 #### 5.4.1 正向/反向渲染逻辑
 
@@ -854,8 +854,8 @@ Hope/
 
 - 每个任务可选配置一张本地图片；图片挂在进度条 **下方**，水平位置跟随该任务进度前沿（`fillEnd`）移动
 - **支持常见图片格式**（GIF / PNG / JPG / BMP / WebP / TIFF 等）；多帧动图（动画 GIF）由 Overlay 逐帧循环播放（`ImageAnimator` 驱动，约 15fps）
-- **尺寸规则：** 图片高度超过 15px 时等比缩放到 15px；不超过则保持原始尺寸
-- **进度条本身粗细不受图片影响**，恒为 `barHeightPx`；图片在进度条下方独立成区
+- **尺寸规则：** 默认按全局 `imageMaxHeightPx`（15–30）等比缩放；开启 `advancedImageHeight` 且任务 `imageMaxSize>0` 时按任务值缩放。最终像素由 Desktop 解析。
+- **进度条本身粗细不受图片影响**，恒为 `barHeightPx`；图片在进度条旁独立成区
 - 图片不影响计时与穿透；文件缺失或损坏时静默跳过
 - IPC / 任务字段名仍为 `gif`（历史命名），语义为任意图片路径
 
@@ -914,16 +914,22 @@ Hope/
 | 设置 | 默认 | 是否首版 | 实现状态 |
 |------|------|----------|----------|
 | 进度条高度 (1–10px) | 4px | 是 | ✅ 全局设置即时生效 |
-| 图片最大高度 `imageMaxHeightPx` (15–30px) | 15px | 是 | ✅ **全局统一**（v0.8 由任务级收敛到全局，引擎按此覆盖各段 `imageMaxSize`） |
-| 每任务颜色 | 用户必填 | 是 | ✅ 取色盘 + 去重校验 |
+| 图片最大高度 `imageMaxHeightPx` (15–30px) | 15px | 是 | ✅ 全局默认；高级开启 `advancedImageHeight` 后任务可用 `imageMaxSize`（0=沿用全局）覆盖；**展示高度由 Desktop 解析**，Headless 仅透传 |
+| 允许任务级图片高度 `advancedImageHeight` | 关 | 是 | ✅ 高级选项；编辑区「使用全局图片高度」+ 滑动条 |
+| 每任务颜色 | 用户必填 | 是 | ✅ 取色盘；仍禁止与其他任务同色 |
 | 跟随图片/动图 | 可选 | 是 | ✅ |
 | 显示显示器 | 主屏 | 是 | ✅ 仅主屏 |
 | 截止后行为 `expiredBehaviors`（可叠加） | `[]` | 是 | ✅ 默认自动显示 + 叠加 blink/celebrate/notify；全局默认 + 任务级覆盖 |
 | 刷新间隔 `refreshSec`（高级设置） | 1s | 是 | ✅ 1–10s，即时生效 |
-| 进度条前进方向 `barDirection`（高级设置） | 默认/智能 | 是 | ✅ 收入高级设置 |
+| 进度条位置 `barPosition` | top | 是 | ✅ 顶/底/左/右 |
+| 进度条前进方向 `barDirection`（高级设置） | forward | 是 | ✅；任务级位置开启时可用各边 `barDirections` |
+| 四边环绕 `allFour` | 关 | 是 | ✅ |
+| 任务级位置 `advancedPosition` | 关 | 是 | ✅；任务 `position` 空=沿用全局 |
 | 开机自启 | 关 | 是 | ✅ HKCU Run + 持久化 |
 | 运行时显示配置窗 | 关 | 是 | ✅ `showConfigAtRuntime` |
-| 语言 | 简体中文 | [ ] | ❌ 字段预留，未做 i18n |
+| 自动下载更新 `autoUpdate` | 开 | 是 | ✅ |
+| 允许遥测 `allowTelemetry` | 开 | 是 | ✅ 匿名活跃；可关 |
+| 语言 | 简体中文 | [ ] | ⚠️ 安装向导中英已支持；应用内 i18n 未做 |
 
 ### 7.5 首次使用引导（Onboarding）
 
@@ -971,8 +977,9 @@ Hope/
 | v0.4 | 设置 UI、配置窗交互增强、WPF-UI 主题（FluentWindow/Mica）、品牌图标、实时预览、窗高自适应、`expiredBehavior` UI、双向互拉 | ✅ **已完成** |
 | v0.5 | 到期提醒升级：多选互斥（保持/隐藏/闪烁 + 通知）、全局默认 + 任务级覆盖、`blink` 改柔和 alpha 渐变并持续到查看、`keep` 保留满色段 | ✅ **已完成** |
 | v0.6 | 到期提醒「使用全局默认」并入下拉（选中禁用本任务通知）；**循环任务**（每天 / 每 N 天 / 按星期，支持跨午夜，窗口结束套用到期提醒并在下次开始重置） | ✅ **已完成** |
-| v0.7 | 进度条位置/方向设置（含四边模式）、庆祝模式、任务级位置覆盖、任务完成按钮、颜色去重优化 | 🔲 **施工中** |
-| v1.0 | 安装包验收、帮助文档、Onboarding | 🔲 |
+| v0.7 | 进度条位置/方向（含四边）、庆祝、任务级位置、完成按钮 | ✅ **已完成**（颜色仍保持互斥，未改「可重复+确认」） |
+| v0.8–v0.13 | 时间戳进度与循环、安装/更新/商店包、图标与中文安装向导、任务栏避让、稳定性测试门禁等 | ✅ **已完成**（详见 CHANGELOG） |
+| v0.14 | 高级选项：允许为单个任务设置图片高度；Desktop 解析展示高度 | ✅ **已完成**（v0.14.93） |
 | v1.0 | 安装包验收、帮助文档、Onboarding | 🔲 |
 | v1.x-plugin | 全屏游戏拓展包（独立发版） | ❌ |
 
@@ -985,7 +992,7 @@ Hope/
 1. [x] Checkout；校验 tag 提交在 `release` 分支上
 2. [x] Setup Go、.NET 10 SDK
 3. [x] 读取桌面端 `Hope.Desktop.csproj` 的 `<Version>`，并与 tag 版本一致
-4. [x] 从 `CHANGELOG.md` 抽取 `### v<版本>` 小节作为 Release 正文（抽不到则回退 GitHub 自动生成说明）
+4. [x] 从 `CHANGELOG.md` 抽取 `### v<版本>` 小节作为 Release 正文（抽取时去掉常见 Markdown 标记，便于客户端纯文本展示）；抽不到则回退 GitHub 自动生成
 5. [x] 编译 `hope-headless.exe`
 6. [x] `go test ./...`
 7. [x] 编译 `hope-desktop`（`dotnet publish` → `stage/`）
