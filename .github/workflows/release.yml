@@ -98,9 +98,9 @@ jobs:
         working-directory: src/headless
         run: go build -ldflags="-s -w -H=windowsgui" -o "${{ github.workspace }}\stage\hope-headless.exe" .
 
-      - name: Test headless
-        working-directory: src/headless
-        run: go test ./...
+      - name: Run all tests
+        shell: pwsh
+        run: ./scripts/test.ps1
 
       - name: Publish desktop (WPF)
         working-directory: src/win-desktop

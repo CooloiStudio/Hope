@@ -93,3 +93,47 @@ func TestShowAdvancedSettingsPersisted(t *testing.T) {
 		t.Error("showAdvancedSettings should persist as true")
 	}
 }
+
+// TestSetScreenDoesNotWipeUserSettings 回归：仅上报屏幕尺寸不得把 barHeight 等打回默认。
+func TestSetScreenDoesNotWipeUserSettings(t *testing.T) {
+	t.Setenv("APPDATA", t.TempDir())
+	store, err := Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	store.UpdateSettings(Settings{
+		BarHeightPx:  9,
+		BarPosition:  "bottom",
+		AllFour:      true,
+		RefreshSec:   3,
+		Autostart:    true,
+	})
+	store.SetScreen(2560, 1440)
+
+	settings, _ := store.Snapshot()
+	if settings.BarHeightPx != 9 || settings.BarPosition != "bottom" || !settings.AllFour || settings.RefreshSec != 3 || !settings.Autostart {
+		t.Fatalf("SetScreen wiped settings: %+v", settings)
+	}
+	if settings.ScreenWidth != 2560 || settings.ScreenHeight != 1440 {
+		t.Fatalf("screen size not applied: %+v", settings)
+	}
+}
+
+// TestUpdateSettingsZeroBarHeightKeepsCurrent 缺省/零值 barHeight 不得覆盖已有用户值。
+func TestUpdateSettingsZeroBarHeightKeepsCurrent(t *testing.T) {
+	t.Setenv("APPDATA", t.TempDir())
+	store, err := Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	store.UpdateSettings(Settings{BarHeightPx: 8, BarPosition: "left"})
+	store.UpdateSettings(Settings{BarPosition: "right"}) // BarHeightPx 为零
+
+	settings, _ := store.Snapshot()
+	if settings.BarHeightPx != 8 {
+		t.Fatalf("barHeightPx wiped to %d, want 8", settings.BarHeightPx)
+	}
+	if settings.BarPosition != "right" {
+		t.Fatalf("barPosition=%q, want right", settings.BarPosition)
+	}
+}

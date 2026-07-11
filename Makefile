@@ -1,14 +1,28 @@
-# Hope — 双远端推送（可选 make；无 make 时用下方脚本）
+# Hope — 本地测试与双远端推送（可选 make；无 make 时用下方脚本）
 #
-# PowerShell（推荐，Windows 自带/常用）：
+# 一键测试（推荐，Windows）：
+#   powershell -ExecutionPolicy Bypass -File .\scripts\test.ps1
+#   pwsh ./scripts/test.ps1
+#   .\scripts\test.ps1 -DesktopOnly
+#   .\scripts\test.ps1 -HeadlessOnly
+#
+# Git Bash：
+#   ./scripts/test.sh
+#
+# Make：
+#   make test              # Go + 桌面（等价于 scripts/test）
+#   make test-desktop      # 仅桌面 WPF 单测
+#   make test-headless     # 仅 Go
+#
+# PowerShell 推送：
 #   pwsh ./scripts/push-remotes.ps1
 #   pwsh ./scripts/push-remotes.ps1 -Force -Tag v0.13.90
 #
-# Git Bash（无需 make）：
+# Git Bash 推送：
 #   ./scripts/push-remotes.sh
 #   ./scripts/push-remotes.sh --force --tag v0.13.90
 #
-# Make（需自行安装 make）：
+# Make 推送：
 #   make push                         # 推送 release/master/develop → origin + gitee
 #   make push FORCE=1                 # 强制覆盖远端（--force-with-lease）
 #   make push TAG=v0.13.90            # 推送分支并打/推送 release tag
@@ -36,13 +50,24 @@ PUSH_FLAGS :=
 TAG_FORCE  :=
 endif
 
-.PHONY: help remotes ensure-gitee push tag status
+.PHONY: help remotes ensure-gitee push tag status test test-desktop test-headless
 
 help:
+	@echo "make test | test-desktop | test-headless"
+	@echo "  (Windows 也可: pwsh ./scripts/test.ps1)"
 	@echo "make push [FORCE=0|1] [TAG=vX.Y.Z]"
 	@echo "  FORCE=1  使用 --force-with-lease 覆盖远端分支/标签"
 	@echo "  TAG=...  创建并推送发版标签（可写 0.13.90，自动补 v）"
 	@echo "远端: $(REMOTES)    分支: $(BRANCHES)"
+
+test-headless:
+	@cd src/headless && go test ./...
+
+test-desktop:
+	@dotnet test src/win-desktop/tests/Hope.Desktop.Tests.csproj -c Release --verbosity minimal
+
+# 与 scripts/test.ps1 / scripts/test.sh 等价的一键入口
+test: test-headless test-desktop
 
 ensure-gitee:
 	@if ! git remote get-url gitee >/dev/null 2>&1; then \

@@ -24,17 +24,17 @@ public sealed class HeadlessSupervisor : IDisposable
     private readonly CancellationTokenSource _cts = new();
     private volatile bool _quitting;
     private Process? _currentProcess;
-    private int _fatalReported;
+    private readonly OnceFlag _fatalOnce = new();
 
     public void Start() => _ = Task.Run(LoopAsync);
 
     private void ReportFatal(string reason)
     {
-        if (Interlocked.Exchange(ref _fatalReported, 1) == 0)
+        _fatalOnce.TryFire(() =>
         {
             Debug.WriteLine($"[HeadlessSupervisor] FATAL: {reason}");
             FatalFailure?.Invoke(reason);
-        }
+        });
     }
 
     private async Task LoopAsync()
@@ -49,10 +49,10 @@ public sealed class HeadlessSupervisor : IDisposable
         int consecutiveQuickExits = 0;
         while (!_quitting && !_cts.IsCancellationRequested)
         {
-            if (_fatalReported == 1) return;
+            if (_fatalOnce.HasFired) return;
 
             // 若已存在可用的核心连接（如手动启动的 headless），无需再拉起新进程。
-            if (IsCoreReachable?.Invoke() == true)
+            if (ShouldSkipSpawn(IsCoreReachable?.Invoke() == true))
             {
                 consecutiveQuickExits = 0;
                 await Task.Delay(2000, CancellationToken.None).ConfigureAwait(false);
@@ -174,6 +174,9 @@ public sealed class HeadlessSupervisor : IDisposable
     }
 
     public void StopWatching() => _quitting = true;
+
+    /// <summary>核心已可达时跳过拉起，避免与已有 headless 争互斥量。</summary>
+    public static bool ShouldSkipSpawn(bool coreReachable) => coreReachable;
 
     public void Dispose()
     {

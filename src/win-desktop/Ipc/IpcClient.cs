@@ -22,6 +22,7 @@ public sealed class IpcClient : IDisposable
     private NamedPipeClientStream? _pipe;
     private StreamWriter? _writer;
     private readonly object _writeLock = new();
+    private readonly IpcConnectFailureTracker _connectFailures = new();
 
     /// <summary>是否已连接到 Headless 管道。</summary>
     public bool IsConnected
@@ -48,14 +49,16 @@ public sealed class IpcClient : IDisposable
     public event Action<string>? FatalDisconnected;
 
     /// <summary>允许连续连接失败的最大次数；超过后桌面端放弃并提示用户。</summary>
-    public int MaxConnectFailures { get; set; } = 3;
+    public int MaxConnectFailures
+    {
+        get => _connectFailures.MaxConnectFailures;
+        set => _connectFailures.MaxConnectFailures = value;
+    }
 
     public void Start() => _ = Task.Run(RunLoopAsync);
 
     private async Task RunLoopAsync()
     {
-        int consecutiveFailures = 0;
-        bool fatalReported = false;
         while (!_cts.IsCancellationRequested)
         {
             try
@@ -67,8 +70,7 @@ public sealed class IpcClient : IDisposable
                 {
                     _writer = new StreamWriter(pipe) { AutoFlush = true };
                 }
-                consecutiveFailures = 0;
-                fatalReported = false;
+                _connectFailures.OnConnected();
                 ConnectionChanged?.Invoke(true);
                 DesktopLog.Info("IPC connected to hope-headless pipe");
 
@@ -85,12 +87,8 @@ public sealed class IpcClient : IDisposable
             catch (Exception ex)
             {
                 DesktopLog.Warn($"IPC connect/read error: {ex.Message}");
-                consecutiveFailures++;
-                if (consecutiveFailures > MaxConnectFailures && !fatalReported)
-                {
-                    fatalReported = true;
-                    FatalDisconnected?.Invoke($"无法连接到 hope-headless 核心进程（连续失败 {consecutiveFailures} 次）。请检查后端是否被安全软件阻止，或尝试重启软件。");
-                }
+                if (_connectFailures.TryReportFatal(out var reason))
+                    FatalDisconnected?.Invoke(reason);
             }
             finally
             {
@@ -109,50 +107,24 @@ public sealed class IpcClient : IDisposable
     // 区分状态广播与 listTasks 响应（后者带 "type":"tasks"）。
     private void Dispatch(string line)
     {
-        try
-        {
-            using var doc = JsonDocument.Parse(line);
-            if (doc.RootElement.TryGetProperty("type", out var t))
+        IpcMessageDispatcher.TryDispatch(
+            line,
+            onTasks: tasks =>
             {
-                var type = t.GetString();
-                if (type == "tasks")
-                {
-                    var tasks = doc.RootElement.GetProperty("tasks").Deserialize<List<TaskDto>>(JsonOpts);
-                    if (tasks != null)
-                    {
-                        DesktopLog.Info($"IPC dispatch type=tasks count={tasks.Count}");
-                        TasksReceived?.Invoke(tasks);
-                    }
-                    return;
-                }
-                if (type == "settings")
-                {
-                    var settings = doc.RootElement.GetProperty("settings").Deserialize<SettingsDto>(JsonOpts);
-                    if (settings != null)
-                    {
-                        DesktopLog.Info($"IPC dispatch type=settings barHeightPx={settings.BarHeightPx}");
-                        SettingsReceived?.Invoke(settings);
-                    }
-                    return;
-                }
-                if (type == "version")
-                {
-                    if (doc.RootElement.TryGetProperty("version", out var v))
-                    {
-                        var ver = v.GetString();
-                        if (ver != null)
-                        {
-                            DesktopLog.Info($"IPC dispatch type=version version={ver}");
-                            VersionReceived?.Invoke(ver);
-                        }
-                    }
-                    return;
-                }
-            }
-            var msg = JsonSerializer.Deserialize<StateMessage>(line, JsonOpts);
-            if (msg != null) StateReceived?.Invoke(msg);
-        }
-        catch (Exception ex) { DesktopLog.Warn($"IPC dispatch parse error: {ex.Message}"); }
+                DesktopLog.Info($"IPC dispatch type=tasks count={tasks.Count}");
+                TasksReceived?.Invoke(tasks);
+            },
+            onSettings: settings =>
+            {
+                DesktopLog.Info($"IPC dispatch type=settings barHeightPx={settings.BarHeightPx}");
+                SettingsReceived?.Invoke(settings);
+            },
+            onVersion: ver =>
+            {
+                DesktopLog.Info($"IPC dispatch type=version version={ver}");
+                VersionReceived?.Invoke(ver);
+            },
+            onState: msg => StateReceived?.Invoke(msg));
     }
 
     /// <summary>发送命令；在后台线程写入管道，避免阻塞 UI 线程。</summary>

@@ -13,6 +13,7 @@ using System.Windows.Threading;
 using Hope.Desktop;
 using Hope.Desktop.Ipc;
 using Hope.Desktop.Overlay;
+using Hope.Desktop.Services;
 using Hope.Desktop.State;
 using ComboBox = System.Windows.Controls.ComboBox;
 using CheckBox = System.Windows.Controls.CheckBox;
@@ -1285,6 +1286,8 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.";
     }
 
     private readonly Dictionary<ComboBox, DispatcherTimer> _timeNormalizeTimers = new();
+    /// <summary>Apply 写入 Text/SelectedItem 时抑制 SelectionChanged，避免可编辑 ComboBox 重入卡死 UI。</summary>
+    private int _timeComboApplyDepth;
 
     /// <summary>时/分下拉框：可手动输入或选择；失焦或防抖后把越界值钳制到合法区间。</summary>
     private void SetupEditableTimeCombo(ComboBox box, int min, int max)
@@ -1293,7 +1296,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.";
         normalizeTimer.Tick += (_, _) =>
         {
             normalizeTimer.Stop();
-            NormalizeTimeCombo(box, min, max);
+            EditableTimeCombo.Normalize(box, min, max, ref _timeComboApplyDepth);
         };
         _timeNormalizeTimers[box] = normalizeTimer;
 
@@ -1310,11 +1313,12 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.";
             tb.LostFocus += (_, _) =>
             {
                 normalizeTimer.Stop();
-                NormalizeTimeCombo(box, min, max);
+                EditableTimeCombo.Normalize(box, min, max, ref _timeComboApplyDepth);
                 TryAutoSaveTask();
             };
             tb.TextChanged += (_, _) =>
             {
+                if (_timeComboApplyDepth > 0) return;
                 normalizeTimer.Stop();
                 normalizeTimer.Start();
                 TryAutoSaveTask();
@@ -1327,54 +1331,23 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.";
         box.SelectionChanged += (_, _) =>
         {
             normalizeTimer.Stop();
-            NormalizeTimeCombo(box, min, max);
-            TryAutoSaveTask();
+            // 下拉选中时 Text 可能仍是旧值，必须以 SelectedItem 为准；null 选中必须忽略（见 EditableTimeCombo）。
+            if (EditableTimeCombo.TryApplyFromSelection(box, min, max, ref _timeComboApplyDepth))
+                TryAutoSaveTask();
         };
         box.LostFocus += (_, _) =>
         {
+            if (_timeComboApplyDepth > 0) return;
             normalizeTimer.Stop();
-            NormalizeTimeCombo(box, min, max);
+            EditableTimeCombo.Normalize(box, min, max, ref _timeComboApplyDepth);
         };
     }
 
-    private static void NormalizeTimeCombo(ComboBox box, int min, int max)
-    {
-        if (!TryReadTimeComboRaw(box, out var raw))
-        {
-            ApplyTimeComboValue(box, min);
-            return;
-        }
-        if (!int.TryParse(raw, out var n))
-        {
-            ApplyTimeComboValue(box, min);
-            return;
-        }
-        ApplyTimeComboValue(box, Math.Clamp(n, min, max));
-    }
+    private void ApplyTimeComboValue(ComboBox box, int value) =>
+        EditableTimeCombo.Apply(box, value, ref _timeComboApplyDepth);
 
-    private static void ApplyTimeComboValue(ComboBox box, int value)
-    {
-        var text = value.ToString("D2");
-        box.Text = text;
-        box.SelectedItem = text;
-    }
-
-    private static bool TryReadTimeComboRaw(ComboBox box, out string raw)
-    {
-        raw = string.IsNullOrWhiteSpace(box.Text)
-            ? box.SelectedItem?.ToString()?.Trim() ?? ""
-            : box.Text.Trim();
-        return !string.IsNullOrWhiteSpace(raw);
-    }
-
-    private static bool TryParseTimeCombo(ComboBox box, int min, int max, out int value)
-    {
-        value = min;
-        if (!TryReadTimeComboRaw(box, out var raw)) return false;
-        if (!int.TryParse(raw, out var n)) return false;
-        value = Math.Clamp(n, min, max);
-        return true;
-    }
+    private static bool TryParseTimeCombo(ComboBox box, int min, int max, out int value) =>
+        EditableTimeCombo.TryParse(box, min, max, out value);
 
     /// <summary>定时任务允许跨午夜（截止日在次日）；校验基于 Unix 秒。</summary>
     private static bool IsTaskTimeRangeValid(string type, long startTs, long endTs,
@@ -1389,15 +1362,11 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.";
         return false;
     }
 
-    private static void SetDateTime(DatePicker date, ComboBox hour, ComboBox minute, DateTime value)
+    private void SetDateTime(DatePicker date, ComboBox hour, ComboBox minute, DateTime value)
     {
         date.SelectedDate = value.Date;
-        var hs = value.Hour.ToString("D2");
-        var ms = value.Minute.ToString("D2");
-        hour.Text = hs;
-        hour.SelectedItem = hs;
-        minute.Text = ms;
-        minute.SelectedItem = ms;
+        ApplyTimeComboValue(hour, value.Hour);
+        ApplyTimeComboValue(minute, value.Minute);
     }
 
     private static bool TryComposeDateTime(DatePicker date, ComboBox hour, ComboBox minute, out DateTimeOffset value)

@@ -72,4 +72,52 @@ public sealed class SessionStateTests
         Assert.False(session.Write.CanCommitSettings(session));
         Assert.False(session.Write.CanAutoSaveTask(session, "other"));
     }
+
+    [Fact]
+    public void WriteGuard_BlocksBeforeSettingsHydrated()
+    {
+        var session = new SessionState();
+
+        Assert.False(session.SettingsHydrated);
+        Assert.False(session.Write.CanCommitSettings(session));
+        Assert.False(session.Write.CanAutoSaveTask(session, null));
+        Assert.False(session.Write.CanAutoSaveTask(session, "any"));
+
+        session.ApplySettings(new SettingsDto());
+
+        Assert.True(session.SettingsHydrated);
+        Assert.True(session.Write.CanCommitSettings(session));
+        Assert.True(session.Write.CanAutoSaveTask(session, null));
+    }
+
+    [Fact]
+    public void ApplyTasks_DoesNotClearSettings()
+    {
+        var session = new SessionState();
+        session.ApplySettings(new SettingsDto { BarHeightPx = 8, BarPosition = "bottom" });
+        var settingsRev = session.SettingsRevision;
+
+        session.ApplyTasks(new List<TaskDto> { new() { Id = "t1", Name = "x", EndTs = 1 } });
+
+        Assert.True(session.SettingsHydrated);
+        Assert.True(session.TasksHydrated);
+        Assert.Equal(settingsRev, session.SettingsRevision);
+        Assert.Equal(8, session.Settings!.BarHeightPx);
+        Assert.Equal("bottom", session.Settings.BarPosition);
+        Assert.Single(session.Tasks);
+    }
+
+    [Fact]
+    public void ApplySettings_DoesNotClearTasks()
+    {
+        var session = new SessionState();
+        session.ApplyTasks(new List<TaskDto> { new() { Id = "t1", Name = "x", EndTs = 1 } });
+        var tasksRev = session.TasksRevision;
+
+        session.ApplySettings(new SettingsDto { BarHeightPx = 5 });
+
+        Assert.Equal(tasksRev, session.TasksRevision);
+        Assert.Single(session.Tasks);
+        Assert.Equal(5, session.OverlayBarHeightPx);
+    }
 }

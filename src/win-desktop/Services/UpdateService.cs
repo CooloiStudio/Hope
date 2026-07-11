@@ -1,6 +1,5 @@
 using System.IO;
 using System.Net.Http;
-using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 
@@ -268,7 +267,7 @@ public sealed class UpdateService
         // 通过则直接复用、跳过下载；校验不通过或无法校验则删除后重新下载，避免使用损坏/半截文件。
         if (File.Exists(target))
         {
-            if (expectedSha != null && ComputeSha256(target).Equals(expectedSha, StringComparison.OrdinalIgnoreCase))
+            if (expectedSha != null && FileSha256.Matches(target, expectedSha))
             {
                 DesktopLog.Info($"UpdateService: 复用本地已校验缓存安装包 {target}");
                 return target;
@@ -287,8 +286,7 @@ public sealed class UpdateService
 
                 if (expectedSha != null)
                 {
-                    var actual = ComputeSha256(tmp);
-                    if (!actual.Equals(expectedSha, StringComparison.OrdinalIgnoreCase))
+                    if (!FileSha256.Matches(tmp, expectedSha))
                     {
                         File.Delete(tmp);
                         last = new InvalidOperationException($"SHA-256 校验不通过（{url}）");
@@ -362,14 +360,6 @@ public sealed class UpdateService
         }
         DesktopLog.Warn("UpdateService: no sha256 available, will fall back to size check");
         return null;
-    }
-
-    private static string ComputeSha256(string path)
-    {
-        using var stream = File.OpenRead(path);
-        using var sha = SHA256.Create();
-        var hash = sha.ComputeHash(stream);
-        return Convert.ToHexString(hash);
     }
 
     /// <summary>

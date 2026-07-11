@@ -357,6 +357,68 @@ func TestUpdateSettingsPersists(t *testing.T) {
 	}
 }
 
+// TestScreenSizeCommandDoesNotWipeSettings 回归：screenSize 不得走 updateSettings 合并默认值。
+func TestScreenSizeCommandDoesNotWipeSettings(t *testing.T) {
+	t.Setenv("APPDATA", t.TempDir())
+	store, err := config.Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	eng := New(store, nil)
+	eng.HandleCommand(ipc.Command{
+		Action:   "updateSettings",
+		Settings: json.RawMessage(`{"barHeightPx":6,"barPosition":"left","allFour":true}`),
+	})
+	// 模拟 Desktop 误带默认字段的屏幕上报载荷：仅宽高有效，其余为零值。
+	eng.HandleCommand(ipc.Command{
+		Action:   "screenSize",
+		Settings: json.RawMessage(`{"screenWidth":1920,"screenHeight":1080,"barHeightPx":4,"barPosition":"top","allFour":false}`),
+	})
+
+	settings, _ := store.Snapshot()
+	if settings.BarHeightPx != 6 || settings.BarPosition != "left" || !settings.AllFour {
+		t.Fatalf("screenSize wiped user settings: %+v", settings)
+	}
+	if settings.ScreenWidth != 1920 || settings.ScreenHeight != 1080 {
+		t.Fatalf("screen size not set: w=%v h=%v", settings.ScreenWidth, settings.ScreenHeight)
+	}
+}
+
+// TestGetSettingsAndListTasksContract 验证读命令回包 type / requestId。
+func TestGetSettingsAndListTasksContract(t *testing.T) {
+	t.Setenv("APPDATA", t.TempDir())
+	store, err := config.Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	eng := New(store, nil)
+	start := mustTime("2026-06-25T08:00:00+08:00")
+	end := mustTime("2026-06-25T18:00:00+08:00")
+	eng.HandleCommand(ipc.Command{Action: "createTask", Task: makeTask("t1", start, start, end)})
+
+	sResp, ok := eng.HandleCommand(ipc.Command{Action: "getSettings", RequestID: "r-s"}).(map[string]any)
+	if !ok || sResp["type"] != "settings" || sResp["requestId"] != "r-s" {
+		t.Fatalf("getSettings resp: %#v", sResp)
+	}
+	if _, has := sResp["settings"]; !has {
+		t.Fatalf("getSettings missing settings: %#v", sResp)
+	}
+
+	tResp, ok := eng.HandleCommand(ipc.Command{Action: "listTasks", RequestID: "r-t"}).(map[string]any)
+	if !ok || tResp["type"] != "tasks" || tResp["requestId"] != "r-t" {
+		t.Fatalf("listTasks resp: %#v", tResp)
+	}
+	tasks, ok := tResp["tasks"].([]*task.Task)
+	if !ok || len(tasks) != 1 || tasks[0].ID != "t1" {
+		t.Fatalf("listTasks tasks: %#v", tResp["tasks"])
+	}
+
+	vResp, ok := eng.HandleCommand(ipc.Command{Action: "getVersion"}).(map[string]any)
+	if !ok || vResp["type"] != "version" {
+		t.Fatalf("getVersion resp: %#v", vResp)
+	}
+}
+
 // TestCompleteNonRecurringMarksCompleted 验证完成非循环任务会置为已完成且不再渲染。
 func TestCompleteNonRecurringMarksCompleted(t *testing.T) {
 	t.Setenv("APPDATA", t.TempDir())

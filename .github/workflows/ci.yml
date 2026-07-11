@@ -1,0 +1,30 @@
+name: ci
+
+# 推送/PR 门禁：与本地 scripts/test.ps1 相同的一键全量单测。
+# 不打包安装包；发版仍走 release.yml。
+
+on:
+  push:
+    branches: [develop, master, release]
+  pull_request:
+    branches: [develop, master, release]
+
+jobs:
+  test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Run all tests
+        shell: pwsh
+        run: ./scripts/test.ps1
