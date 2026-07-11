@@ -589,7 +589,8 @@ public partial class OverlayWindow : Window
         if (IsReverse) pct = 100.0 - pct;
 
         // 仅已填充（彩色）部分响应悬停；未完成部分透明、不交互。
-        var hit = _segments.FirstOrDefault(s => pct >= s.BarStart && pct <= s.FillEnd);
+        // 呼吸重叠区：文案按色板墙钟相位硬切换对应任务（不改进度条动画）。
+        var hit = BlinkHoverResolver.Resolve(_segments, pct, DateTime.UtcNow, BlinkAnchorUtc, _acknowledgedBlink);
         if (hit == null)
         {
             HoverPopup.IsOpen = false;
