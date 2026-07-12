@@ -57,10 +57,10 @@ A little hope for leaving work on time.
   ~~Q: Why white?~~  
   ~~A: I like it~~
 
-- ~~**加速有什么用？**~~  
-  ~~可以提醒用户时间紧迫。~~  
-  ~~Q: What is "Speed up" for?~~  
-  ~~A: Running faster makes you feel like you can go home early!~~
+- **刷新有什么用？**  
+  进度条花了（变白/异常）就按一下：重建显示，并把进行中的即时任务起点拉回现在。  
+  Q: What is "Refresh" for?  
+  A: It makes the instant-task bar zoom ahead so you feel like you can clock out early. Cheating? Nah — just vibes.
 
 - **不是说过就算死，从这跳下去，死外面，都不写桌面程序吗？**  
   真香！  

@@ -44,7 +44,7 @@ public sealed class UpdateCoordinator
     /// <summary>状态变更通知（已切回 UI 线程）。</summary>
     public event Action? StateChanged;
 
-    /// <summary>发现可安装的新版本时触发一次（用于托盘气泡）；参数为版本展示文本。</summary>
+    /// <summary>发现可安装的新版本时触发一次（配置窗 Toast / 日志；不再用于托盘气球）。</summary>
     public event Action<string>? NewVersionAnnounced;
 
     public static Version CurrentVersion => UpdateService.CurrentVersion;

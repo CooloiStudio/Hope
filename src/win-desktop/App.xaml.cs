@@ -48,6 +48,10 @@ public partial class App : Application
     private ScreenLayoutInfo? _currentScreenLayout;
     private DispatcherTimer? _layoutTimer;
     private DispatcherTimer? _displayChangeDebounce;
+    private DispatcherTimer? _overlayResetDebounce;
+    private ShellCompositionWatcher? _shellWatcher;
+    private List<Segment> _lastStateSegments = new();
+    private bool _lastCelebrate;
 
     /// <summary>启动后是否已决定是否自动打开设置窗（须 settings+tasks 均水合后再判）。</summary>
     private bool _startupConfigOpenDecided;
@@ -112,6 +116,8 @@ public partial class App : Application
 
         SetupTray();
         SetupUpdates();
+        _shellWatcher = new ShellCompositionWatcher(() =>
+            Dispatcher.BeginInvoke(() => ScheduleOverlayReset("ShellOrDwmChanged")));
 
         // 遥测不在此处发送：启动事件延迟到首次读取到全局设置（allowTelemetry）后再决定，
         // 见 OnSettingsReceived，确保用户取消勾选时不发送任何信息。
@@ -143,16 +149,8 @@ public partial class App : Application
 
     private void OnNewVersionAnnounced(string tag)
     {
-        Dispatcher.BeginInvoke(() =>
-        {
-            if (_tray == null) return;
-            string msg = Services.InstallChannel.IsStoreManaged
-                ? $"发现新版本 {tag}，请打开 Microsoft Store 更新"
-                : _updates.Status == UpdateStatus.Ready
-                    ? $"新版本 {tag} 已下载，打开「设置 · 关于」即可安装"
-                    : $"发现新版本 {tag}，可在「设置 · 关于」中更新";
-            _tray.ShowBalloonTip(5000, "Hope · 有可用更新", msg, ToolTipIcon.Info);
-        });
+        // 更新相关不再弹托盘气球；配置窗可见时由 StateChanged → RenderUpdateUi 发 Toast。
+        DesktopLog.Info($"NewVersionAnnounced tag={tag} configVisible={_config?.IsVisible}");
     }
 
     // 连接建立后拉取一次全局设置，使进度条高度等即时生效，并上报当前主屏幕工作区尺寸。
@@ -542,7 +540,9 @@ public partial class App : Application
         Dispatcher.BeginInvoke(() =>
         {
             var all = msg.Segments ?? new List<Segment>();
+            _lastStateSegments = all;
             bool celebrate = IsCelebrateActive(all);
+            _lastCelebrate = celebrate;
             if (_session.OverlayAllFour || celebrate)
                 EnsureOverlays(forceAllFour: true);
             else if (!_session.OverlayAdvancedPosition)
@@ -722,10 +722,20 @@ public partial class App : Application
     private void SetupTray()
     {
         var menu = new ContextMenuStrip();
-        menu.Items.Add("打开设置", null, (_, _) => ShowConfig());
-        menu.Items.Add("检查更新", null, (_, _) => _ = _updates.CheckAsync(manual: true));
+        menu.Items.Add("打开设置(&S)", null, (_, _) => ShowConfig());
+        menu.Items.Add("检查更新(&U)", null, (_, _) => _ = _updates.CheckAsync(manual: true));
+        var refreshItem = new ToolStripMenuItem("刷新进度条(&R)")
+        {
+            ToolTipText = "重建进度条窗口；同时将进行中的即时任务起点设为当前时刻（定时任务不变）",
+        };
+        refreshItem.Click += (_, _) => Dispatcher.BeginInvoke(() =>
+        {
+            RefreshProgressBarManual();
+            _config?.NotifyProgressBarRefreshed();
+        });
+        menu.Items.Add(refreshItem);
         menu.Items.Add(new ToolStripSeparator());
-        menu.Items.Add("退出", null, (_, _) => QuitAll());
+        menu.Items.Add("退出(&Q)", null, (_, _) => QuitAll());
 
         _tray = new NotifyIcon
         {
@@ -735,6 +745,82 @@ public partial class App : Application
             ContextMenuStrip = menu,
         };
         _tray.DoubleClick += (_, _) => ShowConfig();
+    }
+
+    /// <summary>
+    /// 用户主动「刷新进度条」：先重置进行中即时任务起点，再销毁重建 Overlay。
+    /// </summary>
+    internal void RefreshProgressBarManual()
+    {
+        try
+        {
+            var now = DateTimeOffset.Now;
+            int resetCount = 0;
+            foreach (var task in _session.Tasks)
+            {
+                if (!ProgressBarRefresh.ShouldResetInstantStart(task, now)) continue;
+                _ipc.Send(new Command
+                {
+                    Action = "updateTask",
+                    Task = ProgressBarRefresh.WithInstantStartReset(task, now),
+                });
+                resetCount++;
+            }
+            DesktopLog.Info($"RefreshProgressBarManual instantReset={resetCount}");
+            ResetOverlays("manual");
+        }
+        catch (Exception ex)
+        {
+            DesktopLog.Error("RefreshProgressBarManual failed", ex);
+        }
+    }
+
+    /// <summary>防抖后执行 Overlay 销毁重建（系统事件路径不改任务时间）。</summary>
+    private void ScheduleOverlayReset(string reason, int delayMs = 500)
+    {
+        _overlayResetDebounce ??= new DispatcherTimer();
+        _overlayResetDebounce.Interval = TimeSpan.FromMilliseconds(delayMs);
+        _overlayResetDebounce.Stop();
+        _overlayResetDebounce.Tick -= OnOverlayResetDebounceTick;
+        _overlayResetDebounce.Tag = reason;
+        _overlayResetDebounce.Tick += OnOverlayResetDebounceTick;
+        _overlayResetDebounce.Start();
+    }
+
+    private void OnOverlayResetDebounceTick(object? sender, EventArgs e)
+    {
+        _overlayResetDebounce?.Stop();
+        var reason = _overlayResetDebounce?.Tag as string ?? "unknown";
+        ResetOverlays(reason);
+    }
+
+    /// <summary>销毁全部 Overlay 并按当前会话重新实例化，再索取一帧状态。</summary>
+    private void ResetOverlays(string reason)
+    {
+        DesktopLog.Info($"ResetOverlays reason={reason} count={_overlays.Count}");
+        foreach (var overlay in _overlays.Values.ToList())
+        {
+            try { overlay.ForceClose(); }
+            catch (Exception ex) { DesktopLog.Warn($"ResetOverlays ForceClose: {ex.Message}"); }
+        }
+        _overlays.Clear();
+
+        if (_session.OverlayAllFour || _lastCelebrate)
+            EnsureOverlays(forceAllFour: true);
+        else if (_session.OverlayAdvancedPosition)
+        {
+            var positions = _lastStateSegments
+                .Select(s => _session.ResolveSegmentPosition(s.Position))
+                .Distinct();
+            EnsureOverlays(positions);
+        }
+        else
+            EnsureOverlays();
+
+        foreach (var overlay in _overlays.Values)
+            overlay.ScreenLayout = _currentScreenLayout;
+
+        RequestOverlayStateRefresh();
     }
 
     private static Icon CreateTrayIconSafe()
@@ -822,6 +908,9 @@ public partial class App : Application
         SystemEvents.DisplaySettingsChanged -= OnDisplaySettingsChanged;
         SystemEvents.PowerModeChanged -= OnPowerModeChanged;
         _displayChangeDebounce?.Stop();
+        _overlayResetDebounce?.Stop();
+        _shellWatcher?.Dispose();
+        _shellWatcher = null;
         StopSessionSnapshotRetry();
 
         _layoutTimer?.Stop();

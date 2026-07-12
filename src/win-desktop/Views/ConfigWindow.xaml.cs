@@ -68,6 +68,8 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
     private DispatcherTimer? _resizeSettleTimer;
     private DispatcherTimer? _hydrationWatchdog;
     private int _hydrationWatchdogAttempts;
+    private HopeToasts? _toasts;
+    private string? _lastUpdateToastMessage;
 
     public ConfigWindow(IpcClient ipc, SessionState session) : this(ipc, session, null) { }
 
@@ -82,10 +84,12 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
         _autoSaveTimer.Tick += (_, _) => AutoSaveTask();
         InitializeComponent();
         DesktopLog.Info("ConfigWindow ctor: after InitializeComponent");
+        _toasts = new HopeToasts(this, ToastHost);
 
         AppIconHelper.ApplyWindowIcon(this);
         AppIconHelper.ApplyTitleBarIcon(AppTitleBar);
         StartNowClock();
+        BindSettingsShortcuts();
 
         if (_updates != null) _updates.StateChanged += OnUpdateStateChanged;
         _rowsView = System.Windows.Data.CollectionViewSource.GetDefaultView(_rows);
@@ -696,6 +700,47 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
         ScheduleFitHeightToTaskEditor();
     }
 
+    private void OnRefreshProgressBarClick(object sender, RoutedEventArgs e)
+    {
+        if (System.Windows.Application.Current is App app)
+            app.RefreshProgressBarManual();
+        ToastSuccess("已刷新进度条");
+    }
+
+    internal void NotifyProgressBarRefreshed() => ToastSuccess("已刷新进度条");
+
+    private void SetEditorTitle(string title) => StatusText.Text = title;
+
+    /// <summary>任务表单业务校验 Sticky Toast 的 key（截止早于开始等）。</summary>
+    private const string StickyKeyTaskForm = "task-form-validation";
+
+    private void ToastSuccess(string message) => _toasts?.Success(message);
+    private void ToastInfo(string message) => _toasts?.Info(message);
+    private void ToastCaution(string message) => _toasts?.Caution(message);
+    private void ToastDanger(string message) => _toasts?.Danger(message);
+
+    /// <summary>
+    /// 业务校验 Sticky：无倒计时、不可关闭；message 为空则清除。
+    /// 条件恢复符合业务后由调用方 Clear / 传空自动关掉。
+    /// </summary>
+    private void ToastFormValidation(string? message)
+    {
+        if (string.IsNullOrEmpty(message))
+            _toasts?.ClearSticky(StickyKeyTaskForm);
+        else
+            _toasts?.ShowSticky(StickyKeyTaskForm, message, ToastLevel.Caution);
+    }
+
+    private void ClearFormValidationToast() => _toasts?.ClearSticky(StickyKeyTaskForm);
+
+    private void BindSettingsShortcuts()
+    {
+        CommandBindings.Add(new CommandBinding(NavigationCommands.Refresh, (_, _) => OnRefreshProgressBarClick(this, new RoutedEventArgs())));
+        CommandBindings.Add(new CommandBinding(ApplicationCommands.New, (_, _) => OnAddTask(this, new RoutedEventArgs())));
+        InputBindings.Add(new KeyBinding(NavigationCommands.Refresh, Key.R, ModifierKeys.Control));
+        InputBindings.Add(new KeyBinding(ApplicationCommands.New, Key.N, ModifierKeys.Control));
+    }
+
     private void ApplyAdvancedSettingsVisibility(bool visible)
     {
         _advancedSettingsVisible = visible;
@@ -710,14 +755,15 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
             ToggleAdvancedOptionsButton.Content = _advancedSettingsVisible ? "隐藏高级选项" : "显示高级选项";
     }
 
-    private void OnEasterEggClick(object sender, MouseButtonEventArgs e)
+    private async void OnEasterEggClick(object sender, MouseButtonEventArgs e)
     {
-        var result = System.Windows.MessageBox.Show(
-            "恭喜你发现了彩蛋，点击确定打开浏览器访问，如果你打不开，可能需要一点小小的魔法。",
-            "Hope · 彩蛋",
-            MessageBoxButton.OKCancel,
-            MessageBoxImage.Information);
-        if (result != MessageBoxResult.OK) return;
+        if (!await HopeDialogs.ConfirmAsync(
+                this,
+                "Hope · 彩蛋",
+                "恭喜你发现了彩蛋，点击确定打开浏览器访问，如果你打不开，可能需要一点小小的魔法。",
+                primaryText: "确定",
+                closeText: "取消"))
+            return;
 
         try
         {
@@ -1125,6 +1171,29 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
                 : "点击「检查更新」获取最新版本。")
             : _updates.Message;
 
+        // Toast on update message change; skipped when window not on desktop.
+        if (!string.IsNullOrEmpty(_updates.Message) &&
+            !string.Equals(_updates.Message, _lastUpdateToastMessage, StringComparison.Ordinal))
+        {
+            _lastUpdateToastMessage = _updates.Message;
+            switch (st)
+            {
+                case Services.UpdateStatus.UpToDate:
+                case Services.UpdateStatus.Ready:
+                    ToastSuccess(_updates.Message);
+                    break;
+                case Services.UpdateStatus.Available:
+                case Services.UpdateStatus.Checking:
+                case Services.UpdateStatus.Downloading:
+                case Services.UpdateStatus.Idle:
+                    ToastInfo(_updates.Message);
+                    break;
+                case Services.UpdateStatus.Failed:
+                    ToastDanger(_updates.Message);
+                    break;
+            }
+        }
+
         bool downloading = st == Services.UpdateStatus.Downloading;
         UpdateProgress.Visibility = downloading ? Visibility.Visible : Visibility.Collapsed;
         UpdateProgress.Value = Math.Clamp(_updates.DownloadProgress * 100.0, 0, 100);
@@ -1165,13 +1234,17 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
         _updates.InstallNow();
     }
 
-    private void OnInstallUpdate(object sender, RoutedEventArgs e)
+    private async void OnInstallUpdate(object sender, RoutedEventArgs e)
     {
         if (_updates == null) return;
-        var r = System.Windows.MessageBox.Show(
-            "将关闭 Hope 并安装新版本，安装完成后会自动重新启动。是否继续？",
-            "Hope · 安装更新", MessageBoxButton.OKCancel, MessageBoxImage.Question);
-        if (r == MessageBoxResult.OK) _updates.InstallNow();
+        if (!await HopeDialogs.ConfirmAsync(
+                this,
+                "Hope · 安装更新",
+                "将关闭 Hope 并安装新版本，安装完成后会自动重新启动。是否继续？",
+                primaryText: "确定",
+                closeText: "取消"))
+            return;
+        _updates.InstallNow();
     }
 
     private void OnSkipVersion(object sender, RoutedEventArgs e) => _updates?.SkipCurrent();
@@ -1563,22 +1636,24 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.";
         TaskListBottomGrid.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
     }
 
-    private void OnDeleteCompleted(object sender, RoutedEventArgs e)
+    private async void OnDeleteCompleted(object sender, RoutedEventArgs e)
     {
         var completed = _rows.Where(r => r.Completed).ToList();
-        if (completed.Count == 0) { StatusText.Text = "没有已完成的任务"; return; }
+        if (completed.Count == 0) { ToastInfo("没有已完成的任务"); return; }
 
-        var result = System.Windows.MessageBox.Show(
-            $"确认删除全部 {completed.Count} 个已完成任务？此操作不可撤销。",
-            "删除已完成任务",
-            System.Windows.MessageBoxButton.YesNo,
-            System.Windows.MessageBoxImage.Warning);
-        if (result != System.Windows.MessageBoxResult.Yes) return;
+        if (!await HopeDialogs.ConfirmAsync(
+                this,
+                "删除已完成任务",
+                $"确认删除全部 {completed.Count} 个已完成任务？此操作不可撤销。",
+                primaryText: "删除",
+                closeText: "取消",
+                dangerPrimary: true))
+            return;
 
         _ipc.Send(new Command { Action = "deleteCompletedTasks" });
         if (_editingId != null && completed.Any(r => r.Id == _editingId))
             OnNew(sender, e);
-        StatusText.Text = $"已删除 {completed.Count} 个已完成任务";
+        ToastSuccess($"已删除 {completed.Count} 个已完成任务");
     }
 
     private void OnSelectTask(object sender, SelectionChangedEventArgs e)
@@ -1587,6 +1662,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.";
         if (TaskGrid.SelectedItem is not TaskRow row) return;
         _session.Write.LoadingTask = true;
         _autoSaveTimer?.Stop();
+        ClearFormValidationToast();
 
         _editingId = row.Id;
         _taskCreatedAt = row.CreatedAt ?? DateTimeOffset.Now;
@@ -1603,7 +1679,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.";
         SelectComboByTag(TaskPositionBox, row.Position);
         LoadTaskImageHeight(row.ImageMaxSize);
         UpdateTaskActionButtons(row);
-        StatusText.Text = $"正在编辑：{row.Name}";
+        SetEditorTitle($"正在编辑：{row.Name}");
         MainTabs.SelectedItem = TaskTab;
 
         _lastSavedDto = BuildCurrentDto();
@@ -1634,33 +1710,36 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.";
         CompleteTaskButton.Visibility = Visibility.Collapsed;
         DeleteEditingTaskButton.Visibility = Visibility.Collapsed;
         LayoutTaskActionButtons();
-        StatusText.Text = "新建任务";
+        SetEditorTitle("新建任务");
+        ClearFormValidationToast();
         ScheduleFitHeightToTaskEditor(force: true);
     }
 
-    private void OnDeleteEditingTask(object sender, RoutedEventArgs e)
+    private async void OnDeleteEditingTask(object sender, RoutedEventArgs e)
     {
         if (_editingId == null)
         {
-            StatusText.Text = "当前为新建任务，无需删除";
+            ToastInfo("当前为新建任务，无需删除");
             return;
         }
         if (_rows.FirstOrDefault(r => r.Id == _editingId) is not TaskRow row)
         {
-            StatusText.Text = "任务不存在或已删除";
+            ToastCaution("任务不存在或已删除");
             return;
         }
 
-        var result = System.Windows.MessageBox.Show(
-            $"确认删除任务「{row.Name}」？此操作不可撤销。",
-            "删除该任务",
-            System.Windows.MessageBoxButton.YesNo,
-            System.Windows.MessageBoxImage.Warning);
-        if (result != System.Windows.MessageBoxResult.Yes) return;
+        if (!await HopeDialogs.ConfirmAsync(
+                this,
+                "删除该任务",
+                $"确认删除任务「{row.Name}」？此操作不可撤销。",
+                primaryText: "删除",
+                closeText: "取消",
+                dangerPrimary: true))
+            return;
 
         _ipc.Send(new Command { Action = "deleteTask", TaskId = row.Id });
         OnNew(sender, e);
-        StatusText.Text = "已删除";
+        ToastSuccess("已删除");
     }
 
     private void OnCompleteTask(object sender, RoutedEventArgs e)
@@ -1670,24 +1749,25 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.";
         else id = _editingId;
 
         if (string.IsNullOrEmpty(id)) return;
-        CompleteTaskById(id);
+        _ = CompleteTaskByIdAsync(id);
     }
 
-    private void CompleteTaskById(string id)
+    private async Task CompleteTaskByIdAsync(string id)
     {
         if (_rows.FirstOrDefault(r => r.Id == id) is not TaskRow row) return;
         if (row.Completed || _session.Write.IsPendingComplete(id))
         {
-            StatusText.Text = row.Completed ? "该任务已完成" : "正在完成…";
+            ToastInfo(row.Completed ? "该任务已完成" : "正在完成…");
             return;
         }
 
-        var result = System.Windows.MessageBox.Show(
-            $"确认完成任务「{row.Name}」？",
-            "完成任务",
-            System.Windows.MessageBoxButton.YesNo,
-            System.Windows.MessageBoxImage.Question);
-        if (result != System.Windows.MessageBoxResult.Yes) return;
+        if (!await HopeDialogs.ConfirmAsync(
+                this,
+                "完成任务",
+                $"确认完成任务「{row.Name}」？",
+                primaryText: "完成",
+                closeText: "取消"))
+            return;
 
         // 暂停自动保存，避免与 completeTask 响应竞态把已完成状态覆盖回进行中。
         _autoSaveTimer?.Stop();
@@ -1701,9 +1781,9 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.";
 
         bool isRecurring = row.Type == "scheduled" && row.Recurrence != null &&
                            !string.IsNullOrEmpty(row.Recurrence.Mode);
-        StatusText.Text = _filterMode == "active"
+        ToastSuccess(_filterMode == "active"
             ? (isRecurring ? "任务已完成并进入下一循环（已从「进行中」列表移除）" : "任务已完成（可从「已完成」筛选查看）")
-            : (isRecurring ? "任务已完成并进入下一循环" : "任务已完成");
+            : (isRecurring ? "任务已完成并进入下一循环" : "任务已完成"));
 
         if (_editingId == row.Id)
             UpdateTaskActionButtons(FindRowById(id) ?? row);
@@ -1765,14 +1845,15 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.";
         DuplicateTaskFromRow(row);
     }
 
-    private void DuplicateTaskFromRow(TaskRow row)
+    private async void DuplicateTaskFromRow(TaskRow row)
     {
-        var result = System.Windows.MessageBox.Show(
-            $"确认将已完成的任务「{row.Name}」创建为新任务？\n\n开始日期将调整为今天，截止时间按原开始日期的差值顺延。",
-            "创建为新任务",
-            MessageBoxButton.OKCancel,
-            MessageBoxImage.Question);
-        if (result != MessageBoxResult.OK) return;
+        if (!await HopeDialogs.ConfirmAsync(
+                this,
+                "创建为新任务",
+                $"确认将已完成的任务「{row.Name}」创建为新任务？\n\n开始日期将调整为今天，截止时间按原开始日期的差值顺延。",
+                primaryText: "确定",
+                closeText: "取消"))
+            return;
 
         var today = DateTime.Today;
         long newStartTs = row.StartTs;
@@ -1817,7 +1898,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.";
         };
 
         _ipc.Send(new Command { Action = "createTask", Task = dto });
-        StatusText.Text = $"已将「{row.Name}」创建为新任务";
+        ToastSuccess($"已将「{row.Name}」创建为新任务");
     }
 
     private void OnBrowseGif(object sender, RoutedEventArgs e)
@@ -1950,23 +2031,25 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.";
         var dto = BuildCurrentDto();
         if (dto == null)
         {
-            if (!string.IsNullOrEmpty(_buildDtoError))
-                StatusText.Text = _buildDtoError;
+            // 业务逻辑错误（如截止早于开始）：Sticky 常显，符合后再自动清掉。
+            ToastFormValidation(_buildDtoError);
             return;
         }
+
+        ClearFormValidationToast();
 
         // 表单无实际变化时不触发保存，避免选中/加载阶段误报“已更新”。
         if (_lastSavedDto != null && TaskDtoEquals(dto, _lastSavedDto)) return;
 
         if (!_ipc.IsConnected)
         {
-            StatusText.Text = "未连接到核心进程，无法保存";
+            ToastDanger("未连接到核心进程，无法保存");
             return;
         }
 
         bool isNew = _editingId == null;
         _ipc.Send(new Command { Action = isNew ? "createTask" : "updateTask", Task = dto });
-        StatusText.Text = isNew ? "已创建" : "已更新";
+        ToastSuccess(isNew ? "已创建" : "已更新");
         _editingId = dto.Id;
         _lastSavedDto = dto;
     }
@@ -2089,9 +2172,8 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.";
 
         var picked = $"#{dlg.Color.R:X2}{dlg.Color.G:X2}{dlg.Color.B:X2}";
         ColorBox.Text = picked; // 触发 OnColorChanged 刷新预览
-        StatusText.Text = IsColorTaken(picked)
-            ? "该颜色已被其他任务使用，保存前请更换"
-            : StatusText.Text;
+        if (IsColorTaken(picked))
+            ToastCaution("该颜色已被其他任务使用，保存前请更换");
     }
 
     /// <summary>颜色是否已被列表中的其他任务占用（编辑态排除自身）。</summary>

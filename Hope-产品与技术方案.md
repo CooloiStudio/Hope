@@ -1,14 +1,13 @@
 # Hope（盼头）产品与技术方案
 
-> 版本：v0.14.93  
-> 更新日期：2026-07-11  
-> 更新说明：对齐当前已交付能力——时间戳进度模型、任务级位置/图片高度、完成与循环、自动更新与双通道安装包、安装向导中英、稳定性测试门禁等
-
+> 版本：v0.15.103  
+> 更新日期：2026-07-12  
+> 更新说明：对齐 v0.15.103——刷新进度条、顶栏透明恢复、底部 Toast（含校验常显）、Fluent 确认框与快捷键
 **图例：** ✅ 已实现并合入代码　⚠️ 后端或局部已有，UI/联调未完成　❌ 未实现（含 Phase 2）
 
 ---
 
-## 0. 实现状态（截至 2026-07-11，v0.14.93）
+## 0. 实现状态（截至 2026-07-12，v0.15.103）
 
 > 对照 `src/headless`、`src/win-desktop`、`.github/workflows/`、`setup.iss`、`scripts/test.ps1`。
 
@@ -22,12 +21,13 @@
 | IPC 命名管道广播 & 命令 | ✅ | `\\.\pipe\Hope\progress`；读写命令、`requestId`、写后单播快照；`screenSize` 独立于 `updateSettings` |
 | Headless 单实例 | ✅ | `Global\HopeHeadless` Mutex |
 | Headless 日志 | ✅ | `logs/hope-headless.log`；`--debug` 额外输出控制台 |
-| WPF 配置窗体 & 任务 CRUD | ✅ | `Views/ConfigWindow`：任务列表筛选、取色盘、日期时间（可编辑下拉）、快填、自动保存 |
-| 全局设置 UI | ✅ | 条高 / 图片最大高度 / 起始位置 / 到期提醒；高级：前进方向、刷新、四边、任务级位置、**任务级图片高度**；开机自启 / 运行时显示配置窗 / 自动更新 / 遥测；**修改即生效** |
+| WPF 配置窗体 & 任务 CRUD | ✅ | `Views/ConfigWindow`：任务列表筛选、取色盘、日期时间（可编辑下拉）、快填、自动保存；操作反馈用 **自建 Toast**；确认框用 WPF-UI `MessageBox`（关闭=取消） |
+| 全局设置 UI | ✅ | 条高 / 图片最大高度 / 起始位置 / 到期提醒；高级选项；**「刷新进度条(ctrl+r)」**（Primary，位于进度条设置区首行）；开机自启 / 运行时显示配置窗 / 自动更新 / 遥测；**修改即生效**；表单 ToolTip 挂在控件/文案上（非整行） |
 | 全局设置持久化 | ✅ | 启动屏幕尺寸走 `screenSize`，避免默认值经 `updateSettings` 抹掉用户设置 |
-| 系统托盘 | ✅ | 打开设置、暂停/继续、隐藏/显示、检查更新、关于、退出 |
+| 系统托盘 | ✅ | 打开设置(`S`) / 检查更新(`U`) / 刷新进度条(`R`) / 退出(`Q`)；菜单展开后按字母触发 |
 | 应用 / 托盘品牌图标 | ✅ | 水墨「盼」/ Hope；托盘用 Mini 原图（不随主题染色） |
 | DWM 分段 Overlay | ✅ | 多边位置、方向、四边环绕、任务栏避让与 Z-order |
+| Overlay 透明恢复 | ✅ | 销毁重建；手动「刷新进度条」；`TaskbarCreated` / `WM_DWMCOMPOSITIONCHANGED` 自动重置 |
 | 点击穿透 & 不出 Alt+Tab | ✅ | `WM_NCHITTEST` → `HTTRANSPARENT` |
 | 悬停展示任务名 + 倒计时 | ✅ | Overlay Tooltip |
 | 跟随图片/动图 | ✅ | `ImageSprite`；高度由全局默认或任务覆盖（15–30px）等比缩放 |
@@ -37,10 +37,10 @@
 | Desktop ↔ Headless 互拉 | ✅ | `HeadlessSupervisor` + `--desktop` |
 | Desktop 单实例 | ✅ | `Global\HopeDesktop` Mutex |
 | WPF-UI Fluent 主题 | ✅ | FluentWindow + Mica/Acrylic |
-| 单测与一键测试 | ✅ | `go test` + `Hope.Desktop.Tests`；`scripts/test.ps1`；CI `ci.yml` / release 发版前跑 |
+| 配置窗 Toast | ✅ | `HopeToasts`：瞬时（倒计时 0→100、可关闭）+ **Sticky 业务校验**（无倒计时/无关闭钮，条件恢复后自动关）；窗未在桌面不展示 || 单测与一键测试 | ✅ | `go test` + `Hope.Desktop.Tests`；`scripts/test.ps1`；CI `ci.yml` / release 发版前跑 |
 | Inno Setup 安装包 | ✅ | `setup.iss`；简体中文 + 英文向导；`Hope_Setup.exe` + `.sha256` |
 | MSIX 商店包 | ✅ | `pack-msix.ps1`；`.msix` / `.msixupload` |
-| 自动更新（全量） | ✅ | 多通道检测、SHA-256、静默升级；商店通道引导 Store |
+| 自动更新（全量） | ✅ | 多通道检测、SHA-256、静默升级；商店通道引导 Store；**有更新/检查结果经 Toast 提示（不弹托盘气球）** |
 | 进度条位置 / 方向 / 四边 | ✅ | 全局位置 + 方向；高级「我全都要」；各边独立方向（任务级位置开启时） |
 | 任务级位置覆盖 | ✅ | 高级「允许为单个任务指定展示位置」 |
 | 任务级图片高度 | ✅ | 高级「允许为单个任务设置图片高度」；编辑区「使用全局图片高度」+ 滑动条；桌面解析最终高度 |
@@ -106,7 +106,7 @@
 |------|------|------|
 | Headless 核心 | Go 后台：任务计时、百分比计算、配置持久化、IPC 广播 | ✅ |
 | 配置窗口 | WPF：创建/编辑任务、全局设置、实时预览 | ✅ |
-| 系统托盘 | 托盘图标入口：打开设置、暂停/恢复、退出 | ✅ |
+| 系统托盘 | 托盘图标入口：打开设置 / 检查更新 / 刷新进度条 / 退出（访问键 S/U/R/Q） | ✅ |
 | DWM 覆盖层 | 透明置顶、鼠标穿透的顶栏进度条窗口 | ✅ |
 | 跟随图片/动图 | 进度条下方、随 `fillEnd` 移动 | ✅ |
 
@@ -440,7 +440,7 @@ go build -ldflags="-s -w -H=windowsgui" -o hope-headless.exe .
 | 项 | 说明 |
 |----|------|
 | 区块分割线 | 三段：**名称~类型**（含颜色/预览）｜**开始日期+时间**｜**截止+时间**；`Separator` + `ControlStrokeColorDefaultBrush`（2px，随 Fluent 主题） |
-| 编辑标题 | 原「编辑/新建」改为动态 `StatusText` 置顶（新建/正在编辑/校验提示） |
+| 编辑标题 | 任务编辑区顶部 `StatusText` **仅**表示新建/正在编辑；瞬时操作反馈改走 §5.3.8 Toast |
 | 下拉框主题 | 使用 WPF-UI `ControlsDictionary` 默认 `ComboBox` 样式（勿在窗口级覆盖不完整隐式样式） |
 | DatePicker | **不在窗口级覆盖样式**，沿用 WPF-UI `ControlsDictionary` 的 Fluent 隐式样式（深色圆角输入框 + Fluent 弹出日历）。窗口级显式 `Style`（无 `BasedOn`/`Template`）会退回系统默认模板 → 白框 + 简谱日历，故移除 |
 
@@ -569,13 +569,14 @@ go build -ldflags="-s -w -H=windowsgui" -o hope-headless.exe .
 
 **托盘菜单：**
 
-| 菜单项 | 行为 | 状态 |
-|--------|------|------|
-| 打开设置 | 显示配置窗体 | ✅ |
-| 暂停 / 继续 | 隐藏顶栏；**不冻结墙钟** | ✅ |
-| 显示进度条 / 隐藏 | 设置 `visible`（`hide`/`show`） | ✅ |
-| 关于 | 版本号、独占全屏说明、插件入口 | ✅ |
-| 退出 | `quit`，结束所有进程 | ✅ |
+| 菜单项 | 访问键 | 行为 | 状态 |
+|--------|--------|------|------|
+| 打开设置 | `S` | 显示配置窗体 | ✅ |
+| 检查更新 | `U` | 手动检查 GitHub / 商店更新 | ✅ |
+| 刷新进度条 | `R` | 同 §5.4.2 入口 A（重置进行中即时任务起点 + 销毁重建 Overlay） | ✅ |
+| 退出 | `Q` | `quit`，结束所有进程 | ✅ |
+
+> 访问键：托盘菜单展开后按对应字母即可；文案带 `(&S)` 等形式。暂停/隐藏等旧项已收敛，当前以以上四项为主。
 
 **托盘图标：** ✅（2026-06-24）
 
@@ -636,6 +637,123 @@ WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE
   - [x] 图片高度默认取全局 `imageMaxHeightPx`（15–30）；任务可覆盖（见高级选项）
   - [x] 存在图片时窗口向外侧扩展（条高 + 图片区）；图片区点击穿透
 
+#### 5.4.2 Overlay 透明恢复（刷新进度条）✅
+
+> 背景：WPF `AllowsTransparency` 分层窗在 **explorer.exe 重启** 或 **UAC 安全桌面返回** 后，DWM 合成偶发丢失 per-pixel alpha，未绘制区域由透明变成不透明白底。同窗 `Invalidate` 通常无效，需 **销毁 Overlay 实例并重新创建**。
+
+**重置原语 `ResetOverlays`：**
+
+1. 对当前所有 `OverlayWindow` 调用 `ForceClose` 并清空字典  
+2. 按当前会话设置（及最近一次 state 所需边）`EnsureOverlays` 重新实例化  
+3. `requestState` / 相关快照，使新窗立即接到分段数据  
+
+**入口 A — 用户主动「刷新进度条」**（说明仅放 ToolTip，无大段正文提示）：
+
+**UI 位置与样式：**
+
+- 全局设置 → **「进度条设置」分区第一行**；按钮文案 `刷新进度条(ctrl+r)`；`Appearance=Primary`（蓝色主按钮）
+- 托盘菜单「刷新进度条(&R)」
+
+**快捷键（设置窗激活且为键盘焦点时）：**
+
+| 快捷键 | 行为 |
+|--------|------|
+| `ctrl+r` | 刷新进度条（同按钮） |
+| `ctrl+n` | 添加任务（按钮文案不变；ToolTip 注明快捷键） |
+
+**执行顺序：**
+
+1. 用户点击按钮 / 托盘项 / `ctrl+r`  
+2. 将所有 **进行中的即时任务**（`type=instant`、未完成、已开始且未到期，且重置后 `createdAt < endTs`）的起点重置为点击时刻（写 `createdAt` + 对齐 `startTs`，经 `updateTask`）  
+3. 再执行 `ResetOverlays`  
+
+顺序必须为：**主动触发 → 重置即时任务起点 → 销毁重建 Overlay**。  
+定时任务、已完成/已到期即时任务不改时间。
+
+**入口 B — 系统事件（只重建，不改任务时间）：**
+
+| 信号 | 含义 |
+|------|------|
+| `TaskbarCreated` | explorer / Shell 重启 |
+| `WM_DWMCOMPOSITIONCHANGED` | DWM 合成变化（含自 UAC 安全桌面返回等） |
+
+事件回调经短防抖后调用 `ResetOverlays`，**不得**重置任务时间。
+
+#### 5.3.4 配置窗 ToolTip 规范 ✅
+
+- ToolTip **只挂在按钮、标签文案或紧凑控件本身**（如勾选框/单选项的内容命中区），**禁止**挂在整行 `DockPanel` / 拉满宽度的空白区域上，以免悬停行内空白也弹出说明。  
+- 勾选框等默认横向拉满时，应 `HorizontalAlignment=Left`，使命中区约等于文案宽度。  
+- **全局设置**与**任务编辑**表单控件应有说明性 ToolTip（覆盖主要字段）；**关于**页不要求补齐 ToolTip。  
+- 「刷新进度条」的副作用说明（重建 Overlay + 重置进行中即时任务起点）及 `ctrl+r` 仅出现在该按钮/托盘项的 ToolTip（按钮文案已含 `(ctrl+r)`）；「添加任务」ToolTip 注明 `ctrl+n`，按钮文案不改。
+
+#### 5.3.5 配置窗确认对话框（WPF-UI）✅
+
+- 封装：`HopeDialogs.ConfirmAsync`（WPF-UI Fluent `MessageBox`）。  
+- 覆盖场景：删除任务、批量删除已完成、完成任务、重建为新任务、安装更新、彩蛋。  
+- **关闭按钮 / Esc / 「取消」** 与取消同义，返回非 Primary，**不执行**危险操作。  
+- **主按钮**为确认（文案随场景：删除 / 完成 / 确定…）；危险操作主按钮用 Danger 外观。  
+- 致命错误（进程无法继续，如 `App` 启动失败）仍可用系统 MessageBox；**取色盘**暂维持系统 `ColorDialog`；许可证只读窗、托盘菜单不在此列。
+
+#### 5.3.6 任务列表选中样式 ✅
+
+- 选中行：行背景高亮（`SystemAccentColorLight2`）；**单元格文字颜色不变**（避免起止时间难辨）。
+- **仅保留主题/DataGrid 原有行首选中指示**；不额外叠加独立蓝色行头色块（曾用 `DataGridRowHeader` 6px 色条，已撤销）。
+- `HeadersVisibility=Column`（不显示行头列）。
+
+#### 5.3.7 配置窗快捷键 ✅
+
+- 仅当**设置窗口激活且具有键盘焦点**时生效（`InputBindings` / `CommandBindings`）。  
+- `ctrl+r` → 刷新进度条（`NavigationCommands.Refresh`）  
+- `ctrl+n` → 添加任务并切到任务编辑（`ApplicationCommands.New`）
+
+#### 5.3.8 配置窗 Toast（操作反馈）✅
+
+> 统一名称：**Toast**（自建轻量浮层，`HopeToasts`）。**不再使用** WPF-UI `Snackbar` / `SnackbarPresenter`（默认体积过大；改模板易与 `IsShown` 动画冲突导致消失/卡死）。
+
+**职责拆分：**
+
+| 通道 | 用途 |
+|------|------|
+| 任务编辑区 `StatusText` | **仅**编辑态标题：`新建任务` / `正在编辑：…` |
+| Toast（瞬时） | 操作结果反馈：保存/删除/完成/刷新进度条/更新检查结果等（有倒计时、可关闭） |
+| Toast（Sticky） | **业务校验未通过**时常显：如「截止时间不能早于开始时间」；无倒计时、无关闭钮；逻辑恢复后自动关 |
+| 关于页 `UpdateStatusText` + 进度条 | 更新流程的**持续状态与控件**（下载进度、按钮显隐）；**用户可读提示同时发 Toast** |
+| WPF-UI `MessageBox` | 需确认的危险操作（删除等），不进 Toast |
+| 托盘气球 | **仅**任务到期 `notify` 等非更新提醒；**更新相关不再弹气球** |
+
+**展示条件：**
+
+- 仅当配置窗**已在桌面显示**时弹出（`IsVisible`，不要求聚焦）。  
+- 窗体隐藏到托盘、未创建或未 Show 时：**不展示** Toast（含托盘触发的「刷新进度条」、后台自动检查更新）。
+
+**布局与队列：**
+
+- 锚定配置窗**底部水平居中**，**自下而上**叠放；瞬时 Toast 最多 **3** 条同时可见（Sticky **不计入**该上限，也不会被瞬时队列挤掉）。  
+- 单条：最大宽度约 360px；字号 11；单行省略；条间距 4px。  
+  - 瞬时：内容高度约 **22px**（含底部 2px 倒计时条）；右侧 **×**；默认约 4s 超时。  
+  - Sticky：内容高度约 **20px**（**无**倒计时条、**无**关闭钮）。  
+- 瞬时：相同文案已在展示中时不新增，只刷新停留时间与倒计时条。  
+- 瞬时倒计时条：从左到右 **0→100**（`ScaleX 0→1`）。
+
+**Sticky（业务校验）封装：**
+
+- API：`HopeToasts.ShowSticky(key, message, level)` / `ClearSticky(key)`。  
+- 同 `key` 只保留一条；再次 `ShowSticky` 仅更新文案与等级。  
+- **不**自动超时；用户**不能**点 × 关闭；业务条件恢复后由调用方 `ClearSticky`（或 `ToastFormValidation(null)`）关闭。  
+- 配置窗封装：`ToastFormValidation` / `ClearFormValidationToast`（key=`task-form-validation`）。  
+- 自动保存：`BuildCurrentDto` 失败且带 `_buildDtoError`（含截止早于开始、非法时分等）→ Sticky；DTO 构建成功 → 立即清除；切换任务 / 新建任务时清除。  
+- 瞬时仍用于：已创建/已更新、删除/完成结果、未连接、取色冲突提示等一次性反馈。
+
+**主题（对齐 WPF-UI Fluent）：**
+
+- 表面：**不透明**实底（优先 `SolidBackgroundFillColorBaseBrush`）；**无描边**  
+- 圆角 4；正文 `TextFillColorPrimaryBrush`  
+- 左侧色条按等级：Success / Info / Caution / Danger  
+- 瞬时倒计时条用等级色 / 强调色
+
+**封装：** `HopeToasts`（挂在 `ConfigWindow` 的 `ToastHost`）。
+
+**自动保存：** 「已创建」「已更新」均弹瞬时 Toast；同文案只刷新计时。业务校验失败走 Sticky；未连接等仍弹瞬时 Danger。
 #### 5.4.1 正向/反向渲染逻辑
 
 > 进度条支持 **正向（forward）** 与 **反向（reverse）** 两种填充方向，可全局设置或按任务覆盖。
@@ -979,7 +1097,8 @@ Hope/
 | v0.6 | 到期提醒「使用全局默认」并入下拉（选中禁用本任务通知）；**循环任务**（每天 / 每 N 天 / 按星期，支持跨午夜，窗口结束套用到期提醒并在下次开始重置） | ✅ **已完成** |
 | v0.7 | 进度条位置/方向（含四边）、庆祝、任务级位置、完成按钮 | ✅ **已完成**（颜色仍保持互斥，未改「可重复+确认」） |
 | v0.8–v0.13 | 时间戳进度与循环、安装/更新/商店包、图标与中文安装向导、任务栏避让、稳定性测试门禁等 | ✅ **已完成**（详见 CHANGELOG） |
-| v0.14 | 高级选项：允许为单个任务设置图片高度；Desktop 解析展示高度 | ✅ **已完成**（v0.14.93） |
+| v0.14 | 任务级图片高度；列表危险操作与图标刷新等（详见 CHANGELOG v0.14） | ✅ |
+| v0.15 | 刷新进度条；顶栏透明恢复；底部 Toast（含校验常显）；Fluent 确认框；快捷键 | ✅ **进行中**（v0.15.103） |
 | v1.0 | 安装包验收、帮助文档、Onboarding | 🔲 |
 | v1.x-plugin | 全屏游戏拓展包（独立发版） | ❌ |
 

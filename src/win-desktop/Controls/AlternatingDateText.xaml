@@ -7,8 +7,8 @@
              d:DesignHeight="24" d:DesignWidth="150">
     <Grid VerticalAlignment="Center">
         <TextBlock x:Name="AbsoluteText" HorizontalAlignment="Left" VerticalAlignment="Center"
-                   Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=DataGridCell}}" />
+                   Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
         <TextBlock x:Name="RelativeText" HorizontalAlignment="Left" VerticalAlignment="Center" Opacity="0"
-                   Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=DataGridCell}}" />
+                   Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
     </Grid>
 </UserControl>
