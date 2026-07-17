@@ -25,8 +25,61 @@ public sealed class HeadlessSupervisor : IDisposable
     private volatile bool _quitting;
     private Process? _currentProcess;
     private readonly OnceFlag _fatalOnce = new();
+    /// <summary>暂停拉起截止时刻（UTC ticks）；唤醒恢复期间避免与杀孤儿/重连抢跑。</summary>
+    private long _pauseSpawnUntilUtcTicks;
 
     public void Start() => _ = Task.Run(LoopAsync);
+
+    /// <summary>在一段时间内禁止拉起新 headless（IPC 恢复杀孤儿期间使用）。</summary>
+    public void PauseSpawning(TimeSpan duration, string reason)
+    {
+        var until = DateTime.UtcNow.Add(duration);
+        Interlocked.Exchange(ref _pauseSpawnUntilUtcTicks, until.ToUniversalTime().Ticks);
+        DesktopLog.Info(
+            $"HeadlessSupervisor: spawn paused for {duration.TotalSeconds:0.#}s reason={reason}");
+    }
+
+    public bool IsSpawnPaused =>
+        DateTime.UtcNow.Ticks < Interlocked.Read(ref _pauseSpawnUntilUtcTicks);
+
+    /// <summary>
+    /// 结束所有 hope-headless 进程，释放 Global\HopeHeadless 互斥量。
+    /// 用于唤醒后「进程仍在但管道半死」导致 another instance / send lock timeout 的场景。
+    /// </summary>
+    public static int KillOrphanHeadlessProcesses(string reason)
+    {
+        Process[] procs;
+        try { procs = Process.GetProcessesByName("hope-headless"); }
+        catch (Exception ex)
+        {
+            DesktopLog.Warn($"HeadlessSupervisor: enumerate failed: {ex.Message}");
+            return 0;
+        }
+
+        int killed = 0;
+        foreach (var p in procs)
+        {
+            try
+            {
+                DesktopLog.Info($"HeadlessSupervisor: killing orphan pid={p.Id} reason={reason}");
+                p.Kill(entireProcessTree: true);
+                p.WaitForExit(3000);
+                killed++;
+            }
+            catch (Exception ex)
+            {
+                DesktopLog.Warn($"HeadlessSupervisor: kill failed pid={p.Id}: {ex.Message}");
+            }
+            finally
+            {
+                try { p.Dispose(); } catch { /* ignore */ }
+            }
+        }
+
+        if (killed > 0)
+            DesktopLog.Info($"HeadlessSupervisor: killed {killed} orphan headless reason={reason}");
+        return killed;
+    }
 
     private void ReportFatal(string reason)
     {
@@ -51,10 +104,12 @@ public sealed class HeadlessSupervisor : IDisposable
         {
             if (_fatalOnce.HasFired) return;
 
-            // 若已存在可用的核心连接（如手动启动的 headless），无需再拉起新进程。
-            if (ShouldSkipSpawn(IsCoreReachable?.Invoke() == true))
+            var paused = IsSpawnPaused;
+            // 若已存在可用的核心连接（如手动启动的 headless），或处于恢复暂停窗，无需再拉起。
+            if (ShouldSkipSpawn(IsCoreReachable?.Invoke() == true, paused))
             {
-                consecutiveQuickExits = 0;
+                if (!paused)
+                    consecutiveQuickExits = 0;
                 await Task.Delay(2000, CancellationToken.None).ConfigureAwait(false);
                 continue;
             }
@@ -108,6 +163,9 @@ public sealed class HeadlessSupervisor : IDisposable
                             {
                                 consecutiveQuickExits++;
                                 Debug.WriteLine($"[HeadlessSupervisor] headless exited quickly (ran {runtime.TotalSeconds:F1}s), possible mutex conflict. consecutiveQuickExits={consecutiveQuickExits}");
+                                DesktopLog.Warn(
+                                    $"HeadlessSupervisor: quick exit runtime={runtime.TotalSeconds:F1}s " +
+                                    $"consecutive={consecutiveQuickExits}");
                                 if (consecutiveQuickExits > MaxRetryAttempts)
                                 {
                                     ReportFatal($"hope-headless 连续 {MaxRetryAttempts} 次异常退出，桌面端将停止拉起并退出。请检查是否有其他实例冲突或程序文件损坏。");
@@ -134,6 +192,7 @@ public sealed class HeadlessSupervisor : IDisposable
             catch (Exception ex)
             {
                 Debug.WriteLine($"[HeadlessSupervisor] exception: {ex.Message}");
+                DesktopLog.Warn($"HeadlessSupervisor: exception {ex.Message}");
             }
 
             // 如果连续快速退出，增加延迟避免日志刷屏和频繁重启
@@ -175,8 +234,9 @@ public sealed class HeadlessSupervisor : IDisposable
 
     public void StopWatching() => _quitting = true;
 
-    /// <summary>核心已可达时跳过拉起，避免与已有 headless 争互斥量。</summary>
-    public static bool ShouldSkipSpawn(bool coreReachable) => coreReachable;
+    /// <summary>核心已可达或处于暂停窗时跳过拉起，避免与已有 headless / 恢复流程争互斥量。</summary>
+    public static bool ShouldSkipSpawn(bool coreReachable, bool spawnPaused = false) =>
+        coreReachable || spawnPaused;
 
     public void Dispose()
     {

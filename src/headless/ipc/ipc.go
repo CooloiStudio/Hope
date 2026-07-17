@@ -21,17 +21,17 @@ const PipeName = `\\.\pipe\Hope\progress`
 type State struct {
 	Version  int            `json:"version"`
 	Visible  bool           `json:"visible"`
-	State    string         `json:"state"` // idle / running / paused / expired
+	State    string         `json:"state"` // idle / running / expired
 	Segments []task.Segment `json:"segments"`
 	Expired  []ExpiredEvent `json:"expired,omitempty"`
 }
 
 // ExpiredEvent 在任务到达截止时刻时随广播一次性下发，供 Desktop 执行一次性提醒（如 notify）。
-// keep / blink / hide 等持续表现由广播 Segment 的 expired / behaviors 字段驱动。
+// blink / celebrate 等持续表现由广播 Segment 的 expired / behaviors 字段驱动。
 type ExpiredEvent struct {
 	TaskID    string   `json:"taskId"`
 	Name      string   `json:"name"`
-	Behaviors []string `json:"behaviors"` // 生效的到期提醒集合：keep / blink / notify / hide
+	Behaviors []string `json:"behaviors"` // blink / celebrate / notify（keep/hide 已废弃）
 }
 
 // Command 为客户端 → 服务端的控制命令。

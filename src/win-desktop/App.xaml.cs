@@ -38,6 +38,16 @@ public partial class App : Application
 
     private UpdateCoordinator _updates = null!;
     private DispatcherTimer? _updateTimer;
+    /// <summary>休眠唤醒后至该时刻前跳过自动检查更新（避免补火日检 + 半开网络导致运行时故障）。</summary>
+    private DateTime _autoUpdateCooldownUntilUtc = DateTime.MinValue;
+    /// <summary>最近一次 PowerResume 时刻（UTC）；用于抑制唤醒后立即硬重建 Overlay。</summary>
+    private DateTime _lastPowerResumeUtc = DateTime.MinValue;
+    /// <summary>唤醒静默期截止（UTC）： settle 完成前拦截 Overlay/布局/状态广播等重 UI 路径。</summary>
+    private DateTime _resumeQuiesceUntilUtc = DateTime.MinValue;
+    private bool _pendingStateDuringQuiesce;
+    private bool _pendingConnectionSnapshot;
+    private bool _pendingEnsureOverlays;
+    private StateMessage? _lastStateMessage;
 
     private readonly TelemetryService _telemetry = new();
     /// <summary>是否已上报过启动事件（首次读取到设置且允许时上报一次，避免重复）。</summary>
@@ -49,6 +59,7 @@ public partial class App : Application
     private DispatcherTimer? _layoutTimer;
     private DispatcherTimer? _displayChangeDebounce;
     private DispatcherTimer? _overlayResetDebounce;
+    private DispatcherTimer? _postResumeSettleTimer;
     private ShellCompositionWatcher? _shellWatcher;
     private List<Segment> _lastStateSegments = new();
     private bool _lastCelebrate;
@@ -61,6 +72,10 @@ public partial class App : Application
 
     /// <summary>是否已经因致命错误进入退出流程，避免重复弹窗。</summary>
     private bool _fatalExiting;
+
+    /// <summary>最近一次 IPC 后端恢复（杀孤儿+重连）时刻，用于防抖。</summary>
+    private DateTime _lastIpcRecoveryUtc = DateTime.MinValue;
+    private DispatcherTimer? _ipcHealthCheckTimer;
 
     protected override void OnStartup(StartupEventArgs e)
     {
@@ -93,6 +108,7 @@ public partial class App : Application
         _ipc.ConnectionChanged += OnConnectionChanged;
         _ipc.TasksReceived += OnTasksReceived;
         _ipc.FatalDisconnected += OnIpcFatalDisconnected;
+        _ipc.BackendRecoveryNeeded += OnIpcBackendRecoveryNeeded;
         _session.SettingsChanged += OnSessionSettingsChanged;
 
         // 当已存在可连接的 headless（如开发时手动启动）时，supervisor 不再重复拉起，避免 mutex 冲突。
@@ -113,6 +129,7 @@ public partial class App : Application
 
         SystemEvents.DisplaySettingsChanged += OnDisplaySettingsChanged;
         SystemEvents.PowerModeChanged += OnPowerModeChanged;
+        SystemEvents.SessionSwitch += OnSessionSwitch;
 
         SetupTray();
         SetupUpdates();
@@ -127,14 +144,14 @@ public partial class App : Application
     // 每日定时器同时承载匿名「日活心跳」app_active（受 allowTelemetry 开关控制）。
     private void SetupUpdates()
     {
-        _updates = new UpdateCoordinator(() => Dispatcher.Invoke(QuitAll), _telemetry);
+        _updates = new UpdateCoordinator(() => Dispatcher.BeginInvoke(QuitAll), _telemetry);
         _updates.NewVersionAnnounced += OnNewVersionAnnounced;
 
         var initial = new DispatcherTimer { Interval = TimeSpan.FromSeconds(25) };
         initial.Tick += (_, _) =>
         {
             initial.Stop();
-            _ = _updates.CheckAsync(manual: false);
+            KickAutoUpdateCheck("startup");
         };
         initial.Start();
 
@@ -142,9 +159,72 @@ public partial class App : Application
         _updateTimer.Tick += (_, _) =>
         {
             _telemetry.TrackEvent("app_active"); // 日活心跳：长期挂托盘不重启的用户也能被正确计入
-            _ = _updates.CheckAsync(manual: false);
+            KickAutoUpdateCheck("daily");
         };
         _updateTimer.Start();
+    }
+
+    /// <summary>自动检查：线程池执行，并尊重唤醒冷却；异常不得冒泡到 DispatcherTimer。</summary>
+    private void KickAutoUpdateCheck(string reason)
+    {
+        if (DateTime.UtcNow < _autoUpdateCooldownUntilUtc)
+        {
+            DesktopLog.Info($"Auto update check skipped ({reason}): post-resume cooldown");
+            return;
+        }
+
+        SafeStartUpdateCheck(manual: false, reason);
+    }
+
+    /// <summary>手动/自动检查统一入口：不在 UI 定时器回调里直接启动 async 状态机。</summary>
+    private void SafeStartUpdateCheck(bool manual, string reason)
+    {
+        DesktopLog.Info($"Update check queued manual={manual} reason={reason}");
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await _updates.CheckAsync(manual).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                DesktopLog.Error($"Update check failed manual={manual} reason={reason}", ex);
+                try { UpdateService.InvalidateHttpClients(); } catch { /* ignore */ }
+            }
+        });
+    }
+
+    /// <summary>休眠唤醒：冷却自动更新、重建 HttpClient、重置日检定时器，避免补火检查拖垮 UI。</summary>
+    private void OnPowerResumed()
+    {
+        _lastPowerResumeUtc = DateTime.UtcNow;
+        _autoUpdateCooldownUntilUtc = DateTime.UtcNow.AddMinutes(3);
+
+        // 唤醒后管道常半开/短暂连不上；勿因此 FatalExit。给 headless 重拉与重连留时间。
+        try { _ipc.NotePowerResumed(TimeSpan.FromMinutes(5)); } catch { /* ignore */ }
+
+        // 静默期内禁止 Supervisor 乱拉起，避免与半开管道/互斥量抢跑（debug.log 20:02 类风暴）。
+        try { _supervisor.PauseSpawning(TimeSpan.FromSeconds(12), "PowerResume"); }
+        catch (Exception ex) { DesktopLog.Warn($"PauseSpawning: {ex.Message}"); }
+
+        // DispatcherTimer 在休眠跨越到期点后，唤醒时常立刻补火；Stop/Start 把下次触发推到 +1 天。
+        if (_updateTimer != null)
+        {
+            _updateTimer.Stop();
+            _updateTimer.Start();
+        }
+
+        // 取消检查与 HttpClient 丢弃必须在后台做：UI 线程 Cancel/Dispose 半开请求曾打出 CLR Fatal（0x80131506）。
+        var updates = _updates;
+        _ = Task.Run(() =>
+        {
+            try { updates?.CancelForPowerResume(); }
+            catch (Exception ex) { DesktopLog.Warn($"CancelForPowerResume: {ex.Message}"); }
+            try { UpdateService.InvalidateHttpClients(); }
+            catch (Exception ex) { DesktopLog.Warn($"InvalidateHttpClients: {ex.Message}"); }
+        });
+
+        DesktopLog.Info("Power resume: update cooldown 3m, HttpClient reset scheduled");
     }
 
     private void OnNewVersionAnnounced(string tag)
@@ -156,9 +236,22 @@ public partial class App : Application
     // 连接建立后拉取一次全局设置，使进度条高度等即时生效，并上报当前主屏幕工作区尺寸。
     private void OnConnectionChanged(bool connected)
     {
+        if (!Dispatcher.CheckAccess())
+        {
+            Dispatcher.BeginInvoke(() => OnConnectionChanged(connected));
+            return;
+        }
+
         DesktopLog.Info($"IPC connection changed connected={connected}");
         if (connected)
         {
+            if (IsInResumeQuiesce())
+            {
+                DesktopLog.Info("IPC connection snapshot deferred (resume quiesce)");
+                _pendingConnectionSnapshot = true;
+                return;
+            }
+
             _sessionSnapshotAttempts = 0;
             RequestSessionSnapshot();
             StartSessionSnapshotRetry();
@@ -166,6 +259,8 @@ public partial class App : Application
         else
         {
             StopSessionSnapshotRetry();
+            // 断线后延迟探活：若仍不通则杀孤儿并强制重连（覆盖锁屏/唤醒后管道半死）。
+            ScheduleIpcHealthCheck("disconnect");
         }
     }
 
@@ -241,7 +336,92 @@ public partial class App : Application
 
     private void OnIpcFatalDisconnected(string reason)
     {
+        // 休眠唤醒冷却期内偶发连不上：只记日志，不弹窗退出（IpcClient 会继续重连）。
+        if (DateTime.UtcNow < _lastPowerResumeUtc.AddMinutes(5))
+        {
+            DesktopLog.Warn($"IPC fatal suppressed post-resume: {reason}");
+            try { _ipc.NotePowerResumed(TimeSpan.FromMinutes(5)); } catch { /* ignore */ }
+            RecoverIpcBackend("FatalSuppressedPostResume");
+            return;
+        }
+
         Dispatcher.BeginInvoke(() => FatalExit("Hope · 通讯异常", reason));
+    }
+
+    private void OnIpcBackendRecoveryNeeded(string reason)
+    {
+        if (!Dispatcher.CheckAccess())
+        {
+            Dispatcher.BeginInvoke(() => OnIpcBackendRecoveryNeeded(reason));
+            return;
+        }
+
+        RecoverIpcBackend(reason);
+    }
+
+    /// <summary>断线后延迟检查：仍未连通则走 RecoverIpcBackend。</summary>
+    private void ScheduleIpcHealthCheck(string reason)
+    {
+        _ipcHealthCheckTimer ??= new DispatcherTimer();
+        _ipcHealthCheckTimer.Stop();
+        _ipcHealthCheckTimer.Interval = TimeSpan.FromSeconds(2.5);
+        _ipcHealthCheckTimer.Tick -= OnIpcHealthCheckTick;
+        _ipcHealthCheckTimer.Tag = reason;
+        _ipcHealthCheckTimer.Tick += OnIpcHealthCheckTick;
+        _ipcHealthCheckTimer.Start();
+        DesktopLog.Info($"IPC health check scheduled reason={reason}");
+    }
+
+    private void OnIpcHealthCheckTick(object? sender, EventArgs e)
+    {
+        _ipcHealthCheckTimer?.Stop();
+        var reason = _ipcHealthCheckTimer?.Tag as string ?? "health-check";
+        if (_ipc.IsConnected)
+        {
+            DesktopLog.Info($"IPC health check ok reason={reason}");
+            return;
+        }
+
+        DesktopLog.Warn($"IPC health check failed reason={reason}, recovering backend");
+        RecoverIpcBackend(reason);
+    }
+
+    /// <summary>
+    /// 唤醒/解锁后管道半死的恢复：暂停 Supervisor → 拆管立即重连 → 杀掉占 mutex 的孤儿 headless。
+    /// Supervisor 暂停结束后会干净拉起；防抖避免重连风暴。
+    /// </summary>
+    private void RecoverIpcBackend(string reason)
+    {
+        if (DateTime.UtcNow < _lastIpcRecoveryUtc.AddSeconds(15))
+        {
+            DesktopLog.Info($"IPC backend recovery deferred reason={reason}");
+            return;
+        }
+
+        _lastIpcRecoveryUtc = DateTime.UtcNow;
+        DesktopLog.Info($"IPC backend recovery begin reason={reason}");
+
+        try { _ipc.NotePowerResumed(TimeSpan.FromMinutes(5)); } catch { /* ignore */ }
+        try { _supervisor.PauseSpawning(TimeSpan.FromSeconds(8), reason); }
+        catch (Exception ex) { DesktopLog.Warn($"PauseSpawning: {ex.Message}"); }
+
+        _ = Task.Run(() =>
+        {
+            try
+            {
+                try { _ipc.RequestReconnect(reason); }
+                catch (Exception ex) { DesktopLog.Warn($"RequestReconnect: {ex.Message}"); }
+
+                // 稍等拆管生效，再杀孤儿，避免新旧进程同时争 mutex。
+                Thread.Sleep(300);
+                var killed = HeadlessSupervisor.KillOrphanHeadlessProcesses(reason);
+                DesktopLog.Info($"IPC backend recovery done killed={killed} reason={reason}");
+            }
+            catch (Exception ex)
+            {
+                DesktopLog.Warn($"IPC backend recovery failed: {ex.Message}");
+            }
+        });
     }
 
     private void FatalExit(string caption, string message)
@@ -302,6 +482,12 @@ public partial class App : Application
     /// <summary>检测主屏布局变化；变化时同步后端尺寸并让各 Overlay 立即重算位置。</summary>
     private void RefreshScreenLayout()
     {
+        if (IsInResumeQuiesce())
+        {
+            DesktopLog.Info("Screen layout refresh skipped (resume quiesce)");
+            return;
+        }
+
         var layout = ScreenLayoutService.GetCurrent();
         bool changed = _currentScreenLayout == null ||
                        !RectsEqual(_currentScreenLayout.WorkArea, layout.WorkArea) ||
@@ -315,13 +501,21 @@ public partial class App : Application
         DesktopLog.Info($"Screen layout changed workArea={layout.WorkArea} bounds={layout.Bounds} " +
                         $"edge={layout.TaskbarEdge} autoHide={layout.TaskbarAutoHide} fullScreen={layout.HasFullScreenOnPrimary}");
 
-        foreach (var overlay in _overlays.Values)
+        // 逐个 Overlay 打断点：RefreshLayout 会触碰 GDI/位图，唤醒/熄屏后若 DWM 未就绪可能打出
+        // 不可捕获的 CLR Fatal（0x80131506）。最后一条存活日志即可定位崩溃在哪个 Overlay/步骤。
+        foreach (var kv in _overlays)
         {
-            overlay.ScreenLayout = layout;
-            overlay.RefreshLayout();
+            DesktopLog.Info($"RefreshScreenLayout: refreshing overlay pos={kv.Key}");
+            kv.Value.ScreenLayout = layout;
+            kv.Value.RefreshLayout();
         }
 
-        if (_ipc.IsConnected) SendScreenSize();
+        if (_ipc.IsConnected)
+        {
+            DesktopLog.Info("RefreshScreenLayout: sending screen size");
+            SendScreenSize();
+        }
+        DesktopLog.Info("RefreshScreenLayout: done");
     }
 
     /// <summary>读取 HKCU Run\Hope 是否存在，判断系统层面是否已配置开机自启。</summary>
@@ -344,26 +538,181 @@ public partial class App : Application
                Math.Abs(a.Height - b.Height) < 0.01;
     }
 
-    private void OnDisplaySettingsChanged(object? sender, EventArgs e) =>
+    private void OnDisplaySettingsChanged(object? sender, EventArgs e)
+    {
+        DesktopLog.Info("DisplaySettingsChanged received");
         Dispatcher.BeginInvoke(() => ScheduleRefreshScreenLayout("DisplaySettingsChanged"));
+    }
+
+    // 会话切换（锁屏/解锁/远程连接等）常与「看似唤醒」的显示器熄屏、RDP 混淆；
+    // 单独记录以便与 PowerModeChanged 交叉对照，判断崩溃/异常发生的真实场景。
+    private void OnSessionSwitch(object sender, SessionSwitchEventArgs e)
+    {
+        DesktopLog.Info($"SessionSwitch reason={e.Reason}");
+        if (e.Reason != SessionSwitchReason.SessionUnlock) return;
+
+        // 解锁后管道常已半死但进程仍占 mutex；延迟探活，不通则恢复。
+        void OnUnlock()
+        {
+            try { _ipc.NotePowerResumed(TimeSpan.FromMinutes(5)); } catch { /* ignore */ }
+            ScheduleIpcHealthCheck("SessionUnlock");
+        }
+
+        if (Dispatcher.CheckAccess())
+            OnUnlock();
+        else
+            Dispatcher.BeginInvoke(OnUnlock);
+    }
 
     private void OnPowerModeChanged(object sender, PowerModeChangedEventArgs e)
     {
+        // 记录所有模式（含 Suspend/StatusChange）：若唤醒后崩溃却无此行，说明 OS 根本未投递电源事件，
+        // 崩溃更可能来自熄屏/DWM 重置而非真正的 S3/S0 唤醒（用于区分 202607161531.log 类现象）。
+        DesktopLog.Info($"PowerModeChanged mode={e.Mode} resumeQuiesce={IsInResumeQuiesce()}");
         if (e.Mode != PowerModes.Resume) return;
-        DesktopLog.Info("Power resume detected, scheduling resume refresh");
-        Dispatcher.BeginInvoke(() =>
+
+        // 必须尽快停掉 CompositionTarget / 布局定时器：Background 延迟回调来不及，
+        // 下一帧动图 LockBits 就可能在 DWM 未就绪时打出 CLR Fatal（0x80131506）。
+        void BeginResumeSequence()
         {
             try
             {
-                RequestOverlayStateRefresh();
-                // 唤醒后显示器/工作区会在数百毫秒内继续抖动，延迟一次布局刷新。
-                ScheduleRefreshScreenLayout("PowerResume", delayMs: 900);
+                DesktopLog.Info("Power resume: suspend rendering, defer soft refresh");
+                BeginResumeQuiesce(TimeSpan.FromSeconds(10));
+                SuspendUiForPowerResume();
+                OnPowerResumed();
+                SchedulePostResumeSettle(delayMs: 10000);
             }
             catch (Exception ex)
             {
-                DesktopLog.Error("Power resume refresh failed", ex);
+                DesktopLog.Error("Power resume sequence failed", ex);
             }
-        }, DispatcherPriority.Background);
+        }
+
+        if (Dispatcher.CheckAccess())
+            BeginResumeSequence();
+        else
+            Dispatcher.BeginInvoke(BeginResumeSequence, DispatcherPriority.Send);
+    }
+
+    private bool IsInResumeQuiesce() => DateTime.UtcNow < _resumeQuiesceUntilUtc;
+
+    private void BeginResumeQuiesce(TimeSpan duration)
+    {
+        _resumeQuiesceUntilUtc = DateTime.UtcNow.Add(duration);
+        _pendingStateDuringQuiesce = false;
+        _pendingConnectionSnapshot = false;
+        _pendingEnsureOverlays = false;
+    }
+
+    /// <summary>唤醒瞬间：停布局探测与 Overlay 动图/悬停，避免立刻触碰 GDI/合成。</summary>
+    private void SuspendUiForPowerResume()
+    {
+        try { _layoutTimer?.Stop(); } catch { /* ignore */ }
+        try { _displayChangeDebounce?.Stop(); } catch { /* ignore */ }
+        try { _overlayResetDebounce?.Stop(); } catch { /* ignore */ }
+        try { StopSessionSnapshotRetry(); } catch { /* ignore */ }
+        foreach (var overlay in _overlays.Values.ToList())
+        {
+            try { overlay.SuspendRendering(); }
+            catch (Exception ex) { DesktopLog.Warn($"SuspendRendering: {ex.Message}"); }
+        }
+    }
+
+    /// <summary>唤醒稳定后再恢复渲染并软刷新状态。</summary>
+    private void SchedulePostResumeSettle(int delayMs)
+    {
+        _postResumeSettleTimer ??= new DispatcherTimer();
+        _postResumeSettleTimer.Stop();
+        _postResumeSettleTimer.Interval = TimeSpan.FromMilliseconds(delayMs);
+        _postResumeSettleTimer.Tick -= OnPostResumeSettleTick;
+        _postResumeSettleTimer.Tick += OnPostResumeSettleTick;
+        _postResumeSettleTimer.Start();
+    }
+
+    private void OnPostResumeSettleTick(object? sender, EventArgs e)
+    {
+        _postResumeSettleTimer?.Stop();
+        try
+        {
+            DesktopLog.Info("Power resume settle: resume rendering + soft refresh");
+            if (_currentScreenLayout?.HasFullScreenOnPrimary == true)
+            {
+                DesktopLog.Info("Power resume settle deferred (fullscreen)");
+                _resumeQuiesceUntilUtc = DateTime.UtcNow.AddSeconds(3);
+                SchedulePostResumeSettle(delayMs: 3000);
+                return;
+            }
+
+            FlushResumeQuiescePending();
+
+            foreach (var overlay in _overlays.Values.ToList())
+            {
+                try { overlay.ResumeRendering(); }
+                catch (Exception ex) { DesktopLog.Warn($"ResumeRendering: {ex.Message}"); }
+            }
+
+            try { _layoutTimer?.Start(); } catch { /* ignore */ }
+            if (!_ipc.IsConnected)
+            {
+                DesktopLog.Info("Power resume settle: IPC not connected, recovering backend");
+                RecoverIpcBackend("PowerResumeSettle");
+            }
+            else
+            {
+                RequestOverlayStateRefresh();
+            }
+            ScheduleRefreshScreenLayout("PowerResumeSettle", delayMs: 400);
+        }
+        catch (Exception ex)
+        {
+            DesktopLog.Error("Power resume settle failed", ex);
+        }
+    }
+
+    /// <summary>静默期结束后回放唤醒期间积压的 Overlay/会话工作。</summary>
+    private void FlushResumeQuiescePending()
+    {
+        _resumeQuiesceUntilUtc = DateTime.MinValue;
+
+        if (_pendingEnsureOverlays)
+        {
+            _pendingEnsureOverlays = false;
+            if (_session.OverlayAllFour || _lastCelebrate)
+                EnsureOverlays(forceAllFour: true);
+            else if (_session.OverlayAdvancedPosition)
+            {
+                var positions = _lastStateSegments
+                    .Select(s => _session.ResolveSegmentPosition(s.Position))
+                    .Distinct();
+                EnsureOverlays(positions);
+            }
+            else
+                EnsureOverlays();
+        }
+
+        if (_pendingConnectionSnapshot && _ipc.IsConnected)
+        {
+            _pendingConnectionSnapshot = false;
+            RequestSessionSnapshot();
+        }
+        else
+            _pendingConnectionSnapshot = false;
+
+        // EnsureOverlays 可能新建窗口（尚未 Suspend）；派发状态前统一挂起，再由 settle 批量 Resume。
+        foreach (var overlay in _overlays.Values.ToList())
+        {
+            try { overlay.SuspendRendering(); }
+            catch (Exception ex) { DesktopLog.Warn($"FlushResumeQuiesce SuspendRendering: {ex.Message}"); }
+        }
+
+        if (_pendingStateDuringQuiesce && _lastStateMessage != null)
+        {
+            _pendingStateDuringQuiesce = false;
+            DispatchState(_lastStateMessage, _lastCelebrate);
+        }
+        else
+            _pendingStateDuringQuiesce = false;
     }
 
     /// <summary>按当前墙钟向 Headless 索取一帧顶栏状态并刷新 Overlay（休眠唤醒后进度条/图片停滞）。</summary>
@@ -390,6 +739,12 @@ public partial class App : Application
     /// <summary>合并短时间内的多次屏幕布局变更（唤醒、分辨率切换等），减轻 UI 线程突发负载。</summary>
     private void ScheduleRefreshScreenLayout(string reason, int delayMs = 400)
     {
+        if (IsInResumeQuiesce())
+        {
+            DesktopLog.Info($"Screen layout refresh deferred reason={reason} (resume quiesce)");
+            return;
+        }
+
         _displayChangeDebounce ??= new DispatcherTimer();
         _displayChangeDebounce.Interval = TimeSpan.FromMilliseconds(delayMs);
         _displayChangeDebounce.Stop();
@@ -541,8 +896,18 @@ public partial class App : Application
         {
             var all = msg.Segments ?? new List<Segment>();
             _lastStateSegments = all;
+            _lastStateMessage = msg;
             bool celebrate = IsCelebrateActive(all);
             _lastCelebrate = celebrate;
+
+            if (IsInResumeQuiesce())
+            {
+                DesktopLog.Info("State broadcast deferred (resume quiesce)");
+                _pendingStateDuringQuiesce = true;
+                UpdateTrayTooltipFromTasks();
+                return;
+            }
+
             if (_session.OverlayAllFour || celebrate)
                 EnsureOverlays(forceAllFour: true);
             else if (!_session.OverlayAdvancedPosition)
@@ -567,6 +932,13 @@ public partial class App : Application
     /// <summary>根据当前全局设置确保创建或销毁对应 OverlayWindow。</summary>
     private void EnsureOverlays(IEnumerable<string>? activePositions = null, bool forceAllFour = false)
     {
+        if (IsInResumeQuiesce())
+        {
+            DesktopLog.Info("EnsureOverlays deferred (resume quiesce)");
+            _pendingEnsureOverlays = true;
+            return;
+        }
+
         var wanted = new HashSet<string>();
         if (_session.OverlayAllFour || forceAllFour)
         {
@@ -723,7 +1095,7 @@ public partial class App : Application
     {
         var menu = new ContextMenuStrip();
         menu.Items.Add("打开设置(&S)", null, (_, _) => ShowConfig());
-        menu.Items.Add("检查更新(&U)", null, (_, _) => _ = _updates.CheckAsync(manual: true));
+        menu.Items.Add("检查更新(&U)", null, (_, _) => SafeStartUpdateCheck(manual: true, "tray"));
         var refreshItem = new ToolStripMenuItem("刷新进度条(&R)")
         {
             ToolTipText = "重建进度条窗口；同时将进行中的即时任务起点设为当前时刻（定时任务不变）",
@@ -778,6 +1150,13 @@ public partial class App : Application
     /// <summary>防抖后执行 Overlay 销毁重建（系统事件路径不改任务时间）。</summary>
     private void ScheduleOverlayReset(string reason, int delayMs = 500)
     {
+        if (IsInResumeQuiesce())
+        {
+            var waitMs = (int)Math.Ceiling((_resumeQuiesceUntilUtc - DateTime.UtcNow).TotalMilliseconds);
+            delayMs = Math.Max(delayMs, Math.Max(500, waitMs + 200));
+            DesktopLog.Info($"ResetOverlays deferred reason={reason} waitMs={delayMs} (resume quiesce)");
+        }
+
         _overlayResetDebounce ??= new DispatcherTimer();
         _overlayResetDebounce.Interval = TimeSpan.FromMilliseconds(delayMs);
         _overlayResetDebounce.Stop();
@@ -791,6 +1170,25 @@ public partial class App : Application
     {
         _overlayResetDebounce?.Stop();
         var reason = _overlayResetDebounce?.Tag as string ?? "unknown";
+
+        // 唤醒后短窗内 DWM 抖动 + ShellCompositionWatcher 也可能触发硬重建；延后并避开伪全屏。
+        // 与 post-resume settle（10s）对齐，避免静默期结束后立刻硬销毁窗口。
+        var sinceResume = DateTime.UtcNow - _lastPowerResumeUtc;
+        if (sinceResume >= TimeSpan.Zero && sinceResume < TimeSpan.FromSeconds(12))
+        {
+            var waitMs = (int)Math.Ceiling((TimeSpan.FromSeconds(12) - sinceResume).TotalMilliseconds);
+            DesktopLog.Info($"ResetOverlays deferred reason={reason} waitMs={waitMs} (post-resume settle)");
+            ScheduleOverlayReset(reason, delayMs: Math.Max(500, waitMs));
+            return;
+        }
+
+        if (_currentScreenLayout?.HasFullScreenOnPrimary == true)
+        {
+            DesktopLog.Info($"ResetOverlays deferred reason={reason} (fullscreen detected)");
+            ScheduleOverlayReset(reason, delayMs: 3000);
+            return;
+        }
+
         ResetOverlays(reason);
     }
 
@@ -798,29 +1196,38 @@ public partial class App : Application
     private void ResetOverlays(string reason)
     {
         DesktopLog.Info($"ResetOverlays reason={reason} count={_overlays.Count}");
-        foreach (var overlay in _overlays.Values.ToList())
+        try
         {
-            try { overlay.ForceClose(); }
-            catch (Exception ex) { DesktopLog.Warn($"ResetOverlays ForceClose: {ex.Message}"); }
-        }
-        _overlays.Clear();
+            foreach (var overlay in _overlays.Values.ToList())
+            {
+                try { overlay.ForceClose(); }
+                catch (Exception ex) { DesktopLog.Warn($"ResetOverlays ForceClose: {ex.Message}"); }
+            }
+            _overlays.Clear();
 
-        if (_session.OverlayAllFour || _lastCelebrate)
-            EnsureOverlays(forceAllFour: true);
-        else if (_session.OverlayAdvancedPosition)
+            if (_session.OverlayAllFour || _lastCelebrate)
+                EnsureOverlays(forceAllFour: true);
+            else if (_session.OverlayAdvancedPosition)
+            {
+                var positions = _lastStateSegments
+                    .Select(s => _session.ResolveSegmentPosition(s.Position))
+                    .Distinct();
+                EnsureOverlays(positions);
+            }
+            else
+                EnsureOverlays();
+
+            foreach (var overlay in _overlays.Values)
+                overlay.ScreenLayout = _currentScreenLayout;
+
+            RequestOverlayStateRefresh();
+        }
+        catch (Exception ex)
         {
-            var positions = _lastStateSegments
-                .Select(s => _session.ResolveSegmentPosition(s.Position))
-                .Distinct();
-            EnsureOverlays(positions);
+            // ExecutionEngineException 通常不可恢复，但仍尽量记日志并保留空 overlays，避免连环 Ensure。
+            DesktopLog.Error($"ResetOverlays failed reason={reason}", ex);
+            _overlays.Clear();
         }
-        else
-            EnsureOverlays();
-
-        foreach (var overlay in _overlays.Values)
-            overlay.ScreenLayout = _currentScreenLayout;
-
-        RequestOverlayStateRefresh();
     }
 
     private static Icon CreateTrayIconSafe()
@@ -907,8 +1314,11 @@ public partial class App : Application
 
         SystemEvents.DisplaySettingsChanged -= OnDisplaySettingsChanged;
         SystemEvents.PowerModeChanged -= OnPowerModeChanged;
+        SystemEvents.SessionSwitch -= OnSessionSwitch;
         _displayChangeDebounce?.Stop();
         _overlayResetDebounce?.Stop();
+        _postResumeSettleTimer?.Stop();
+        _ipcHealthCheckTimer?.Stop();
         _shellWatcher?.Dispose();
         _shellWatcher = null;
         StopSessionSnapshotRetry();

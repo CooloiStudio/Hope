@@ -82,7 +82,7 @@ public sealed class UpdateCoordinator
             Latest = info;
             if (info.LatestVersion <= CurrentVersion)
             {
-                SetState(UpdateStatus.UpToDate, $"已是最新版本（v{CurrentVersion}）。");
+                SetState(UpdateStatus.UpToDate, "已是最新版本。");
                 return;
             }
 
@@ -113,7 +113,9 @@ public sealed class UpdateCoordinator
         }
         catch (OperationCanceledException)
         {
-            SetState(UpdateStatus.Failed, "检查更新超时。");
+            // 含：2 分钟超时、休眠唤醒主动取消。不标 Failed，避免误报。
+            DesktopLog.Info("UpdateCoordinator: check cancelled or timed out");
+            SetState(UpdateStatus.Idle, "");
         }
         catch (Exception ex)
         {
@@ -121,6 +123,20 @@ public sealed class UpdateCoordinator
             SetState(UpdateStatus.Failed, $"检查更新出错：{ex.Message}");
         }
         finally { _busy = false; }
+    }
+
+    /// <summary>休眠唤醒：取消进行中的检查/下载，避免半开 HttpClient 继续挂起。</summary>
+    public void CancelForPowerResume()
+    {
+        try
+        {
+            _cts?.Cancel();
+            DesktopLog.Info($"UpdateCoordinator: CancelForPowerResume status={StatusName(Status)} busy={_busy}");
+        }
+        catch (Exception ex)
+        {
+            DesktopLog.Warn($"UpdateCoordinator.CancelForPowerResume: {ex.Message}");
+        }
     }
 
     /// <summary>下载并校验安装包（手动「下载并更新」或自动更新时调用）。商店版改为打开 Microsoft Store。</summary>
@@ -207,11 +223,29 @@ public sealed class UpdateCoordinator
         SetState(UpdateStatus.Idle, $"已跳过版本 {Latest.Tag}。");
     }
 
+    /// <summary>
+    /// 把 <see cref="UpdateStatus"/> 转成可读名。<b>不要</b>直接用 <c>$"{status}"</c> 或 <c>ToString()</c> 插值——
+    /// 后者在休眠唤醒后 CLR 的枚举元数据页未能从 hiberfil 还原时会抛不可捕获的
+    /// <c>0xC0000006</c>（STATUS_IN_PAGE_ERROR），直接终止进程，进而让「唤醒恢复渲染」永远不执行。
+    /// 这里用 switch + 底层 int，完全避开 Enum.TryFormat。
+    /// </summary>
+    private static string StatusName(UpdateStatus s) => s switch
+    {
+        UpdateStatus.Idle => "Idle",
+        UpdateStatus.Checking => "Checking",
+        UpdateStatus.UpToDate => "UpToDate",
+        UpdateStatus.Available => "Available",
+        UpdateStatus.Downloading => "Downloading",
+        UpdateStatus.Ready => "Ready",
+        UpdateStatus.Failed => "Failed",
+        _ => $"Unknown({((int)s)})",
+    };
+
     private void SetState(UpdateStatus status, string message)
     {
         Status = status;
         Message = message;
-        DesktopLog.Info($"UpdateCoordinator: {status} - {message}");
+        DesktopLog.Info($"UpdateCoordinator: {StatusName(status)} - {message}");
         RaiseOnUi();
     }
 

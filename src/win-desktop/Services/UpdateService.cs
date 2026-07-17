@@ -27,8 +27,19 @@ public sealed class UpdateService
     // 单个 URL 网络操作的尝试次数（首次 + 重试）；用于缓解大陆网络下 GitHub CDN 的瞬时连接失败。
     private const int NetworkAttempts = 3;
 
-    private static readonly HttpClient Http = CreateClient(autoRedirect: true);
-    private static readonly HttpClient HttpNoRedirect = CreateClient(autoRedirect: false);
+    private static readonly object HttpGate = new();
+    private static HttpClient? _http;
+    private static HttpClient? _httpNoRedirect;
+
+    private static HttpClient Http
+    {
+        get { lock (HttpGate) { return _http ??= CreateClient(autoRedirect: true); } }
+    }
+
+    private static HttpClient HttpNoRedirect
+    {
+        get { lock (HttpGate) { return _httpNoRedirect ??= CreateClient(autoRedirect: false); } }
+    }
 
     private static HttpClient CreateClient(bool autoRedirect)
     {
@@ -37,6 +48,22 @@ public sealed class UpdateService
         c.DefaultRequestHeaders.UserAgent.ParseAdd("Hope-Updater");
         c.DefaultRequestHeaders.Accept.ParseAdd("application/vnd.github+json");
         return c;
+    }
+
+    /// <summary>
+    /// 丢弃长寿命 HttpClient（休眠唤醒后系统网络栈常处于半开状态，复用旧客户端易触发异常甚至运行时故障）。
+    /// 进行中的请求可能失败；调用方应在冷却后再检查更新。
+    /// </summary>
+    public static void InvalidateHttpClients()
+    {
+        lock (HttpGate)
+        {
+            try { _http?.Dispose(); } catch { /* ignore */ }
+            try { _httpNoRedirect?.Dispose(); } catch { /* ignore */ }
+            _http = null;
+            _httpNoRedirect = null;
+        }
+        DesktopLog.Info("UpdateService: HttpClient invalidated");
     }
 
     /// <summary>
@@ -82,36 +109,47 @@ public sealed class UpdateService
     /// </summary>
     public async Task<UpdateInfo?> CheckLatestAsync(CancellationToken ct)
     {
-        UpdateInfo? primary = null;
-        foreach (var strategy in new Func<CancellationToken, Task<UpdateInfo?>>[]
-                 {
-                     TryGitHubApiAsync,
-                     TryGitHubWebRedirectAsync,
-                     TryGiteeApiAsync,
-                 })
+        try
         {
-            try
+            UpdateInfo? primary = null;
+            foreach (var strategy in new Func<CancellationToken, Task<UpdateInfo?>>[]
+                     {
+                         TryGitHubApiAsync,
+                         TryGitHubWebRedirectAsync,
+                         TryGiteeApiAsync,
+                     })
             {
-                primary = await strategy(ct).ConfigureAwait(false);
-                if (primary != null)
+                try
                 {
-                    DesktopLog.Info($"UpdateService: latest={primary.LatestVersion} via {primary.Source}");
-                    break;
+                    primary = await strategy(ct).ConfigureAwait(false);
+                    if (primary != null)
+                    {
+                        DesktopLog.Info($"UpdateService: latest={primary.LatestVersion} via {primary.Source}");
+                        break;
+                    }
                 }
+                // 仅当我们的 token 真被取消才中止；HttpClient.Timeout 抛的 TaskCanceledException
+                // （ct 未取消）按普通失败处理，继续尝试下一通道（如 Gitee），否则一个超时就会废掉兜底。
+                catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+                catch (Exception ex) { DesktopLog.Warn($"UpdateService strategy failed: {ex.Message}"); }
             }
-            // 仅当我们的 token 真被取消才中止；HttpClient.Timeout 抛的 TaskCanceledException
-            // （ct 未取消）按普通失败处理，继续尝试下一通道（如 Gitee），否则一个超时就会废掉兜底。
-            catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
-            catch (Exception ex) { DesktopLog.Warn($"UpdateService strategy failed: {ex.Message}"); }
-        }
 
-        if (primary == null)
+            if (primary == null)
+            {
+                DesktopLog.Warn("UpdateService: all version-check strategies failed");
+                return null;
+            }
+
+            return await WithGiteeFallbackAsync(primary, ct).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+        catch (Exception ex)
         {
-            DesktopLog.Warn("UpdateService: all version-check strategies failed");
+            // 休眠唤醒后偶发极端故障：丢弃 HttpClient，避免后续继续复用坏连接。
+            DesktopLog.Error("UpdateService.CheckLatestAsync failed", ex);
+            InvalidateHttpClients();
             return null;
         }
-
-        return await WithGiteeFallbackAsync(primary, ct).ConfigureAwait(false);
     }
 
     // 通道①：GitHub API releases/latest（信息最全：tag + body + 资产直链）。

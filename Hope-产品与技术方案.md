@@ -1,13 +1,16 @@
 # Hope（盼头）产品与技术方案
 
-> 版本：v0.15.103  
-> 更新日期：2026-07-12  
-> 更新说明：对齐 v0.15.103——刷新进度条、顶栏透明恢复、底部 Toast（含校验常显）、Fluent 确认框与快捷键
+> 版本：v0.15.108（Desktop） / Headless `0.10.28`（独立递增）  
+> 更新日期：2026-07-13  
+> 更新说明：对齐代码——同步 IPC（移除 pause/hide/show）、验收项、MSIX 说明与文档索引；消除与 `docs/plugin-ipc.md` 的冲突
+
+**文档分工：** 实现状态与架构以本文为准；**IPC 字段与命令以 [`docs/plugin-ipc.md`](docs/plugin-ipc.md) + 代码为准**；历史规格见 `docs/` 归档文。索引：[`docs/README.md`](docs/README.md)。
+
 **图例：** ✅ 已实现并合入代码　⚠️ 后端或局部已有，UI/联调未完成　❌ 未实现（含 Phase 2）
 
 ---
 
-## 0. 实现状态（截至 2026-07-12，v0.15.103）
+## 0. 实现状态（截至 2026-07-14，v0.15.104）
 
 > 对照 `src/headless`、`src/win-desktop`、`.github/workflows/`、`setup.iss`、`scripts/test.ps1`。
 
@@ -18,37 +21,39 @@
 | Headless 核心（Go） | ✅ | `src/headless/`：`engine`、`task`、`config`、`ipc` |
 | 墙钟实时进度 & 多任务分段 | ✅ | Unix `startTs`/`endTs`；`task.BuildLayout` / `Percent`；单测见 `task_*_test.go` |
 | 配置持久化（JSON） | ✅ | `%APPDATA%\Hope\config.json` + `tasks.json`；含 UTF-8 BOM 剥离 |
-| IPC 命名管道广播 & 命令 | ✅ | `\\.\pipe\Hope\progress`；读写命令、`requestId`、写后单播快照；`screenSize` 独立于 `updateSettings` |
+| IPC 命名管道广播 & 命令 | ✅ | `\\.\pipe\Hope\progress`；读写命令、`requestId`、写后单播快照；`screenSize` / `requestState`；详见 `docs/plugin-ipc.md` |
 | Headless 单实例 | ✅ | `Global\HopeHeadless` Mutex |
 | Headless 日志 | ✅ | `logs/hope-headless.log`；`--debug` 额外输出控制台 |
 | WPF 配置窗体 & 任务 CRUD | ✅ | `Views/ConfigWindow`：任务列表筛选、取色盘、日期时间（可编辑下拉）、快填、自动保存；操作反馈用 **自建 Toast**；确认框用 WPF-UI `MessageBox`（关闭=取消） |
 | 全局设置 UI | ✅ | 条高 / 图片最大高度 / 起始位置 / 到期提醒；高级选项；**「刷新进度条(ctrl+r)」**（Primary，位于进度条设置区首行）；开机自启 / 运行时显示配置窗 / 自动更新 / 遥测；**修改即生效**；表单 ToolTip 挂在控件/文案上（非整行） |
 | 全局设置持久化 | ✅ | 启动屏幕尺寸走 `screenSize`，避免默认值经 `updateSettings` 抹掉用户设置 |
 | 系统托盘 | ✅ | 打开设置(`S`) / 检查更新(`U`) / 刷新进度条(`R`) / 退出(`Q`)；菜单展开后按字母触发 |
-| 应用 / 托盘品牌图标 | ✅ | 水墨「盼」/ Hope；托盘用 Mini 原图（不随主题染色） |
+| 应用 / 托盘品牌图标 | ✅ | 水墨「盼」/ Hope；托盘用 `hope-mini.png` 原图（**不**随主题染色，见 `AppIconHelper`） |
 | DWM 分段 Overlay | ✅ | 多边位置、方向、四边环绕、任务栏避让与 Z-order |
 | Overlay 透明恢复 | ✅ | 销毁重建；手动「刷新进度条」；`TaskbarCreated` / `WM_DWMCOMPOSITIONCHANGED` 自动重置 |
 | 点击穿透 & 不出 Alt+Tab | ✅ | `WM_NCHITTEST` → `HTTRANSPARENT` |
-| 悬停展示任务名 + 倒计时 | ✅ | Overlay Tooltip |
+| 悬停展示任务名 + 倒计时 | ✅ | Overlay Tooltip（全局光标轮询，与穿透解耦） |
 | 跟随图片/动图 | ✅ | `ImageSprite`；高度由全局默认或任务覆盖（15–30px）等比缩放 |
-| 截止后行为 `expiredBehaviors` | ✅ | 默认自动显示 + 可叠加 blink/celebrate/notify；全局默认 + 任务级覆盖 |
+| 截止后行为 `expiredBehaviors` | ✅ | 默认自动显示 + 可叠加 blink/celebrate/notify；全局默认 + 任务级覆盖（`keep`/`hide` 已废弃） |
 | 循环任务 `recurrence` | ✅ | 仅定时任务；完成时累加 n×86400 进入下一期 |
 | 任务完成 / 重建 | ✅ | 列表与编辑区「完成」；循环进下一期；已完成可「创建为新任务」 |
-| Desktop ↔ Headless 互拉 | ✅ | `HeadlessSupervisor` + `--desktop` |
+| Desktop ↔ Headless 互拉 | ✅ | `HeadlessSupervisor` + `--desktop`；快速退出熔断 |
 | Desktop 单实例 | ✅ | `Global\HopeDesktop` Mutex |
+| SessionState / WriteGuard | ✅ | 会话单源；水合与完成流防 AutoSave 竞态 |
 | WPF-UI Fluent 主题 | ✅ | FluentWindow + Mica/Acrylic |
-| 配置窗 Toast | ✅ | `HopeToasts`：瞬时（倒计时 0→100、可关闭）+ **Sticky 业务校验**（无倒计时/无关闭钮，条件恢复后自动关）；窗未在桌面不展示 || 单测与一键测试 | ✅ | `go test` + `Hope.Desktop.Tests`；`scripts/test.ps1`；CI `ci.yml` / release 发版前跑 |
+| 配置窗 Toast | ✅ | `HopeToasts`：瞬时（倒计时 0→100、可关闭）+ **Sticky 业务校验**（无倒计时/无关闭钮，条件恢复后自动关）；窗未在桌面不展示 |
+| 单测与一键测试 | ✅ | `go test` + `Hope.Desktop.Tests`；`scripts/test.ps1`；CI `ci.yml` / release 发版前跑 |
 | Inno Setup 安装包 | ✅ | `setup.iss`；简体中文 + 英文向导；`Hope_Setup.exe` + `.sha256` |
-| MSIX 商店包 | ✅ | `pack-msix.ps1`；`.msix` / `.msixupload` |
+| MSIX 商店包 | ✅ | `pack-msix.ps1`；`.msix` / `.msixupload`（zip 仅含 msix） |
 | 自动更新（全量） | ✅ | 多通道检测、SHA-256、静默升级；商店通道引导 Store；**有更新/检查结果经 Toast 提示（不弹托盘气球）** |
 | 进度条位置 / 方向 / 四边 | ✅ | 全局位置 + 方向；高级「我全都要」；各边独立方向（任务级位置开启时） |
 | 任务级位置覆盖 | ✅ | 高级「允许为单个任务指定展示位置」 |
 | 任务级图片高度 | ✅ | 高级「允许为单个任务设置图片高度」；编辑区「使用全局图片高度」+ 滑动条；桌面解析最终高度 |
-| 全屏庆祝 | ✅ | `celebrate`：非四边时复制到四边闪烁 |
+| 全屏庆祝 | ✅ | `celebrate`：非四边时复制到四边闪烁；跨边同相位呼吸 |
 | 颜色 | ✅ | 取色盘；仍校验不与其他任务重复（未改为「允许重复+确认框」） |
 | Phase 2 全屏插件 | ❌ | `src/plugins/fullscreen/` 仅占位 |
 
-**当前可交付边界：** v0.14 已覆盖时间戳进度与循环、位置/图片任务级覆盖、完成流、安装与更新、稳定性门禁。距 v1.0 主要差帮助/Onboarding 与验收清单人工回归。
+**当前可交付边界：** v0.15 已覆盖时间戳进度与循环、位置/图片任务级覆盖、完成流、休眠/DWM 恢复、Inno + MSIX 双通道与更新分流、稳定性门禁。距 v1.0 主要差帮助/Onboarding 与验收清单人工回归。
 
 ### 0.2 验收标准对照（§9）
 
@@ -60,15 +65,16 @@
 | 4 | 悬停展示任务名 + 倒计时 | ✅ |
 | 5 | 墙钟进度示例 | ✅（单测覆盖） |
 | 6 | 无边框全屏可见 | ⚠️ 设计支持；真全屏检测已收紧（排除桌面 Shell） |
-| 7 | 托盘隐藏顶栏 | ✅ |
+| 7 | 无活跃段时不显示顶栏 | ✅ |
 | 8 | 托盘退出 & 互拉停止 | ✅ |
 | 9 | 单实例 | ✅ |
 | 10 | 无任务不显示 | ✅ |
 | 11 | 到期提醒 `expiredBehaviors` | ✅ |
 | 12 | Headless 崩溃拉起 | ✅ |
-| 13 | 暂停不冻结墙钟 | ✅ |
+| 13 | 休眠后墙钟进度追上 | ✅ |
 | 14 | 任务级位置 / 图片高度 | ✅ |
-| 15 | 点击桌面时进度条不被任务栏遮挡 | ✅ |
+| 15 | 进度条不被任务栏遮挡 | ✅ |
+| 16–20 | 四边 / 完成流 / 颜色校验等 | ✅（详见 §9） |
 
 ---
 
@@ -88,11 +94,11 @@
 - 进度条必须：**置顶可见、点击穿透（不抢焦点、不误触）、不参与 Alt+Tab / Win+Tab**；唯一交互为悬停展示任务名。
 - 独占全屏游戏覆盖是**高价值延伸场景**，技术风险与反作弊约束高，**不作为首版交付范围**。
 
-### 1.2 产品定位（待你确认）
+### 1.2 产品定位
 
-- [ ] 目标用户画像：__________（例：备考学生 / 自由职业者 / 防沉迷家长自用）
-- [ ] 与番茄钟、Focus 类工具的差异：__________
-- [ ] 是否面向公开发布 / 仅自用：__________
+- 目标用户：需要在沉浸办公/学习时仍能感知截止时间的人（备考、自由职业、朝九晚五「盼下班」等）。
+- 与番茄钟 / Focus 类差异：不强制专注时段，而是**墙钟驱动的多任务进度可视化**；顶栏非侵入、点击穿透。
+- 分发：GitHub/Gitee（Inno）与 Microsoft Store（MSIX）并行；数据默认仅本机。
 
 ---
 
@@ -115,7 +121,6 @@
 - 独占全屏游戏 Present Hook
 - Xbox Game Bar Widget
 - 游戏兼容数据库
-- MSIX / 证书旁加载安装链
 
 ### Phase 2：全屏游戏扩展包（插件）
 
@@ -235,7 +240,7 @@
 - [x] 读取/写入本地配置与多任务列表
 - [x] 按 **墙钟实时** 计算各任务 `percent` 与顶栏 `segments`（规则见 §7.2，**不累加、不因休眠暂停**）
 - [x] 以固定间隔（默认 **1 秒**，`settings.refreshSec` 可配置）向 IPC 订阅方广播状态
-- [x] 接收来自 Desktop 的控制命令（任务 CRUD、暂停、隐藏、退出等）
+- [x] 接收来自 Desktop 的控制命令（任务 CRUD、退出等）
 - [x] 监视 `hope-desktop.exe`（`--desktop` 参数提供时）；异常退出时重新拉起
 - [x] 启动时不显示控制台窗口（`--debug` 时除外）
 - [ ] 二次启动时唤醒已有 Desktop 窗口（可选，未实现）
@@ -308,8 +313,8 @@ go build -ldflags="-s -w -H=windowsgui" -o hope-headless.exe .
 |------|------|------|
 | `version` | int | 协议版本 |
 | `visible` | bool | 是否显示顶栏（无任务时为 `false`） |
-| `state` | string | `idle` / `running` / `paused` / `expired`；`paused` 时 `visible=false`，但 `segments` 仍按墙钟更新 |
-| `segments[]` | array | 按 percent 升序拼接的色段，**同一物理顶栏**；详见 §7.2 v2 |
+| `state` | string | `idle` / `running` / `expired`；无绘制段时 `visible=false` |
+| `segments[]` | array | 按 percent 升序拼接的色段，**同一物理顶栏**（四边模式另含 position）；详见 §7.2 v2 |
 | `segments[].color` | string | 用户为任务指定的颜色（`#RRGGBB`） |
 | `segments[].gif` | string | 可选；任务的本地**图片/动图**路径，挂在进度条**下方**、跟随该段右边界（`fillEnd` = 其 `percent`）移动；动图循环播放 |
 | `segments[].barStart` | float | 该色段左边界 = 前一任务 percent（首段为 0），0–100 |
@@ -318,13 +323,9 @@ go build -ldflags="-s -w -H=windowsgui" -o hope-headless.exe .
 | `segments[].fillEnd` | float | = `barEnd`（整段满涂）；保留字段供 Overlay 绘制与 GIF 定位 |
 | `segments[].endAt` | string (RFC3339) | 该任务截止时刻；供 Overlay 悬停计算倒计时（§5.4 修改 1） |
 
-**分段布局规则（v2，已确定，详见 §7.2）：**
+> **命令与字段完整表**见 [`docs/plugin-ipc.md`](docs/plugin-ipc.md)。下文示例保留常用命令；已移除的 `pause`/`resume`/`hide`/`show` 不再列出。
 
-1. 仅包含 **未过期** 的任务；全局 `state=paused` 时仍按墙钟计算 `percent`，但不向 Overlay 绘制（`visible=false`）。
-2. 取各活跃任务 `percent` **升序** p₁≤…≤pₙ；第 i 段占 `[p_{i-1}, p_i]`（p₀=0），满涂任务 i 颜色。
-3. 段间首尾相接、无空隙；`percent` 相同的零宽段直接跳过。
-4. **最大 percent pₙ 之后的 `[pₙ,100]` 完全透明**：不绘制任何底色、不可点击、悬停不交互。
-5. 视觉示例（a=30/b=60/c=90）：`[==a 0–30==][==b 30–60==][==c 60–90==][  透明 90–100  ]`。
+**分段布局规则（v2，已确定）：** 完整规则、视觉示例与字段含义见 §7.2「进度条分段模型 v2」。要点：仅含已开始且需展示的任务（无段时 `visible=false`）；按 `percent` 升序拼接连续色段 `[p_{i-1}, p_i]`，段间无空隙，`[pₙ,100]` 完全透明、不可交互；**已到期且保留显示的满色段**可重叠铺在活跃段之后，供多色呼吸色板（见 Overlay）。
 
 **单任务 percent（已确定，v0.14 时间戳模型）：**
 
@@ -370,30 +371,14 @@ go build -ldflags="-s -w -H=windowsgui" -o hope-headless.exe .
 ```json
 {"action":"updateSettings","settings":{"barHeightPx":4,"imageMaxHeightPx":15,"expiredBehaviors":["blink","notify"]}}
 {"action":"screenSize","settings":{"screenWidth":1920,"screenHeight":1080}}
-```
-
-```json
-{"action":"pause"}
-```
-
-```json
-{"action":"resume"}
-```
-
-```json
-{"action":"hide"}
-```
-
-```json
-{"action":"show"}
-```
-
-```json
+{"action":"requestState"}
+{"action":"getVersion"}
 {"action":"quit"}
 ```
 
-> 广播额外字段 `expired[]`（任务刚到期时一次性下发，携带 `behaviors[]`，供 Desktop 执行 **一次性** 提醒如 `notify`）。✅ 已实现
-> `keep` / `blink` / `hide` 等 **持续** 表现由广播 `segments[]` 中每段的 `expired`（bool）与 `behaviors[]` 字段驱动：到期保留段标 `expired:true`，含 `blink` 时由 Overlay 做柔和 alpha 渐变。✅ 已实现
+> 广播额外字段 `expired[]`（任务刚到期时一次性下发，携带 `behaviors[]`，供 Desktop 执行 **一次性** 提醒如 `notify`）。✅  
+> 持续表现由 `segments[]` 中 `expired` + `behaviors[]`（`blink` / `celebrate`）驱动。✅  
+> **已移除命令：** `pause` / `resume` / `hide` / `show`（勿再实现）。完整契约见 [`docs/plugin-ipc.md`](docs/plugin-ipc.md)。
 
 ### 5.3 WPF 配置窗体 + 系统托盘 ✅
 
@@ -460,7 +445,7 @@ go build -ldflags="-s -w -H=windowsgui" -o hope-headless.exe .
 
 > 来源：用户 2026-06-25 反馈。
 
-- [x] `DatePicker` **移除窗口级显式样式**：之前的显式 `Style`（无 `BasedOn`/`Template`）把 WPF-UI Fluent 隐式样式覆盖回系统默认模板，导致白框 + 简谱日历；移除后恢复 Fluent 深色圆角输入框与弹出日历（见 §5.3.1 控件主题表）。
+- [x] `DatePicker` 移除窗口级显式样式（恢复 Fluent 深色圆角日历），详见 §5.3.1 需求 4「DatePicker」控件主题表。
 - [x] 表单各项 **标题右对齐**（`FieldLabel`/`QuickFillLabel` 显式 `TextAlignment=Right`，紧贴右侧控件列）。
 - [x] **表单顺序重排**：名称 / 颜色 / 图片 / 预览 → 分割线 → 类型 / 循环（即时任务隐藏）/ 到期提醒 → 分割线 → 开始时间组（即时隐藏）→ 分割线 → 截止时间组。即时任务不显示「循环」与「开始时间组」及其分割线（避免双分割线）。
 - [x] 循环「按星期」多选改 **两行**（第一行周一~周五，第二行周六、周日），选项为单字 `[]一 []二 …`，选项间距 5px。
@@ -524,7 +509,7 @@ go build -ldflags="-s -w -H=windowsgui" -o hope-headless.exe .
 - **开机自启**：HKCU Run + `settings.autostart`。
 - **运行时显示此窗口**：`settings.showConfigAtRuntime`，默认关；下次启动自动打开配置窗。
 - **重置窗口高度**：按任务编辑区内容重新 `FitHeightToTaskEditor()`。
-- [x] `expiredBehaviors` 配置（显示模式单选下拉：保持显示 / 自动隐藏 / 闪烁提醒 + 系统通知独立勾选框），全局为默认值；任务编辑区「到期提醒」单行，新建任务自动同步全局默认并各存其值。
+- [x] `expiredBehaviors` 全局设置：**呼吸提醒 / 全屏庆祝 互斥 radio（含「仅自动显示」复位项）+ 系统通知独立可叠加勾选框**，默认「仅自动显示」（空集合）；任务编辑区不暴露到期提醒选项，任务级覆盖保留于数据模型。完整语义见 §7.2「截止后行为」。
 
 **新增 4：双 Tab 布局** ✅
 
@@ -583,19 +568,17 @@ go build -ldflags="-s -w -H=windowsgui" -o hope-headless.exe .
 | 资源 | 路径 | 用途 |
 |------|------|------|
 | `hope.png` | `src/resources/hope.png` | 应用图标：嵌入 `hope-desktop.exe`（`.ico`）、配置窗体 `Window.Icon` |
-| `hope-h.png` | `src/resources/hope-h.png` | 托盘小图（单色 H 形模板）；按系统主题着色 |
+| `hope-mini.png` | `src/resources/hope-mini.png` | 托盘小图：白底品牌图，**不做主题着色**（`AppIconHelper`） |
 
-**托盘着色规则（已确定）：**
+**托盘图标规则（已确定）：**
 
-- 读取 Windows **应用**亮/暗设置（`AppsUseLightTheme` + WPF-UI `ApplicationThemeManager`）。
-- **深色主题** → 托盘图标 **白色**（`#FFFFFF`）。
-- **浅色主题** → 托盘图标 **黑色**（`#000000`）。
-- 系统主题切换时 **自动刷新** 托盘图标；Overlay 顶栏不受影响。
+- 托盘直接使用 `hope-mini.png` 原图，不随系统亮/暗染色（避免水墨字被冲掉）。
+- Overlay 顶栏不受托盘图标影响。
 
 **后续可选（未做）：**
 
-- [ ] 常态 / 暂停 / 即将到期 是否区分图标：__________
-- [ ] 气球通知规则：__________（`expiredBehavior=notify` 时已有一次性气球 ✅）
+- [ ] 常态 / 即将到期 是否区分图标：__________
+- [ ] 气球通知：`expiredBehavior=notify` 曾用托盘气球；现行以系统通知 / Toast 为主 ✅
 
 ### 5.4 DWM 覆盖层（分段顶栏）✅
 
@@ -977,12 +960,7 @@ Hope/
 - 图片不影响计时与穿透；文件缺失或损坏时静默跳过
 - IPC / 任务字段名仍为 `gif`（历史命名），语义为任意图片路径
 
-**任务类型与 percent（已确定）：**
-
-| 类型 | 字段 | percent |
-|------|------|---------|
-| **定时任务** `scheduled` | `startTs` + `endTs` + `color` | 见上表（纯 Unix 秒比较与四则运算） |
-| **即时任务** `instant` | `endTs` + `color`；`startTs` 取 `createdAt` | 同上 |
+**任务类型与 percent（已确定）：** 字段与计算公式见 §5.2「单任务 percent（已确定，v0.14 时间戳模型）」；时间戳模型见下文。
 
 **时间语义（已确定，v0.14 时间戳模型）：**
 
@@ -990,7 +968,7 @@ Hope/
 - 校验：`startTs ≤ endTs` 且 `endTs > startTs`（正时长）；跨午夜任务在创建时直接将截止存为次日时刻（如 22:00→次日 06:00）
 - 进度 **一律墙钟实时计算**，不累加有效工作时间
 - **休眠不改变公式**：休眠期间时间轴照常推进，唤醒后与未休眠使用同一 `nowTs`
-- **全局暂停不冻结墙钟**：暂停期间 Headless 仍按 `time.Now().Unix()` 维护各任务 `percent`；仅隐藏顶栏（`visible=false`）
+- **显示与否不改变公式**：顶栏隐藏或进程短暂断开时，进度仍只由墙钟决定；Desktop 经 `requestState` 拉回最新帧
 - 展示层（列表日期列、表单日期选择器）仅负责时间戳 ↔ 本地日期时间格式化
 
 **截止后行为（已确定）：** ✅ 逻辑与配置 UI 均已实现（v0.8 改造为「默认自动显示 + 可叠加勾选」）
@@ -998,7 +976,7 @@ Hope/
 - **新模型**：到期 **默认自动显示**（保留 100% 满色段常驻顶栏，无需任何选项）；在此之上可 **叠加勾选** 附加效果，存为字符串集合 `expiredBehaviors`：
   - `blink` 呼吸提醒 — ✅ 到期后该段做 **柔和 alpha 渐变**（淡出至近透明再淡入，正弦缓动），**持续到任务不再到期**（打开设置不停止）
   - `celebrate` 全屏庆祝 — ✅ 到期时四边同步闪烁庆祝
-  - `notify` 系统通知 — ✅ 到期时弹一次托盘气球
+  - `notify` 系统通知 — ✅ 到期时触发一次系统通知（不再依赖托盘气球作为主路径）
 - **已移除**：旧的「保持显示 `keep`」「自动隐藏 `hide`」与显示模式下拉。`keep`/`hide` 仅保留为兼容常量，加载旧数据时被过滤丢弃（`sanitizeBehaviors`）。到期任务一律保留显示（`KeepsVisibleWhenExpired` 恒为 `true`）。
 - **UI 形态**：仅 **全局设置** 暴露选项——**呼吸提醒 / 全屏庆祝 互斥**（radio，含「仅自动显示」复位项），**系统通知** 为独立可叠加勾选框；空集合 = 仅自动显示。选中呼吸或庆祝时其后追加 **红色「⚠️光敏性癫痫警告⚠️」**（二者均含闪动，提示光敏性风险）。
 - **全局默认 + 任务级**：
@@ -1097,8 +1075,9 @@ Hope/
 | v0.6 | 到期提醒「使用全局默认」并入下拉（选中禁用本任务通知）；**循环任务**（每天 / 每 N 天 / 按星期，支持跨午夜，窗口结束套用到期提醒并在下次开始重置） | ✅ **已完成** |
 | v0.7 | 进度条位置/方向（含四边）、庆祝、任务级位置、完成按钮 | ✅ **已完成**（颜色仍保持互斥，未改「可重复+确认」） |
 | v0.8–v0.13 | 时间戳进度与循环、安装/更新/商店包、图标与中文安装向导、任务栏避让、稳定性测试门禁等 | ✅ **已完成**（详见 CHANGELOG） |
-| v0.14 | 任务级图片高度；列表危险操作与图标刷新等（详见 CHANGELOG v0.14） | ✅ |
-| v0.15 | 刷新进度条；顶栏透明恢复；底部 Toast（含校验常显）；Fluent 确认框；快捷键 | ✅ **进行中**（v0.15.103） |
+| v0.14 | 任务级图片高度；列表危险操作与图标刷新等（详见 CHANGELOG v0.14） | ✅ |
+
+| v0.15 | 刷新进度条；顶栏透明恢复；底部 Toast（含校验常显）；Fluent 确认框；快捷键 | ✅ **进行中**（v0.15.104） |
 | v1.0 | 安装包验收、帮助文档、Onboarding | 🔲 |
 | v1.x-plugin | 全屏游戏拓展包（独立发版） | ❌ |
 
@@ -1125,8 +1104,8 @@ Hope/
 | 制品 | 渠道 | 说明 |
 |------|------|------|
 | `Hope_Setup.exe` | GitHub / Gitee Release、自动更新 | 保留现有 Inno 流程，不变 |
-| `Hope_<版本>_x64.msix` | 微软商店 Package URL | 未签名 MSIX，可由商店重签 |
-| `Hope_<版本>_x64.msixupload` | Partner Center 手动上传 | zip：msix + AppxManifest |
+| `Hope_<版本>_x64.msix` | 微软商店直接上传 / Package URL | 未签名 MSIX，可由商店重签 |
+| `Hope_<版本>_x64.msixupload` | Partner Center 手动上传 | zip：**仅含** `.msix`（勿内嵌独立 `AppxManifest.xml`） |
 
 **仍不需要：**
 
@@ -1177,23 +1156,23 @@ Hope/
 | 4 | 进度条显示中 | 鼠标悬停顶栏已填充段 | 展示任务名称 Tooltip；移开后消失 | ✅ |
 | 5 | 08:00–18:00 任务 | 17:00 查看（含中途休眠） | 该任务 percent ≈ 90% | ✅ |
 | 6 | 进度条显示中 | 打开无边框全屏游戏 | 顶栏仍可见 | ⚠️ 人工验 |
-| 7 | 用户点击托盘「隐藏」 | — | 顶栏消失，`visible=false` | ✅ |
+| 7 | 用户需隐藏顶栏 | — | 无活跃/展示段时不显示；或退出应用 | ✅ |
 | 8 | 用户点击托盘「退出」 | — | 所有 Hope 进程结束，互拉停止 | ✅ |
 | 9 | 二次启动 | — | 单实例，不重复顶栏 | ✅ |
 | 10 | 无任务 | — | 不显示顶栏 | ✅ |
-| 11 | 任务到期且 `behaviors` 含 `notify` | 到达 endAt | 触发一次系统通知 | ✅ |
-| 11b | 任务到期且 `behaviors` 含 `keep` | 到达 endAt | 该段保留为 100% 满色常驻顶栏 | ✅ |
-| 11c | 任务到期且 `behaviors` 含 `blink` | 到达 endAt | 该段柔和 alpha 渐变脉冲，持续到任务不再到期 | ✅ |
-| 11d | 任务到期且 `behaviors` 为纯 `hide` | 到达 endAt | 该段从顶栏移出 | ✅ |
+| 11 | 任务到期且 `behaviors` 含 `notify` | 到达 endTs | 触发一次系统通知 | ✅ |
+| 11b | 任务到期（默认显示） | 到达 endTs | 该段保留为 100% 满色 | ✅ |
+| 11c | 任务到期且含 `blink` | 到达 endTs | 柔和呼吸/色板过渡，持续到不再到期 | ✅ |
+| 11d | ~~纯 `hide`~~ | — | **已废弃**（sanitize 过滤） | — |
 | 12 | Headless 被结束 | Desktop 仍运行 | 数秒内 Headless 被 Desktop 拉起 | ✅ |
-| 13 | 任务进行中 | 托盘暂停 10 分钟后继续 | 顶栏隐藏期间进度仍推进；恢复后 percent 一致 | ✅ |
-| 14 | 用户选择"底边" | — | 进度条显示在屏幕底边 | 🔲 |
-| 15 | 用户选择"左边" | — | 进度条显示在屏幕左边，从上到下填充 | 🔲 |
-| 16 | 用户启用"四边模式" | — | 四边同时显示进度条 | 🔲 |
-| 17 | 任务到期且 `behaviors` 含 `celebrate` | 到达 endAt | 四边同步呼吸（绝对时间对齐），持续到任务不再到期 | ✅ |
-| 18 | 用户点击"完成"按钮（重复任务） | — | 任务时间自动更新到下个周期，继续运行 | 🔲 |
-| 19 | 用户点击"完成"按钮（单次任务） | — | 任务标记为已完成，不再渲染到桌面 | 🔲 |
-| 20 | 用户保存任务（颜色重复） | — | 弹出对话框提示，用户可选择继续或取消 | 🔲 |
+| 13 | 墙钟进度 | 休眠或长时间离开后恢复 | percent 按墙钟追上，不依赖本地累加 | ✅ |
+| 14 | 用户选择"底边" | — | 进度条显示在屏幕底边 | ✅ |
+| 15 | 用户选择"左边" | — | 进度条显示在屏幕左边，按方向填充 | ✅ |
+| 16 | 用户启用"四边模式" | — | 四边同时显示进度条 | ✅ |
+| 17 | 任务到期且含 `celebrate` | 到达 endTs | 四边同步呼吸（绝对时间对齐） | ✅ |
+| 18 | 用户点击"完成"（循环任务） | — | 生成下一期并继续；原任务标完成 | ✅ |
+| 19 | 用户点击"完成"（单次任务） | — | 标记已完成，不再渲染到桌面 | ✅ |
+| 20 | 用户保存任务（颜色重复） | — | **拦截并提示**（现行仍禁止重复，非「确认后允许」） | ✅ |
 
 ---
 
@@ -1218,9 +1197,10 @@ Hope/
 4. 是否需要 `hope-headless.exe --debug` 打开控制台？**已决：是** ✅ 已实现
 5. 插件是否考虑上架 Microsoft Store？__________
 6. 旧版 `需求文档.md`？**建议废弃，仅作历史参考**
-7. 全局「暂停」是否冻结墙钟？**已决：不冻结** ✅
+7. 全局「暂停」是否冻结墙钟？**已决：不冻结；托盘暂停入口已收敛，墙钟始终权威** ✅
 8. Desktop 拉起 Headless 时是否传 `--desktop` 完成双向互拉？**已完成（v0.4）**
 9. 设置项是否并入配置窗体？**已完成（v0.4）**
+10. IPC 细节维护何处？**已决：`docs/plugin-ipc.md` 为契约权威，本文 §5.2 摘要** ✅
 
 ---
 
@@ -1231,7 +1211,9 @@ Hope/
 | Game Bar UWP 为唯一覆盖层 | Phase 1 改为 DWM 透明窗；Game Bar 降为插件备选 |
 | 首版即覆盖独占全屏 | 独占全屏移至插件 Phase 2 |
 | 三进程 + UWP 沙盒管道 | 首版简化 IPC，无 AppContainer ACL |
-| CI 含 MSIX 商店包（与 Inno 并行） | 首版无本地 MSIX 签名，商店重签 |
+| 仅 Inno | **Inno + MSIX** 并行；商店托管签名 |
+| `startAt`/`endAt` + 暂停累加 | Unix `startTs`/`endTs` 墙钟进度 |
+| `pause`/`hide` IPC | 已移除；显隐由布局与 Overlay 生命周期决定 |
 
 ## 附录 B：参考链接
 

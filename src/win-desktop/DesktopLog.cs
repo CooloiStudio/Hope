@@ -1,14 +1,48 @@
 namespace Hope.Desktop;
 
-/// <summary>Desktop 诊断日志，落盘至 %APPDATA%\Hope\logs\hope-desktop.log。</summary>
+/// <summary>
+/// Desktop 诊断日志，当前会话落盘至 %APPDATA%\Hope\logs；
+/// Debug/Release 使用不同文件名，每次启动将上一次日志按时间归档。
+/// </summary>
 internal static class DesktopLog
 {
     private static readonly object Gate = new();
-    private static string? _path;
-
-    private static string LogPath => _path ??= System.IO.Path.Combine(
+#if DEBUG
+    private const string LogBaseName = "hope-desktop-debug";
+#else
+    private const string LogBaseName = "hope-desktop-release";
+#endif
+    private static readonly string LogDirectory = System.IO.Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-        "Hope", "logs", "hope-desktop.log");
+        "Hope", "logs");
+    private static readonly string LogPath = System.IO.Path.Combine(LogDirectory, $"{LogBaseName}.log");
+
+    internal static string LogDirectoryPath => LogDirectory;
+
+    static DesktopLog()
+    {
+        ArchivePreviousLog();
+    }
+
+    private static void ArchivePreviousLog()
+    {
+        try
+        {
+            System.IO.Directory.CreateDirectory(LogDirectory);
+            if (!System.IO.File.Exists(LogPath)) return;
+
+            var timestamp = System.IO.File.GetLastWriteTime(LogPath).ToString("yyyyMMdd-HHmmss");
+            var archivePath = System.IO.Path.Combine(LogDirectory, $"{LogBaseName}-{timestamp}.log");
+            for (var suffix = 1; System.IO.File.Exists(archivePath); suffix++)
+                archivePath = System.IO.Path.Combine(LogDirectory, $"{LogBaseName}-{timestamp}-{suffix}.log");
+
+            System.IO.File.Move(LogPath, archivePath);
+        }
+        catch
+        {
+            // 归档失败不影响应用启动；后续仍尝试追加当前日志。
+        }
+    }
 
     public static void Info(string message) => Write("INFO", message);
 
@@ -33,11 +67,23 @@ internal static class DesktopLog
             var line = $"{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff} [{level}] [{ThreadTag()}] {message}";
             System.Diagnostics.Trace.WriteLine(line);
             System.Diagnostics.Debug.WriteLine(line);
-            lock (Gate)
+            // 磁盘写入异步化，避免调用方（含 UI / 持其它锁的线程）被 File IO 与 Gate 锁拖死。
+            var path = LogPath;
+            _ = System.Threading.Tasks.Task.Run(() =>
             {
-                System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(LogPath)!);
-                System.IO.File.AppendAllText(LogPath, line + Environment.NewLine);
-            }
+                try
+                {
+                    lock (Gate)
+                    {
+                        System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(path)!);
+                        System.IO.File.AppendAllText(path, line + Environment.NewLine);
+                    }
+                }
+                catch
+                {
+                    // 日志本身不能抛异常
+                }
+            });
         }
         catch
         {

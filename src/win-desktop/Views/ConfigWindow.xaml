@@ -901,6 +901,9 @@
                                     <ui:Button x:Name="LicensesButton" Content="许可证"
                                                Margin="0,0,8,8" Click="OnShowLicenses"
                                                ToolTip="查看本项目使用的第三方组件及其许可证信息" />
+                                    <ui:Button x:Name="OpenLogFolderButton" Content="打开日志文件夹"
+                                               Margin="0,0,8,8" Click="OnOpenLogFolder"
+                                               ToolTip="打开 Hope 的 Debug 和 Release 日志目录" />
                                 </WrapPanel>
                             </StackPanel>
                         </Grid>

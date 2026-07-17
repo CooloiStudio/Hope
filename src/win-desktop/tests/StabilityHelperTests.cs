@@ -26,6 +26,14 @@ public sealed class StabilityHelperTests
     }
 
     [Fact]
+    public void HeadlessSupervisor_ShouldSkipSpawn_WhenPaused()
+    {
+        Assert.True(HeadlessSupervisor.ShouldSkipSpawn(coreReachable: false, spawnPaused: true));
+        Assert.True(HeadlessSupervisor.ShouldSkipSpawn(coreReachable: true, spawnPaused: true));
+        Assert.False(HeadlessSupervisor.ShouldSkipSpawn(coreReachable: false, spawnPaused: false));
+    }
+
+    [Fact]
     public void FileSha256_MatchesKnownContent()
     {
         var path = Path.Combine(Path.GetTempPath(), "hope-sha-" + Guid.NewGuid().ToString("N") + ".bin");

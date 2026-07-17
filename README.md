@@ -16,7 +16,8 @@ https://github.com/CooloiStudio/Hope
 
 ## 下载地址
 
-~~[GitHub Releases](https://github.com/CooloiStudio/Hope/releases)~~ — 暂无 release。
+- [GitHub Releases](https://github.com/CooloiStudio/Hope/releases)（`Hope_Setup.exe`）
+- Microsoft Store（MSIX，商店搜索 Hope / 盼头）
 
 ---
 
@@ -33,11 +34,12 @@ A little hope for leaving work on time.
 ## 功能特性
 
 - 为多个任务设定时间、颜色与循环规则
-- 在屏幕任意一边显示分段彩色进度条
-- 自定义任务图标
+- 在屏幕任意一边显示分段彩色进度条（支持四边环绕）
+- 自定义任务图标 / 动图跟随
 - 点击穿透、不抢焦点、不参与 Alt+Tab / Win+Tab
 - 悬停展示任务名与剩余时间
-- 系统托盘：暂停/继续、显示/隐藏、快速打开设置
+- 系统托盘：打开设置、检查更新、刷新进度条、退出
+- Inno（官网）与 Microsoft Store（MSIX）双通道分发
 
 ## 技术实现
 

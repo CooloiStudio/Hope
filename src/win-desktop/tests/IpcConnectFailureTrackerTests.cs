@@ -30,4 +30,34 @@ public sealed class IpcConnectFailureTrackerTests
         Assert.False(tracker.TryReportFatal(out _));
         Assert.True(tracker.TryReportFatal(out _));
     }
+
+    [Fact]
+    public void SuppressFatalUntil_BlocksFatalButKeepsCounting()
+    {
+        var tracker = new IpcConnectFailureTracker { MaxConnectFailures = 1 };
+        tracker.SuppressFatalUntilUtc = DateTime.UtcNow.AddMinutes(5);
+
+        Assert.False(tracker.TryReportFatal(out _));
+        Assert.False(tracker.TryReportFatal(out _)); // would have been fatal without suppress
+        Assert.False(tracker.FatalReported);
+        Assert.Equal(2, tracker.ConsecutiveFailures);
+
+        tracker.SuppressFatalUntilUtc = DateTime.UtcNow.AddMinutes(-1);
+        tracker.ResetFailures();
+        Assert.False(tracker.TryReportFatal(out _));
+        Assert.True(tracker.TryReportFatal(out _));
+    }
+
+    [Fact]
+    public void ResetFailures_ClearsFatalLatch()
+    {
+        var tracker = new IpcConnectFailureTracker { MaxConnectFailures = 0 };
+        Assert.True(tracker.TryReportFatal(out _));
+        Assert.True(tracker.FatalReported);
+
+        tracker.ResetFailures();
+        Assert.False(tracker.FatalReported);
+        Assert.Equal(0, tracker.ConsecutiveFailures);
+        Assert.True(tracker.TryReportFatal(out _));
+    }
 }

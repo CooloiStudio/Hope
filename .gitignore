@@ -133,5 +133,8 @@ $RECYCLE.BIN/
 secrets/
 credentials.json
 
+# 本地技术博客草稿与大纲（不入库）
+.blog/
+
 # Cursor 本地配置
 .cursor

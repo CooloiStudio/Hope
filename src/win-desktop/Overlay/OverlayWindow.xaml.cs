@@ -48,6 +48,10 @@ public partial class OverlayWindow : Window
 
     // 缓存图片缩放后的尺寸：(文件路径, maxSize) → (缩放后宽度, 缩放后高度)
     private readonly Dictionary<(string path, double maxSize), (double width, double height)> _imageSizeCache = new();
+    /// <summary>正在后台探测尺寸的 key，避免重复启动 Task。</summary>
+    private readonly HashSet<(string path, double maxSize)> _sizeProbeInFlight = new();
+    /// <summary>正在后台读盘的任务 Id，避免重复启动 Task。</summary>
+    private readonly HashSet<string> _spriteLoadInFlight = new();
 
     public string Position { get; set; } = PositionTop;
     public string Direction { get; set; } = "forward";
@@ -78,6 +82,10 @@ public partial class OverlayWindow : Window
     // 上次渲染的分段签名：未变化时跳过重建，避免每秒重置闪烁动画导致渐变不连续。
     private string _lastRenderSig = "";
     private IntPtr _hwnd;
+    /// <summary>休眠唤醒后短暂挂起动图/悬停，避免合成栈未就绪时 LockBits 触发 CLR Fatal。</summary>
+    private bool _renderingSuspended;
+    private bool _pendingStateWhileSuspended;
+    private bool _pendingVisible;
 
     public OverlayWindow()
     {
@@ -91,9 +99,12 @@ public partial class OverlayWindow : Window
 
     private void HookGifRendering()
     {
+        if (_renderingSuspended) return;
         if (_gifRenderingHandler != null) return;
         _gifRenderingHandler = OnGifRendering;
         CompositionTarget.Rendering += _gifRenderingHandler;
+        // 低频（仅显示/挂起切换时触发，非每帧）：标记 GIF 帧泵开始推进，便于与崩溃时刻交叉对照。
+        DesktopLog.Info($"Overlay.GifRendering hooked pos={Position} sprites={_sprites.Count}");
     }
 
     private void UnhookGifRendering()
@@ -101,12 +112,52 @@ public partial class OverlayWindow : Window
         if (_gifRenderingHandler == null) return;
         CompositionTarget.Rendering -= _gifRenderingHandler;
         _gifRenderingHandler = null;
+        DesktopLog.Info($"Overlay.GifRendering unhooked pos={Position}");
+    }
+
+    /// <summary>休眠唤醒：立刻停动图与悬停轮询，避免在 DWM 未就绪时触碰 GDI/WPF 像素。</summary>
+    public void SuspendRendering()
+    {
+        _renderingSuspended = true;
+        try
+        {
+            _hoverTimer.Stop();
+            UnhookGifRendering();
+            StopBlinkBrush();
+            HoverPopup.IsOpen = false;
+        }
+        catch
+        {
+            // 唤醒瞬间合成异常时尽量吞掉，避免二次 Fatal
+        }
+    }
+
+    /// <summary>唤醒稳定后恢复动图与悬停。</summary>
+    public void ResumeRendering()
+    {
+        _renderingSuspended = false;
+        try
+        {
+            if (_pendingStateWhileSuspended)
+            {
+                _pendingStateWhileSuspended = false;
+                ApplyVisualState(_pendingVisible);
+            }
+
+            if (!IsVisible) return;
+            _hoverTimer.Start();
+            HookGifRendering();
+        }
+        catch
+        {
+            // ignore
+        }
     }
 
     // 与 WPF 渲染管线同步推进动图；比 Background 优先级 DispatcherTimer 更不易被 UI 突发工作饿死。
     private void OnGifRendering(object? sender, EventArgs e)
     {
-        if (!IsVisible || _sprites.Count == 0) return;
+        if (_renderingSuspended || !IsVisible || _sprites.Count == 0) return;
         long now = Environment.TickCount64;
         if (now - _lastGifTickMs < 66) return; // ~15fps
         _lastGifTickMs = now;
@@ -145,6 +196,7 @@ public partial class OverlayWindow : Window
         var all = msg.Segments ?? new List<Segment>();
         _segments = all.Where(s => string.IsNullOrEmpty(s.Position) || s.Position == Position).ToList();
         _barHeightPx = Math.Clamp(barHeightPx, 1, 10);
+        _pendingVisible = msg.Visible;
 
         // 重算本帧应闪烁的任务（到期 + 行为含 blink/celebrate）；已查看集合裁剪到仍在闪烁的任务，
         // 以便任务被重新设定时间后再次到期可重新闪烁。
@@ -154,7 +206,19 @@ public partial class OverlayWindow : Window
                 _blinkingIds.Add(s.TaskId);
         _acknowledgedBlink.IntersectWith(_blinkingIds);
 
-        bool show = msg.Visible && _segments.Count > 0;
+        // 挂起时只缓存分段，禁止读图/改窗体/GDI，避免休眠唤醒瞬间 CLR Fatal。
+        if (_renderingSuspended)
+        {
+            _pendingStateWhileSuspended = true;
+            return;
+        }
+
+        ApplyVisualState(msg.Visible);
+    }
+
+    private void ApplyVisualState(bool visible)
+    {
+        bool show = visible && _segments.Count > 0;
         // 预读图片实际缩放后的尺寸，作为图片区域的厚度：
         // top/bottom 取高度，left/right 取宽度（图片水平放置于进度条旁）。
         _imageMaxThickness = 0;
@@ -221,10 +285,23 @@ public partial class OverlayWindow : Window
     /// <summary>在屏幕布局变化时立即重算窗口位置与尺寸，并触发一次重绘。</summary>
     public void RefreshLayout()
     {
+        if (_renderingSuspended)
+        {
+            DesktopLog.Info($"Overlay.RefreshLayout skipped pos={Position} (rendering suspended)");
+            return;
+        }
+
+        // 分步断点：以下 UpdateWindowBounds/Render/UpdateSprites 会改窗体几何并触碰位图/GDI。
+        // 唤醒或熄屏后 DWM 未就绪时，任一步都可能打出不可捕获的 CLR Fatal（0x80131506）；
+        // 最后一条存活日志即指向崩溃的具体步骤。
+        DesktopLog.Info($"Overlay.RefreshLayout pos={Position} enter visible={IsVisible} sprites={_sprites.Count}");
         InvalidateVisualCache();
         UpdateWindowBounds();
+        DesktopLog.Info($"Overlay.RefreshLayout pos={Position} bounds set W={Width:0} H={Height:0}");
         Render();
+        DesktopLog.Info($"Overlay.RefreshLayout pos={Position} rendered");
         UpdateSprites(IsVisible);
+        DesktopLog.Info($"Overlay.RefreshLayout pos={Position} sprites updated");
         if (IsVisible) HookGifRendering();
     }
 
@@ -278,6 +355,7 @@ public partial class OverlayWindow : Window
         if (!show)
         {
             ClearSprites();
+            _spriteLoadInFlight.Clear();
             return;
         }
 
@@ -302,58 +380,92 @@ public partial class OverlayWindow : Window
         {
             if (!_sprites.TryGetValue(seg.TaskId, out var sprite))
             {
+                // 不在 UI 同步读盘：后台读字节，回 UI 再构造精灵。
+                ScheduleSpriteLoad(seg);
+                continue;
+            }
+
+            PositionSprite(seg, sprite, w, h);
+        }
+    }
+
+    private void ScheduleSpriteLoad(Segment seg)
+    {
+        var path = seg.Gif!;
+        var maxSize = seg.ImageMaxSize > 0 ? seg.ImageMaxSize : 15;
+        var taskId = seg.TaskId;
+        if (!_spriteLoadInFlight.Add(taskId)) return;
+
+        _ = Task.Run(() =>
+        {
+            var bytes = ImageSprite.TryReadAllBytes(path);
+            Dispatcher.BeginInvoke(() =>
+            {
+                _spriteLoadInFlight.Remove(taskId);
+                if (bytes == null) return;
+                // 分段可能已变更。
+                var current = _segments.FirstOrDefault(s => s.TaskId == taskId);
+                if (current == null || current.Gif != path ||
+                    (current.ImageMaxSize > 0 ? current.ImageMaxSize : 15) != maxSize)
+                    return;
+                if (_sprites.ContainsKey(taskId)) return;
+                if (!IsVisible) return;
+
                 try
                 {
-                    var maxSize = seg.ImageMaxSize > 0 ? seg.ImageMaxSize : 15;
-                    sprite = new ImageSprite(seg.Gif!, maxSize);
+                    var sprite = new ImageSprite(path, maxSize, bytes);
+                    _sprites[taskId] = sprite;
+                    GifCanvas.Children.Add(sprite.Element);
+                    PositionSprite(current, sprite, Width, Height);
                 }
                 catch
                 {
-                    continue; // 损坏或无法解码的图片直接跳过
+                    // 损坏或无法解码的图片直接跳过
                 }
-                _sprites[seg.TaskId] = sprite;
-                GifCanvas.Children.Add(sprite.Element);
-            }
+            });
+        });
+    }
 
-            // 始终绕图片中心 (0.5,0.5) 旋转：包围盒只在中心两侧对称扩展，便于按有效尺寸贴边。
-            sprite.SetRotation(seg.ImageRotation, 0.5, 0.5);
+    private void PositionSprite(Segment seg, ImageSprite sprite, double w, double h)
+    {
+        // 始终绕图片中心 (0.5,0.5) 旋转：包围盒只在中心两侧对称扩展，便于按有效尺寸贴边。
+        sprite.SetRotation(seg.ImageRotation, 0.5, 0.5);
 
-            // 正向：填充前沿 = FillEnd
-            // 反向：绕整条轨道(100%)镜像 → 前沿 = 100 - FillEnd
-            double localFill = seg.FillEnd;
-            if (IsSegReverse(seg))
-            {
-                localFill = 100.0 - seg.FillEnd;
-            }
-            double front = localFill / 100.0 * (IsVertical ? h : w);
-
-            // 旋转 90°/270° 时图片占用的宽高互换；用旋转后的有效尺寸 (ew,eh) 计算贴边位置。
-            bool quarter = IsQuarterTurn(seg.ImageRotation);
-            double ew = quarter ? sprite.Height : sprite.Width;   // 水平方向占用
-            double eh = quarter ? sprite.Width  : sprite.Height;  // 垂直方向占用
-
-            // 绕中心旋转后视觉包围盒中心 = 布局框中心，故按“有效包围盒中心”定位即可贴住进度条。
-            double centerX, centerY;
-            if (IsVertical)
-            {
-                // left：包围盒左缘贴进度条右缘；right：包围盒右缘贴进度条左缘。
-                centerX = Position == PositionLeft ? _barHeightPx + ew / 2.0
-                                                   : _imageMaxThickness - ew / 2.0;
-                centerY = front;
-                if (h >= eh) centerY = Math.Clamp(centerY, eh / 2.0, h - eh / 2.0);
-            }
-            else
-            {
-                // top：包围盒上缘贴进度条下缘；bottom：包围盒下缘贴进度条上缘。
-                centerY = Position == PositionTop ? _barHeightPx + eh / 2.0
-                                                 : _imageMaxThickness - eh / 2.0;
-                centerX = front;
-                if (w >= ew) centerX = Math.Clamp(centerX, ew / 2.0, w - ew / 2.0);
-            }
-
-            Canvas.SetLeft(sprite.Element, centerX - sprite.Width / 2.0);
-            Canvas.SetTop(sprite.Element, centerY - sprite.Height / 2.0);
+        // 正向：填充前沿 = FillEnd
+        // 反向：绕整条轨道(100%)镜像 → 前沿 = 100 - FillEnd
+        double localFill = seg.FillEnd;
+        if (IsSegReverse(seg))
+        {
+            localFill = 100.0 - seg.FillEnd;
         }
+        double front = localFill / 100.0 * (IsVertical ? h : w);
+
+        // 旋转 90°/270° 时图片占用的宽高互换；用旋转后的有效尺寸 (ew,eh) 计算贴边位置。
+        bool quarter = IsQuarterTurn(seg.ImageRotation);
+        double ew = quarter ? sprite.Height : sprite.Width;   // 水平方向占用
+        double eh = quarter ? sprite.Width  : sprite.Height;  // 垂直方向占用
+
+        // 绕中心旋转后视觉包围盒中心 = 布局框中心，故按“有效包围盒中心”定位即可贴住进度条。
+        double centerX, centerY;
+        if (IsVertical)
+        {
+            // left：包围盒左缘贴进度条右缘；right：包围盒右缘贴进度条左缘。
+            centerX = Position == PositionLeft ? _barHeightPx + ew / 2.0
+                                               : _imageMaxThickness - ew / 2.0;
+            centerY = front;
+            if (h >= eh) centerY = Math.Clamp(centerY, eh / 2.0, h - eh / 2.0);
+        }
+        else
+        {
+            // top：包围盒上缘贴进度条下缘；bottom：包围盒下缘贴进度条上缘。
+            centerY = Position == PositionTop ? _barHeightPx + eh / 2.0
+                                             : _imageMaxThickness - eh / 2.0;
+            centerX = front;
+            if (w >= ew) centerX = Math.Clamp(centerX, ew / 2.0, w - ew / 2.0);
+        }
+
+        Canvas.SetLeft(sprite.Element, centerX - sprite.Width / 2.0);
+        Canvas.SetTop(sprite.Element, centerY - sprite.Height / 2.0);
     }
 
     // 旋转角是否为 90°/270°（此时图片占用宽高互换）。
@@ -365,8 +477,7 @@ public partial class OverlayWindow : Window
     }
 
     /// <summary>
-    /// 预读图片实际尺寸，按 maxSize（高度上限）缩放后返回 (缩放后宽度, 缩放后高度)。
-    /// 结果带缓存，避免每秒多次刷新时重复读取文件。
+    /// 取图片缩放尺寸：缓存命中立即返回；未命中先返回兜底并后台探测，避免 UI 同步读盘。
     /// </summary>
     private (double width, double height) GetScaledImageSize(string imagePath, double maxSize)
     {
@@ -374,25 +485,51 @@ public partial class OverlayWindow : Window
         if (_imageSizeCache.TryGetValue(cacheKey, out var cached))
             return cached;
 
-        double w = maxSize, h = maxSize; // 读取失败时返回配置值作为兜底
-        try
-        {
-            if (File.Exists(imagePath))
-            {
-                var bytes = File.ReadAllBytes(imagePath);
-                using var stream = new MemoryStream(bytes);
-                using var bitmap = (Bitmap)Image.FromStream(stream);
-                double scale = 1.0;
-                if (bitmap.Height > maxSize && bitmap.Height > 0)
-                    scale = maxSize / bitmap.Height;
-                h = Math.Max(1, bitmap.Height * scale);
-                w = Math.Max(1, bitmap.Width * scale);
-            }
-        }
-        catch { /* 忽略损坏文件，使用兜底值 */ }
+        // 未缓存：先用配置高度兜底，后台探测真实比例后刷新布局。
+        var provisional = (maxSize, maxSize);
+        _imageSizeCache[cacheKey] = provisional;
+        ScheduleImageSizeProbe(cacheKey);
+        return provisional;
+    }
 
-        _imageSizeCache[cacheKey] = (w, h);
-        return (w, h);
+    private void ScheduleImageSizeProbe((string path, double maxSize) cacheKey)
+    {
+        if (!_sizeProbeInFlight.Add(cacheKey)) return;
+
+        _ = Task.Run(() =>
+        {
+            var probed = ImageSprite.TryProbeScaledSize(cacheKey.path, cacheKey.maxSize);
+            Dispatcher.BeginInvoke(() =>
+            {
+                _sizeProbeInFlight.Remove(cacheKey);
+                if (probed == null) return;
+                if (_imageSizeCache.TryGetValue(cacheKey, out var cur) && cur == probed.Value)
+                    return;
+                _imageSizeCache[cacheKey] = probed.Value;
+                // 尺寸已知后重算条带厚度与精灵位置（不强制清渲染签名以外的状态）。
+                RecomputeImageThicknessFromSegments();
+                UpdateWindowBounds();
+                InvalidateVisualCache();
+                Render();
+                UpdateSprites(IsVisible);
+            });
+        });
+    }
+
+    private void RecomputeImageThicknessFromSegments()
+    {
+        _imageMaxThickness = 0;
+        foreach (var s in _segments)
+        {
+            if (!ImageSprite.IsUsable(s.Gif)) continue;
+            var maxSize = s.ImageMaxSize > 0 ? s.ImageMaxSize : 15;
+            var (scaledW, scaledH) = GetScaledImageSize(s.Gif!, maxSize);
+            bool quarter = IsQuarterTurn(s.ImageRotation);
+            var ew = quarter ? scaledH : scaledW;
+            var eh = quarter ? scaledW : scaledH;
+            var thickness = IsVertical ? ew : eh;
+            if (thickness > _imageMaxThickness) _imageMaxThickness = thickness;
+        }
     }
 
     private void ClearSprites()

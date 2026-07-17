@@ -1,4 +1,10 @@
-# 四边环绕实现分析报告
+# 四边环绕实现分析报告（历史核对笔记）
+
+> **归档说明**：本文为开发期核对笔记，用于对照 `deriveSurroundDir` / 边序 / 本地方向。  
+> **现行实现**以 `src/headless/engine/engine.go`（`buildAllFourLayout` 等）与 Desktop Overlay 为准；若与本文冲突，以代码为准。  
+> 产品层说明见 [`Hope-产品与技术方案.md`](../Hope-产品与技术方案.md)；IPC 见 [`plugin-ipc.md`](./plugin-ipc.md)。
+
+---
 
 ## 一、当前实现概述
 

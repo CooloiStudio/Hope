@@ -355,7 +355,7 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
     {
         if (!Dispatcher.CheckAccess())
         {
-            Dispatcher.Invoke(() => HydrateFromSession(force));
+            Dispatcher.BeginInvoke(() => HydrateFromSession(force));
             return;
         }
         DesktopLog.Info($"ConfigWindow.HydrateFromSession force={force} " +
@@ -1160,6 +1160,23 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
     }
 
     // 根据协调器状态刷新「关于」页的更新区：状态文本、进度、按钮与更新说明的可见性。
+    private static string? ToastTextForUpdate(Services.UpdateStatus st, string message)
+    {
+        return st switch
+        {
+            Services.UpdateStatus.UpToDate => "已是最新版本。",
+            Services.UpdateStatus.Ready => "新版本已就绪，可立即安装。",
+            Services.UpdateStatus.Available => Services.InstallChannel.IsStoreManaged
+                ? "发现新版本，请前往 Microsoft Store 更新。"
+                : "发现新版本。",
+            Services.UpdateStatus.Checking => "正在检查更新…",
+            Services.UpdateStatus.Downloading => "正在下载…",
+            Services.UpdateStatus.Idle when message.StartsWith("已跳过", StringComparison.Ordinal)
+                => "已跳过此版本。",
+            Services.UpdateStatus.Failed => message,
+            _ => null,
+        };
+    }
     private void RenderUpdateUi()
     {
         if (_updates == null) return;
@@ -1171,25 +1188,26 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
                 : "点击「检查更新」获取最新版本。")
             : _updates.Message;
 
-        // Toast on update message change; skipped when window not on desktop.
-        if (!string.IsNullOrEmpty(_updates.Message) &&
-            !string.Equals(_updates.Message, _lastUpdateToastMessage, StringComparison.Ordinal))
+        // Toast：文案不含版本号（关于区已单独展示当前版本；新版本号仍保留在状态行）。
+        var toastText = ToastTextForUpdate(st, _updates.Message);
+        if (!string.IsNullOrEmpty(toastText) &&
+            !string.Equals(toastText, _lastUpdateToastMessage, StringComparison.Ordinal))
         {
-            _lastUpdateToastMessage = _updates.Message;
+            _lastUpdateToastMessage = toastText;
             switch (st)
             {
                 case Services.UpdateStatus.UpToDate:
                 case Services.UpdateStatus.Ready:
-                    ToastSuccess(_updates.Message);
+                    ToastSuccess(toastText);
                     break;
                 case Services.UpdateStatus.Available:
                 case Services.UpdateStatus.Checking:
                 case Services.UpdateStatus.Downloading:
                 case Services.UpdateStatus.Idle:
-                    ToastInfo(_updates.Message);
+                    ToastInfo(toastText);
                     break;
                 case Services.UpdateStatus.Failed:
-                    ToastDanger(_updates.Message);
+                    ToastDanger(toastText);
                     break;
             }
         }
@@ -1223,7 +1241,11 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
     }
 
     private void OnCheckUpdate(object sender, RoutedEventArgs e) =>
-        _ = _updates?.CheckAsync(manual: true);
+        _ = System.Threading.Tasks.Task.Run(async () =>
+        {
+            try { if (_updates != null) await _updates.CheckAsync(manual: true).ConfigureAwait(false); }
+            catch (Exception ex) { DesktopLog.Error("Manual update check failed", ex); }
+        });
 
     private void OnDownloadUpdate(object sender, RoutedEventArgs e) =>
         _ = _updates?.DownloadAsync();
@@ -1248,6 +1270,24 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
     }
 
     private void OnSkipVersion(object sender, RoutedEventArgs e) => _updates?.SkipCurrent();
+
+    private void OnOpenLogFolder(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            Directory.CreateDirectory(DesktopLog.LogDirectoryPath);
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = DesktopLog.LogDirectoryPath,
+                UseShellExecute = true,
+            });
+        }
+        catch (Exception ex)
+        {
+            DesktopLog.Error("Open log folder failed", ex);
+            ToastDanger("无法打开日志文件夹");
+        }
+    }
 
     // 弹出第三方组件引用与许可证信息（只读、可滚动、可复制）。
     private void OnShowLicenses(object sender, RoutedEventArgs e)

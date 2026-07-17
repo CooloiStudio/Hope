@@ -32,12 +32,17 @@ public sealed class ImageSprite : IDisposable
     private bool _disposed;
 
     public ImageSprite(string path, double maxSize)
+        : this(path, maxSize, File.ReadAllBytes(path))
+    {
+    }
+
+    /// <summary>使用已读入内存的字节构造（避免在 UI 线程同步读盘）。</summary>
+    public ImageSprite(string path, double maxSize, byte[] fileBytes)
     {
         Path = path;
         MaxSize = maxSize;
         // 将图片完整读入内存后再交给 GDI+：避免锁定原文件，防止更换图片时因句柄占用导致加载失败。
-        var bytes = File.ReadAllBytes(path);
-        _stream = new MemoryStream(bytes);
+        _stream = new MemoryStream(fileBytes);
         _bitmap = (Bitmap)DrawingImage.FromStream(_stream);
 
         // 统一按高度限制尺寸，保持原始宽高比。
@@ -118,6 +123,45 @@ public sealed class ImageSprite : IDisposable
         _display = null;
         _bitmap.Dispose();
         _stream.Dispose();
+    }
+
+    /// <summary>
+    /// 后台探测缩放后尺寸（含读盘与 GDI 解码）；失败返回 null。
+    /// 可在非 UI 线程调用。
+    /// </summary>
+    public static (double width, double height)? TryProbeScaledSize(string path, double maxSize)
+    {
+        try
+        {
+            if (!File.Exists(path)) return null;
+            var bytes = File.ReadAllBytes(path);
+            using var stream = new MemoryStream(bytes);
+            using var bitmap = (Bitmap)DrawingImage.FromStream(stream);
+            double scale = 1.0;
+            if (bitmap.Height > maxSize && bitmap.Height > 0)
+                scale = maxSize / bitmap.Height;
+            var h = Math.Max(1, bitmap.Height * scale);
+            var w = Math.Max(1, bitmap.Width * scale);
+            return (w, h);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>后台读入文件字节；失败返回 null。可在非 UI 线程调用。</summary>
+    public static byte[]? TryReadAllBytes(string path)
+    {
+        try
+        {
+            if (!File.Exists(path)) return null;
+            return File.ReadAllBytes(path);
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     /// <summary>路径有效且文件存在时返回 true。</summary>
