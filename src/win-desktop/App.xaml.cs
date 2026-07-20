@@ -44,6 +44,8 @@ public partial class App : Application
     private DateTime _lastPowerResumeUtc = DateTime.MinValue;
     /// <summary>唤醒静默期截止（UTC）： settle 完成前拦截 Overlay/布局/状态广播等重 UI 路径。</summary>
     private DateTime _resumeQuiesceUntilUtc = DateTime.MinValue;
+    /// <summary>本次唤醒因「伪全屏/锁屏」推迟 settle 的次数；超限后强制恢复，避免 Overlay 永久假死。</summary>
+    private int _postResumeFullscreenDeferCount;
     private bool _pendingStateDuringQuiesce;
     private bool _pendingConnectionSnapshot;
     private bool _pendingEnsureOverlays;
@@ -551,17 +553,57 @@ public partial class App : Application
         DesktopLog.Info($"SessionSwitch reason={e.Reason}");
         if (e.Reason != SessionSwitchReason.SessionUnlock) return;
 
-        // 解锁后管道常已半死但进程仍占 mutex；延迟探活，不通则恢复。
+        // 解锁后：管道探活 + 打断「锁屏被当成全屏」导致的 settle 死循环，尽快恢复 Overlay。
         void OnUnlock()
         {
             try { _ipc.NotePowerResumed(TimeSpan.FromMinutes(5)); } catch { /* ignore */ }
             ScheduleIpcHealthCheck("SessionUnlock");
+            KickOverlayRecoveryAfterUnlock();
         }
 
         if (Dispatcher.CheckAccess())
             OnUnlock();
         else
             Dispatcher.BeginInvoke(OnUnlock);
+    }
+
+    /// <summary>
+    /// 解锁后立刻重采样布局并推动 settle/软刷新。
+    /// 锁屏常被 DetectFullScreen 误判，若不在解锁时打断，静默期会无限延长，Overlay 假死而托盘仍可用。
+    /// </summary>
+    private void KickOverlayRecoveryAfterUnlock()
+    {
+        try
+        {
+            // 解锁瞬间布局缓存常仍是 fullscreen=true；先重采再决定。
+            var layout = ScreenLayoutService.GetCurrent();
+            _currentScreenLayout = layout;
+            DesktopLog.Info(
+                $"SessionUnlock layout refresh fullScreen={layout.HasFullScreenOnPrimary} " +
+                $"quiesce={IsInResumeQuiesce()} deferCount={_postResumeFullscreenDeferCount}");
+
+            if (IsInResumeQuiesce() ||
+                (DateTime.UtcNow - _lastPowerResumeUtc) < TimeSpan.FromMinutes(2))
+            {
+                // 不再因锁屏全屏无限推迟；解锁后最多再等一小会儿让 DWM 稳定。
+                _postResumeFullscreenDeferCount = ResumeSettlePolicy.MaxFullscreenDefers;
+                SchedulePostResumeSettle(delayMs: 800);
+                return;
+            }
+
+            // 仅锁屏未休眠：软刷新进度，避免 Overlay 停在锁屏前的旧帧。
+            foreach (var overlay in _overlays.Values.ToList())
+            {
+                try { overlay.ResumeRendering(); }
+                catch (Exception ex) { DesktopLog.Warn($"Unlock ResumeRendering: {ex.Message}"); }
+            }
+            RequestOverlayStateRefresh();
+            ScheduleRefreshScreenLayout("SessionUnlock", delayMs: 400);
+        }
+        catch (Exception ex)
+        {
+            DesktopLog.Warn($"KickOverlayRecoveryAfterUnlock failed: {ex.Message}");
+        }
     }
 
     private void OnPowerModeChanged(object sender, PowerModeChangedEventArgs e)
@@ -600,6 +642,24 @@ public partial class App : Application
     private void BeginResumeQuiesce(TimeSpan duration)
     {
         _resumeQuiesceUntilUtc = DateTime.UtcNow.Add(duration);
+        _postResumeFullscreenDeferCount = 0;
+        _pendingStateDuringQuiesce = false;
+        _pendingConnectionSnapshot = false;
+        _pendingEnsureOverlays = false;
+    }
+
+    /// <summary>结束静默期（用户手动刷新或 settle 超时强制恢复时调用）。</summary>
+    private void ForceEndResumeQuiesce(string reason)
+    {
+        if (!IsInResumeQuiesce() && _postResumeFullscreenDeferCount == 0 &&
+            _postResumeSettleTimer?.IsEnabled != true)
+            return;
+
+        DesktopLog.Info($"ForceEndResumeQuiesce reason={reason} deferCount={_postResumeFullscreenDeferCount}");
+        _postResumeSettleTimer?.Stop();
+        _resumeQuiesceUntilUtc = DateTime.MinValue;
+        _postResumeFullscreenDeferCount = 0;
+        // 手动重建会重新拉状态；清掉静默期积压，避免随后误回放旧帧。
         _pendingStateDuringQuiesce = false;
         _pendingConnectionSnapshot = false;
         _pendingEnsureOverlays = false;
@@ -636,14 +696,38 @@ public partial class App : Application
         try
         {
             DesktopLog.Info("Power resume settle: resume rendering + soft refresh");
-            if (_currentScreenLayout?.HasFullScreenOnPrimary == true)
+
+            // 结算前重采布局：解锁后缓存里的 fullscreen=true 往往已过期。
+            try
             {
-                DesktopLog.Info("Power resume settle deferred (fullscreen)");
+                var layout = ScreenLayoutService.GetCurrent();
+                _currentScreenLayout = layout;
+            }
+            catch (Exception ex)
+            {
+                DesktopLog.Warn($"Power resume settle layout sample failed: {ex.Message}");
+            }
+
+            bool fullscreen = _currentScreenLayout?.HasFullScreenOnPrimary == true;
+            if (fullscreen &&
+                !ResumeSettlePolicy.ShouldForceSettleDespiteFullscreen(_postResumeFullscreenDeferCount))
+            {
+                _postResumeFullscreenDeferCount++;
+                DesktopLog.Info(
+                    $"Power resume settle deferred (fullscreen) defer={_postResumeFullscreenDeferCount}/" +
+                    $"{ResumeSettlePolicy.MaxFullscreenDefers}");
                 _resumeQuiesceUntilUtc = DateTime.UtcNow.AddSeconds(3);
                 SchedulePostResumeSettle(delayMs: 3000);
                 return;
             }
 
+            if (fullscreen)
+            {
+                DesktopLog.Info(
+                    $"Power resume settle forcing despite fullscreen defer={_postResumeFullscreenDeferCount}");
+            }
+
+            _postResumeFullscreenDeferCount = 0;
             FlushResumeQuiescePending();
 
             foreach (var overlay in _overlays.Values.ToList())
@@ -1126,6 +1210,10 @@ public partial class App : Application
     {
         try
         {
+            // 用户主动刷新：立刻结束唤醒静默期，避免 ForceClose 后 EnsureOverlays/状态派发仍被 defer，
+            // 出现「进度条消失很久才回来」的体感。
+            ForceEndResumeQuiesce("manual-refresh");
+
             var now = DateTimeOffset.Now;
             int resetCount = 0;
             foreach (var task in _session.Tasks)
@@ -1182,7 +1270,8 @@ public partial class App : Application
             return;
         }
 
-        if (_currentScreenLayout?.HasFullScreenOnPrimary == true)
+        if (_currentScreenLayout?.HasFullScreenOnPrimary == true &&
+            !string.Equals(reason, "manual", StringComparison.OrdinalIgnoreCase))
         {
             DesktopLog.Info($"ResetOverlays deferred reason={reason} (fullscreen detected)");
             ScheduleOverlayReset(reason, delayMs: 3000);

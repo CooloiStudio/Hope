@@ -182,6 +182,7 @@ public static class ScreenLayoutService
         if (fg == IntPtr.Zero) return false;
 
         if (IsShellDesktopWindow(fg)) return false;
+        if (IsLockOrLogonSurface(fg)) return false;
 
         // 先判断窗口是否可见。
         int style = NativeMethods.GetWindowLong(fg, NativeMethods.GWL_STYLE);
@@ -210,6 +211,32 @@ public static class ScreenLayoutService
         if (hasCaption && hasThickFrame) return false;
 
         return true;
+    }
+
+    /// <summary>
+    /// 锁屏 / 登录界面铺满屏幕，但不是用户全屏应用。
+    /// 若把它们当成 HasFullScreenOnPrimary，唤醒 settle 会无限推迟，Overlay 假死。
+    /// </summary>
+    private static bool IsLockOrLogonSurface(IntPtr hwnd)
+    {
+        var className = GetWindowClassName(hwnd);
+        if (className is "LockScreenControllerProxyWindow" or "Credential Dialog Xaml Host")
+            return true;
+
+        NativeMethods.GetWindowThreadProcessId(hwnd, out uint pid);
+        if (pid == 0) return false;
+
+        try
+        {
+            using var proc = Process.GetProcessById((int)pid);
+            var name = proc.ProcessName;
+            return name.Equals("LogonUI", StringComparison.OrdinalIgnoreCase) ||
+                   name.Equals("LockApp", StringComparison.OrdinalIgnoreCase);
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     /// <summary>排除点击桌面时前台变为的 Shell 宿主窗口（Progman / WorkerW 等）。</summary>

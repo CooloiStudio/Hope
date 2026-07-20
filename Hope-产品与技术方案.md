@@ -1,6 +1,6 @@
 # Hope（盼头）产品与技术方案
 
-> 版本：v0.15.108（Desktop） / Headless `0.10.28`（独立递增）  
+> 版本：v0.15.109（Desktop） / Headless `0.10.28`（独立递增）  
 > 更新日期：2026-07-13  
 > 更新说明：对齐代码——同步 IPC（移除 pause/hide/show）、验收项、MSIX 说明与文档索引；消除与 `docs/plugin-ipc.md` 的冲突
 
