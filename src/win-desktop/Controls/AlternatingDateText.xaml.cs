@@ -8,7 +8,7 @@ namespace Hope.Desktop.Controls;
 
 /// <summary>
 /// 列表日期列：前天~后天范围内，在「08:01 07-02」与「08:01 今天」间交替展示（停留 3s、渐变 0.5s）。
-/// 相对文案按「当前日历日」计算；跨午夜或休眠唤醒后会重新映射，避免长期挂起仍显示过期的「今天」。
+/// 相对文案按当前日历日计算；跨日/唤醒时只更新文案，不重启动画，避免渐变被掐掉。
 /// </summary>
 public partial class AlternatingDateText : UserControl
 {
@@ -27,6 +27,8 @@ public partial class AlternatingDateText : UserControl
     private DispatcherTimer? _dayWatch;
     /// <summary>生成 RelativeText 时所依据的本地日历日；变则需重算相对标签。</summary>
     private DateTime _relativeAnchorDate = DateTime.MinValue;
+    /// <summary>当前是否处于「绝对↔相对」交替动画中。</summary>
+    private bool _crossFadeActive;
 
     public DateTimeOffset? Value
     {
@@ -39,12 +41,11 @@ public partial class AlternatingDateText : UserControl
         InitializeComponent();
         Loaded += OnLoaded;
         Unloaded += OnUnloaded;
-        IsVisibleChanged += OnIsVisibleChanged;
     }
 
     private static void OnValueChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
     {
-        if (d is AlternatingDateText ctrl) ctrl.RefreshTexts();
+        if (d is AlternatingDateText ctrl) ctrl.RefreshTexts(restartAnimation: true);
     }
 
     private void OnLoaded(object sender, RoutedEventArgs e)
@@ -52,7 +53,7 @@ public partial class AlternatingDateText : UserControl
         SystemEvents.PowerModeChanged += OnPowerModeChanged;
         SystemEvents.SessionSwitch += OnSessionSwitch;
         EnsureDayWatch();
-        RefreshTexts();
+        RefreshTexts(restartAnimation: true);
     }
 
     private void OnUnloaded(object sender, RoutedEventArgs e)
@@ -61,53 +62,45 @@ public partial class AlternatingDateText : UserControl
         SystemEvents.SessionSwitch -= OnSessionSwitch;
         _dayWatch?.Stop();
         _dayWatch = null;
-        _crossFade?.Stop();
-        _crossFade = null;
-    }
-
-    private void OnIsVisibleChanged(object sender, DependencyPropertyChangedEventArgs e)
-    {
-        if (IsVisible) RefreshTextsIfStaleOrForce(force: true);
+        StopCrossFade();
     }
 
     private void OnPowerModeChanged(object sender, PowerModeChangedEventArgs e)
     {
         if (e.Mode != PowerModes.Resume) return;
-        // 休眠跨越午夜后 DispatcherTimer 可能晚一拍；唤醒后立刻按新「今天」重算。
-        Dispatcher.BeginInvoke(() => RefreshTextsIfStaleOrForce(force: true));
+        Dispatcher.BeginInvoke(RefreshRelativeIfNeeded);
     }
 
     private void OnSessionSwitch(object sender, SessionSwitchEventArgs e)
     {
         if (e.Reason != SessionSwitchReason.SessionUnlock) return;
-        Dispatcher.BeginInvoke(() => RefreshTextsIfStaleOrForce(force: true));
+        Dispatcher.BeginInvoke(RefreshRelativeIfNeeded);
     }
 
     private void EnsureDayWatch()
     {
         if (_dayWatch != null) return;
-        // 周期短于动画一轮，跨日后很快纠正；休眠唤醒后定时器补火也会触发检查。
+        // 仅用于跨日检测；不要短周期 force 重启动画。
         _dayWatch = new DispatcherTimer(DispatcherPriority.Background)
         {
-            Interval = TimeSpan.FromSeconds(30),
+            Interval = TimeSpan.FromMinutes(1),
         };
-        _dayWatch.Tick += (_, _) => RefreshTextsIfStaleOrForce(force: false);
+        _dayWatch.Tick += (_, _) => RefreshRelativeIfNeeded();
         _dayWatch.Start();
     }
 
-    private void RefreshTextsIfStaleOrForce(bool force)
+    /// <summary>日历日未变则什么都不做；变了则优先就地改文案，尽量保留正在播放的渐变。</summary>
+    private void RefreshRelativeIfNeeded()
     {
-        if (!force && DateTime.Today == _relativeAnchorDate) return;
-        RefreshTexts();
+        if (DateTime.Today == _relativeAnchorDate) return;
+        RefreshTexts(restartAnimation: false);
     }
 
-    private void RefreshTexts()
+    private void RefreshTexts(bool restartAnimation)
     {
-        _crossFade?.Stop();
-        _crossFade = null;
-
         if (!Value.HasValue)
         {
+            StopCrossFade();
             AbsoluteText.Text = "—";
             RelativeText.Text = "";
             RelativeText.Opacity = 0;
@@ -120,8 +113,11 @@ public partial class AlternatingDateText : UserControl
         _relativeAnchorDate = now.LocalDateTime.Date;
         AbsoluteText.Text = TaskSchedule.FormatListAbsolute(Value.Value);
         var relative = TaskSchedule.FormatListRelative(Value.Value, now);
+
         if (relative == null)
         {
+            // 离开前天~后天窗口：停动画，只留绝对日期。
+            StopCrossFade();
             RelativeText.Text = "";
             RelativeText.Opacity = 0;
             AbsoluteText.Opacity = 1;
@@ -129,13 +125,29 @@ public partial class AlternatingDateText : UserControl
         }
 
         RelativeText.Text = relative;
+
+        if (_crossFadeActive && !restartAnimation)
+        {
+            // 跨日只换文案，不动 Opacity / Storyboard。
+            return;
+        }
+
         AbsoluteText.Opacity = 1;
         RelativeText.Opacity = 0;
         StartCrossFade();
     }
 
+    private void StopCrossFade()
+    {
+        _crossFade?.Stop();
+        _crossFade = null;
+        _crossFadeActive = false;
+    }
+
     private void StartCrossFade()
     {
+        StopCrossFade();
+
         var hold = TimeSpan.FromSeconds(HoldSeconds);
         var fadeEnd = hold + TimeSpan.FromSeconds(FadeSeconds);
         var hold2End = fadeEnd + hold;
@@ -163,5 +175,6 @@ public partial class AlternatingDateText : UserControl
         _crossFade.Children.Add(absKeys);
         _crossFade.Children.Add(relKeys);
         _crossFade.Begin();
+        _crossFadeActive = true;
     }
 }
