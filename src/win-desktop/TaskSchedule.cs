@@ -7,7 +7,7 @@ namespace Hope.Desktop;
 /// 任务时间戳与进度计算（与 headless task 包语义对齐，供列表与托盘展示）。
 /// 业务逻辑仅使用 Unix 秒比较与四则运算；日期时间仅用于展示。
 /// </summary>
-internal static class TaskSchedule
+public static class TaskSchedule
 {
     public static long EffectiveStartTs(string type, long startTs, long endTs, DateTimeOffset? createdAt)
     {
