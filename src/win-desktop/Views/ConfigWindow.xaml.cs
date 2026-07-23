@@ -54,6 +54,8 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
     private bool _advancedSettingsVisible;
     // listTasks 刷新后恢复选中行时抑制 OnSelectTask，避免用服务端快照覆盖正在编辑的表单（含图片路径）。
     private bool _suppressTaskSelectionReload;
+    // 倒计时「天/时/分」与截止时间双向同步时抑制回环。
+    private bool _countdownSyncing;
     private int _appliedSettingsRevision = -1;
     private int _appliedTasksRevision = -1;
     private TaskDto? _lastSavedDto;
@@ -1091,10 +1093,11 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
             RecurWeekRow.Visibility = mode == "weekly" ? Visibility.Visible : Visibility.Collapsed;
     }
 
-    // 组装循环规则：不循环或非定时任务返回 null。
+    // 组装循环规则：不循环返回 null。倒计时用 duration 模式；定时用 daily/everyN/weekly。
     private RecurrenceDto? CollectRecurrence()
     {
-        if (SelectedType() != "scheduled") return null;
+        if (SelectedType() == "instant")
+            return CountdownRecurCheck?.IsChecked == true ? new RecurrenceDto { Mode = "duration" } : null;
         var mode = RecurMode();
         switch (mode)
         {
@@ -1114,6 +1117,10 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
     private void LoadRecurrence(RecurrenceDto? rec)
     {
         string mode = rec?.Mode ?? "";
+        // 倒计时循环（duration）：勾选倒计时「循环」，定时循环下拉保持不循环。
+        if (CountdownRecurCheck != null)
+            CountdownRecurCheck.IsChecked = mode == "duration";
+        if (mode == "duration") mode = "";
         foreach (ComboBoxItem item in RecurModeBox.Items)
         {
             if (string.Equals(item.Tag?.ToString(), mode, StringComparison.OrdinalIgnoreCase))
@@ -1445,6 +1452,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.";
             _ => today,
         };
         picker.SelectedDate = date;
+        OnTimingChanged();
         TryAutoSaveTask();
         ScheduleFitHeightToTaskEditor();
     }
@@ -1484,6 +1492,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.";
         };
 
         SetDateTime(datePicker, hourBox, minuteBox, when);
+        OnTimingChanged();
         TryAutoSaveTask();
         ScheduleFitHeightToTaskEditor();
     }
@@ -1523,6 +1532,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.";
             {
                 normalizeTimer.Stop();
                 EditableTimeCombo.Normalize(box, min, max, ref _timeComboApplyDepth);
+                OnTimingChanged();
                 TryAutoSaveTask();
             };
             tb.TextChanged += (_, _) =>
@@ -1530,6 +1540,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.";
                 if (_timeComboApplyDepth > 0) return;
                 normalizeTimer.Stop();
                 normalizeTimer.Start();
+                OnTimingChanged();
                 TryAutoSaveTask();
             };
         }
@@ -1542,7 +1553,10 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.";
             normalizeTimer.Stop();
             // 下拉选中时 Text 可能仍是旧值，必须以 SelectedItem 为准；null 选中必须忽略（见 EditableTimeCombo）。
             if (EditableTimeCombo.TryApplyFromSelection(box, min, max, ref _timeComboApplyDepth))
+            {
+                OnTimingChanged();
                 TryAutoSaveTask();
+            }
         };
         box.LostFocus += (_, _) =>
         {
@@ -1721,6 +1735,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.";
         UpdateTaskActionButtons(row);
         SetEditorTitle($"正在编辑：{row.Name}");
         MainTabs.SelectedItem = TaskTab;
+        OnTimingChanged(); // 起止就位后：刷新时长标签 / 倒计时「天时分」
 
         _lastSavedDto = BuildCurrentDto();
         _session.Write.LoadingTask = false;
@@ -1733,7 +1748,8 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.";
         AutoSaveTask();
 
         _editingId = null;
-        _taskCreatedAt = DateTimeOffset.Now;
+        // 截断到整分钟：倒计时「天/时/分」以创建时刻为锚点，去掉秒可保证与截止时间往返同步不漂移。
+        _taskCreatedAt = TruncateToMinute(DateTimeOffset.Now);
         _lastSavedDto = null;
         NameBox.Text = "";
         ColorBox.Text = SuggestUnusedColor();
@@ -1743,6 +1759,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.";
         SetDateTime(EndDatePicker, EndHourBox, EndMinuteBox, DateTime.Now.AddHours(1));
         _editingBehaviors = null; // 新任务默认沿用全局
         LoadRecurrence(null);    // 新任务默认不循环
+        OnTimingChanged();       // 起止就位后：刷新时长标签 / 倒计时「天时分」
         SelectComboByTag(TaskPositionBox, "");
         LoadTaskImageHeight(0);
         TaskGrid.SelectedItem = null;
@@ -1819,8 +1836,9 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.";
         ReplaceRowWithCompleted(row);
         _rowsView?.Refresh();
 
-        bool isRecurring = row.Type == "scheduled" && row.Recurrence != null &&
-                           !string.IsNullOrEmpty(row.Recurrence.Mode);
+        bool isRecurring = row.Recurrence != null && !string.IsNullOrEmpty(row.Recurrence.Mode) &&
+                           ((row.Type == "scheduled" && row.Recurrence.Mode != "duration") ||
+                            (row.Type == "instant" && row.Recurrence.Mode == "duration"));
         ToastSuccess(_filterMode == "active"
             ? (isRecurring ? "任务已完成并进入下一循环（已从「进行中」列表移除）" : "任务已完成（可从「已完成」筛选查看）")
             : (isRecurring ? "任务已完成并进入下一循环" : "任务已完成"));
@@ -2044,8 +2062,8 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.";
         ColorBox.TextChanged += (_, _) => TryAutoSaveTask();
         TypeScheduledRadio.Checked += (_, _) => { UpdateStartVisibility(); TryAutoSaveTask(); };
         TypeInstantRadio.Checked += (_, _) => { UpdateStartVisibility(); TryAutoSaveTask(); };
-        StartDatePicker.SelectedDateChanged += (_, _) => TryAutoSaveTask();
-        EndDatePicker.SelectedDateChanged += (_, _) => TryAutoSaveTask();
+        StartDatePicker.SelectedDateChanged += (_, _) => { OnTimingChanged(); TryAutoSaveTask(); };
+        EndDatePicker.SelectedDateChanged += (_, _) => { OnTimingChanged(); TryAutoSaveTask(); };
         RecurModeBox.SelectionChanged += (_, _) => { UpdateRecurVisibility(); TryAutoSaveTask(); };
         RecurIntervalBox.TextChanged += (_, _) => TryAutoSaveTask();
         foreach (var chk in WeekdayChecks())
@@ -2111,7 +2129,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.";
         var type = SelectedType();
         long startTs = 0;
         long endTs = end.ToUnixTimeSeconds();
-        RecurrenceDto? recurrence = null;
+        RecurrenceDto? recurrence = CollectRecurrence();
         if (type == "scheduled")
         {
             if (!TryComposeDateTime(StartDatePicker, StartHourBox, StartMinuteBox, out var s))
@@ -2119,7 +2137,6 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.";
                 _buildDtoError = "请填写有效的开始时间（时 0~23，分 0~59）";
                 return null;
             }
-            recurrence = CollectRecurrence();
             startTs = s.ToUnixTimeSeconds();
         }
 
@@ -2245,8 +2262,137 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.";
         bool scheduled = SelectedType() == "scheduled";
         if (StartPanel != null) StartPanel.Visibility = scheduled ? Visibility.Visible : Visibility.Collapsed;
         if (RecurPanel != null) RecurPanel.Visibility = scheduled ? Visibility.Visible : Visibility.Collapsed;
+        if (CountdownPanel != null) CountdownPanel.Visibility = scheduled ? Visibility.Collapsed : Visibility.Visible;
+        // 切到倒计时时，用当前截止时间回填「天/时/分」；再刷新时长标签。
+        if (!scheduled) SyncEndToCountdown();
+        UpdateDurationLabel();
         ScheduleFitHeightToTaskEditor();
     }
+
+    /// <summary>定时任务：刷新「开始→截止」分割线上的时长标签；倒计时/无效时隐藏。</summary>
+    private void UpdateDurationLabel()
+    {
+        if (DurationText == null) return;
+        if (SelectedType() == "scheduled" &&
+            TryComposeDateTime(StartDatePicker, StartHourBox, StartMinuteBox, out var s) &&
+            TryComposeDateTime(EndDatePicker, EndHourBox, EndMinuteBox, out var e))
+        {
+            var label = TaskSchedule.FormatDurationLabel(s.ToUnixTimeSeconds(), e.ToUnixTimeSeconds());
+            if (!string.IsNullOrEmpty(label))
+            {
+                DurationText.Text = $"时长 {label}";
+                DurationText.Visibility = Visibility.Visible;
+                return;
+            }
+        }
+        DurationText.Visibility = Visibility.Collapsed;
+    }
+
+    /// <summary>开始/截止任一时间字段变化后：刷新时长标签；倒计时时把截止回填到「天/时/分」。</summary>
+    private void OnTimingChanged()
+    {
+        UpdateDurationLabel();
+        if (SelectedType() == "instant") SyncEndToCountdown();
+    }
+
+    // ===== 倒计时「天/时/分」 ↔ 截止 双向同步 =====
+
+    private static int ClampInt(int v, int lo, int hi) => v < lo ? lo : (v > hi ? hi : v);
+
+    private static DateTimeOffset TruncateToMinute(DateTimeOffset v) =>
+        new DateTimeOffset(v.Year, v.Month, v.Day, v.Hour, v.Minute, 0, v.Offset);
+
+    /// <summary>解析倒计时三框（缺省 0，越界钳制）；始终返回一组合法值。</summary>
+    private (long Days, int Hours, int Minutes) ReadCountdownBoxes()
+    {
+        long days = 0;
+        if (long.TryParse(CountdownDaysBox.Text, out var d)) days = d < 0 ? 0 : (d > 36500 ? 36500 : d);
+        int hours = int.TryParse(CountdownHoursBox.Text, out var h) ? ClampInt(h, 0, 23) : 0;
+        int minutes = int.TryParse(CountdownMinutesBox.Text, out var m) ? ClampInt(m, 0, 59) : 0;
+        return (days, hours, minutes);
+    }
+
+    /// <summary>倒计时「天/时/分」 → 截止时间（截止 = 起点 + 时长）。</summary>
+    private void SyncCountdownToEnd()
+    {
+        if (_countdownSyncing) return;
+        if (SelectedType() != "instant") return;
+        var (days, hours, minutes) = ReadCountdownBoxes();
+        long dur = TaskSchedule.ComposeDaysHoursMinutes(days, hours, minutes);
+        var end = _taskCreatedAt.LocalDateTime.AddSeconds(dur);
+        _countdownSyncing = true;
+        try { SetDateTime(EndDatePicker, EndHourBox, EndMinuteBox, end); }
+        finally { _countdownSyncing = false; }
+    }
+
+    /// <summary>截止时间 → 倒计时「天/时/分」（时长 = 截止 − 起点）。</summary>
+    private void SyncEndToCountdown()
+    {
+        if (_countdownSyncing) return;
+        if (SelectedType() != "instant") return;
+        if (CountdownDaysBox == null) return;
+        if (!TryComposeDateTime(EndDatePicker, EndHourBox, EndMinuteBox, out var end)) return;
+        long dur = end.ToUnixTimeSeconds() - _taskCreatedAt.ToUnixTimeSeconds();
+        if (dur < 0) dur = 0;
+        var (days, hours, minutes) = TaskSchedule.SplitDaysHoursMinutes(dur);
+        _countdownSyncing = true;
+        try
+        {
+            CountdownDaysBox.Text = days.ToString();
+            CountdownHoursBox.Text = hours.ToString("00");
+            CountdownMinutesBox.Text = minutes.ToString("00");
+        }
+        finally { _countdownSyncing = false; }
+    }
+
+    private void OnCountdownBoxChanged(object sender, TextChangedEventArgs e)
+    {
+        if (sender is not System.Windows.Controls.TextBox box) return;
+        // 仅允许数字输入。
+        var digits = new string(box.Text.Where(char.IsDigit).ToArray());
+        if (digits != box.Text)
+        {
+            int caret = box.CaretIndex;
+            box.Text = digits;
+            box.CaretIndex = Math.Min(caret, digits.Length);
+            return; // 赋值会再次触发本事件
+        }
+        if (_countdownSyncing) return;
+        SyncCountdownToEnd();
+        UpdateDurationLabel();
+        TryAutoSaveTask();
+    }
+
+    private void OnCountdownQuickFill(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement el || el.Tag is not string tag) return;
+        var sep = tag.IndexOf(':');
+        if (sep < 0) return;
+        long days = 0; int hours = 0, minutes = 0;
+        switch (tag[(sep + 1)..])
+        {
+            case "M30": minutes = 30; break;
+            case "H1": hours = 1; break;
+            case "H2": hours = 2; break;
+            case "H8": hours = 8; break;
+            case "D1": days = 1; break;
+            case "D7": days = 7; break;
+        }
+        _countdownSyncing = true;
+        try
+        {
+            CountdownDaysBox.Text = days.ToString();
+            CountdownHoursBox.Text = hours.ToString("00");
+            CountdownMinutesBox.Text = minutes.ToString("00");
+        }
+        finally { _countdownSyncing = false; }
+        SyncCountdownToEnd();
+        UpdateDurationLabel();
+        TryAutoSaveTask();
+        ScheduleFitHeightToTaskEditor();
+    }
+
+    private void OnCountdownRecurChanged(object sender, RoutedEventArgs e) => TryAutoSaveTask();
 
     private string SelectedType() => TypeScheduledRadio.IsChecked == true ? "scheduled" : "instant";
 
@@ -2312,7 +2458,7 @@ public sealed class TaskRow : INotifyPropertyChanged
     public List<string>? ExpiredBehaviors { get; init; }
     public RecurrenceDto? Recurrence { get; init; }
 
-    public string TypeLabel => Type == "instant" ? "即时" : "定时";
+    public string TypeLabel => Type == "instant" ? "倒计时" : "定时";
     public DateTimeOffset? StartDisplayAt => TaskSchedule.TsToLocal(StartTs) ?? CreatedAt;
     public DateTimeOffset? EndDisplayAt => TaskSchedule.TsToLocal(EndTs);
     public string RecurLabel => FormatRecurLabel(Type, Recurrence);
@@ -2376,7 +2522,8 @@ public sealed class TaskRow : INotifyPropertyChanged
 
     private static string FormatRecurLabel(string type, RecurrenceDto? rec)
     {
-        if (type != "scheduled") return "—";
+        if (type == "instant")
+            return rec != null && rec.Mode == "duration" ? "循环" : "—";
         if (rec == null || string.IsNullOrEmpty(rec.Mode)) return "无";
         return rec.Mode switch
         {

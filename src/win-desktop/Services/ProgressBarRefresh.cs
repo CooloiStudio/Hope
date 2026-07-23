@@ -28,10 +28,16 @@ public static class ProgressBarRefresh
         return nowTs < endTs;
     }
 
-    /// <summary>生成用于 updateTask 的副本：createdAt/startTs 对齐到 now。</summary>
+    /// <summary>
+    /// 生成用于 updateTask 的副本：以 now 为新起点，并保持原时长（end = now + (原 end − 原 start)）。
+    /// 仅重置进度、不缩短倒计时时长（旧行为「只改 start、end 不变」会缩短剩余时间）。
+    /// </summary>
     public static TaskDto WithInstantStartReset(TaskDto task, DateTimeOffset now)
     {
-        var (_, endTs) = TaskSchedule.ResolveTimestamps(task);
+        var (startTs, endTs) = TaskSchedule.ResolveTimestamps(task);
+        long dur = endTs - startTs;
+        if (dur < 0) dur = 0;
+        long newStart = now.ToUnixTimeSeconds();
         return new TaskDto
         {
             Id = task.Id,
@@ -40,8 +46,8 @@ public static class ProgressBarRefresh
             Color = task.Color,
             Gif = task.Gif,
             ImageMaxSize = task.ImageMaxSize,
-            StartTs = now.ToUnixTimeSeconds(),
-            EndTs = endTs,
+            StartTs = newStart,
+            EndTs = newStart + dur,
             CreatedAt = now,
             Status = task.Status,
             Completed = task.Completed,

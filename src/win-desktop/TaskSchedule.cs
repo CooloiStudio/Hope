@@ -133,4 +133,89 @@ public static class TaskSchedule
         if (relative == null) return null;
         return $"{local:HH:mm} {relative}";
     }
+
+    // ===== 时长展示 / 拆分（编辑区） =====
+
+    /// <summary>
+    /// 定时任务编辑区「开始 → 截止」的时长展示（起点锚定的日历时长）。
+    /// startTs/endTs 无效或非正时长时返回空串。
+    /// </summary>
+    public static string FormatDurationLabel(long startTs, long endTs)
+    {
+        if (startTs <= 0 || endTs <= 0 || endTs <= startTs) return "";
+        var start = DateTimeOffset.FromUnixTimeSeconds(startTs).ToLocalTime().LocalDateTime;
+        var end = DateTimeOffset.FromUnixTimeSeconds(endTs).ToLocalTime().LocalDateTime;
+        return FormatDurationBetween(start, end);
+    }
+
+    /// <summary>
+    /// 以 <paramref name="start"/> 为锚点，把区间落到 <paramref name="end"/> 的日历日，
+    /// 再按日历拆分 年/月/天/时/分（不展示「周」）。
+    /// 仅当区间内完整包含至少一个自然月时才展示「月/年」，否则降级为纯天数——
+    /// 例：4/30→5/31 展示「31天」（不含月）；1/31→3/3 展示「1月3天」。
+    /// 展示时去掉前导与尾部的零单位、保留中间的零（如「2天0小时30分」）。
+    /// </summary>
+    public static string FormatDurationBetween(DateTime start, DateTime end)
+    {
+        if (end <= start) return "";
+        int years = 0, months = 0, days, hours, minutes;
+        if (ContainsFullCalendarMonth(start, end))
+        {
+            var cursor = start;
+            while (cursor.AddYears(1) <= end) { cursor = cursor.AddYears(1); years++; }
+            while (cursor.AddMonths(1) <= end) { cursor = cursor.AddMonths(1); months++; }
+            var rem = end - cursor;
+            days = rem.Days;
+            hours = rem.Hours;
+            minutes = rem.Minutes;
+        }
+        else
+        {
+            var total = end - start;
+            days = (int)total.Days;
+            hours = total.Hours;
+            minutes = total.Minutes;
+        }
+
+        var units = new (int Value, string Suffix)[]
+        {
+            (years, "年"), (months, "月"), (days, "天"), (hours, "小时"), (minutes, "分"),
+        };
+        int first = -1, last = -1;
+        for (int i = 0; i < units.Length; i++)
+        {
+            if (units[i].Value == 0) continue;
+            if (first < 0) first = i;
+            last = i;
+        }
+        if (first < 0) return "0分"; // 不足 1 分钟
+
+        var sb = new System.Text.StringBuilder();
+        for (int i = first; i <= last; i++)
+            sb.Append(units[i].Value).Append(units[i].Suffix);
+        return sb.ToString();
+    }
+
+    /// <summary>区间 [start, end] 是否完整包含至少一个自然月（决定是否展示「月/年」单位）。</summary>
+    internal static bool ContainsFullCalendarMonth(DateTime start, DateTime end)
+    {
+        var firstOfMonth = new DateTime(start.Year, start.Month, 1, 0, 0, 0, start.Kind);
+        var candidate = firstOfMonth < start ? firstOfMonth.AddMonths(1) : firstOfMonth;
+        return candidate.AddMonths(1) <= end;
+    }
+
+    /// <summary>把总秒数拆分为「天 / 时 / 分」（供倒计时编辑框展示；丢弃不足 1 分钟的秒）。</summary>
+    public static (long Days, int Hours, int Minutes) SplitDaysHoursMinutes(long totalSeconds)
+    {
+        if (totalSeconds < 0) totalSeconds = 0;
+        long days = totalSeconds / 86400;
+        long rem = totalSeconds % 86400;
+        int hours = (int)(rem / 3600);
+        int minutes = (int)((rem % 3600) / 60);
+        return (days, hours, minutes);
+    }
+
+    /// <summary>由「天 / 时 / 分」合成总秒数（供倒计时截止时间反算）。</summary>
+    public static long ComposeDaysHoursMinutes(long days, int hours, int minutes) =>
+        days * 86400 + hours * 3600L + minutes * 60L;
 }

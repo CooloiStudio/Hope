@@ -1182,7 +1182,7 @@ public partial class App : Application
         menu.Items.Add("检查更新(&U)", null, (_, _) => SafeStartUpdateCheck(manual: true, "tray"));
         var refreshItem = new ToolStripMenuItem("刷新进度条(&R)")
         {
-            ToolTipText = "重建进度条窗口；同时将进行中的即时任务起点设为当前时刻（定时任务不变）",
+            ToolTipText = "重建进度条窗口；同时将进行中的倒计时任务从当前时刻重新起算并保持原时长（定时任务不变）",
         };
         refreshItem.Click += (_, _) => Dispatcher.BeginInvoke(() =>
         {

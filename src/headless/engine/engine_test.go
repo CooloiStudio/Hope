@@ -492,6 +492,53 @@ func TestCompleteRecurringSpawnsNextCopy(t *testing.T) {
 	}
 }
 
+// TestCompleteDurationCountdownSpawnsNextFromNow 倒计时循环完成后，新一期以完成时刻为起点、保持原时长。
+func TestCompleteDurationCountdownSpawnsNextFromNow(t *testing.T) {
+	t.Setenv("APPDATA", t.TempDir())
+	store, err := config.Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	eng := New(store, nil)
+
+	created := mustTime("2026-06-25T08:00:00+08:00")
+	tk := &task.Task{
+		ID:         "c1",
+		Type:       task.Instant,
+		Color:      "#1E88E5",
+		CreatedAt:  created,
+		EndTs:      created.Add(2 * time.Hour).Unix(),
+		Recurrence: &task.Recurrence{Mode: task.RecurDuration},
+		Status:     task.StatusActive,
+	}
+	eng.HandleCommand(ipc.Command{Action: "createTask", Task: tk})
+	eng.HandleCommand(ipc.Command{Action: "completeTask", TaskID: "c1"})
+
+	_, tasks := store.Snapshot()
+	if len(tasks) != 2 {
+		t.Fatalf("expected original + copy = 2 tasks, got %d", len(tasks))
+	}
+	var copyT *task.Task
+	for _, tt := range tasks {
+		if tt.ID != "c1" {
+			copyT = tt
+		}
+	}
+	if copyT == nil {
+		t.Fatal("a new active countdown copy should exist")
+	}
+	if copyT.Type != task.Instant || copyT.Recurrence == nil || copyT.Recurrence.Mode != task.RecurDuration {
+		t.Errorf("copy should stay a duration countdown, got type=%q recurrence=%+v", copyT.Type, copyT.Recurrence)
+	}
+	// 新一期时长仍为 2 小时（起点=完成时刻，此处即创建后立即完成 ≈ now）。
+	if dur := copyT.EndTs - copyT.CreatedAt.Unix(); dur != int64(2*time.Hour/time.Second) {
+		t.Errorf("copy duration=%d sec, want 7200", dur)
+	}
+	if copyT.EndTs <= copyT.CreatedAt.Unix() {
+		t.Errorf("copy endTs must be after its start")
+	}
+}
+
 // TestCompleteRecurringIdempotent 重复完成同一循环任务不应再次生成下一期副本。
 func TestCompleteRecurringIdempotent(t *testing.T) {
 	t.Setenv("APPDATA", t.TempDir())

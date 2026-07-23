@@ -56,14 +56,16 @@ public class ProgressBarRefreshTests
     }
 
     [Fact]
-    public void WithInstantStartReset_UpdatesCreatedAndStart()
+    public void WithInstantStartReset_KeepsDuration()
     {
         var now = DateTimeOffset.Parse("2026-07-12T12:00:00+08:00");
+        // 原时长 = 4 小时（now-1h ~ now+3h）；刷新后应以 now 为起点、保持 4 小时时长。
         var t = Instant("a", now.AddHours(-1), now.AddHours(3));
         var u = ProgressBarRefresh.WithInstantStartReset(t, now);
         Assert.Equal(now.ToUnixTimeSeconds(), u.StartTs);
         Assert.Equal(now, u.CreatedAt);
-        Assert.Equal(t.EndTs, u.EndTs);
+        Assert.Equal(now.ToUnixTimeSeconds() + (t.EndTs - t.StartTs), u.EndTs);
+        Assert.Equal(now.AddHours(4).ToUnixTimeSeconds(), u.EndTs);
         Assert.Equal("a", u.Id);
     }
 }

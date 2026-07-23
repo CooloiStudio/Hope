@@ -56,10 +56,11 @@ const (
 type RecurMode string
 
 const (
-	RecurNone   RecurMode = ""       // 不循环：单次任务（默认）
-	RecurDaily  RecurMode = "daily"  // 每天执行
-	RecurEveryN RecurMode = "everyN" // 每 Interval 天执行
-	RecurWeekly RecurMode = "weekly" // 按星期多选执行
+	RecurNone   RecurMode = ""         // 不循环：单次任务（默认）
+	RecurDaily  RecurMode = "daily"    // 每天执行
+	RecurEveryN RecurMode = "everyN"   // 每 Interval 天执行
+	RecurWeekly RecurMode = "weekly"   // 按星期多选执行
+	RecurDuration RecurMode = "duration" // 倒计时循环：完成时以完成时刻为新起点、保持原时长
 )
 
 // Recurrence 描述循环规则。循环任务每期由 startTs/endTs 定义绝对时间窗；
@@ -139,10 +140,19 @@ func (t *Task) EffectiveStart() time.Time {
 	return time.Unix(t.effectiveStartTs(), 0).In(loc)
 }
 
-// IsRecurring 报告任务是否为循环任务（仅定时 + 有开始时间戳 + 指定了循环模式）。
+// IsRecurring 报告任务是否为循环任务。
+//   - 定时任务：有开始时间戳 + 指定了 daily/everyN/weekly。
+//   - 倒计时（instant）任务：指定了 duration 模式 + 有正时长。
 func (t *Task) IsRecurring() bool {
+	if t.Recurrence == nil || t.Recurrence.Mode == RecurNone {
+		return false
+	}
+	if t.Type == Instant {
+		return t.Recurrence.Mode == RecurDuration &&
+			t.effectiveEndTs() > t.effectiveStartTs()
+	}
 	return t.Type == Scheduled && t.effectiveStartTs() > 0 &&
-		t.Recurrence != nil && t.Recurrence.Mode != RecurNone
+		t.Recurrence.Mode != RecurDuration
 }
 
 // windowAt 由存储的 startTs/endTs 与 now 比较，返回时间窗及是否已开始（nowTs ≥ startTs）。
@@ -233,11 +243,25 @@ func (t *Task) EffectiveEnd(now time.Time) time.Time {
 	return time.Unix(t.effectiveEndTs(), 0).In(loc)
 }
 
-// AdvanceIfRecurring 将循环任务起止戳累加 n×86400，推进到下一期。
-// 返回 true 表示已推进；返回 false 表示非循环任务。
-func (t *Task) AdvanceIfRecurring(_ time.Time) bool {
+// AdvanceIfRecurring 将循环任务推进到下一期。
+//   - 定时任务：起止戳整体累加 n×86400（daily=1、everyN=interval、weekly=7）。
+//   - 倒计时（duration）任务：以 now（完成时刻）为新起点，保持原时长（endTs-startTs）。
+// 返回 true 表示已推进；返回 false 表示非循环任务或无法推进。
+func (t *Task) AdvanceIfRecurring(now time.Time) bool {
 	if !t.IsRecurring() {
 		return false
+	}
+	if t.Type == Instant && t.Recurrence.Mode == RecurDuration {
+		t.EnsureTimestamps()
+		dur := t.effectiveEndTs() - t.effectiveStartTs()
+		if dur <= 0 {
+			return false
+		}
+		t.StartTs = now.Unix()
+		t.EndTs = t.StartTs + dur
+		t.StartAt = nil
+		t.EndAt = time.Time{}
+		return true
 	}
 	step := t.RecurStepSeconds()
 	if step <= 0 {

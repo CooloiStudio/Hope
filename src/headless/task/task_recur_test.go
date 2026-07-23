@@ -1,6 +1,9 @@
 package task
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func TestRecurringFixedWindowExpiredAfterEnd(t *testing.T) {
 	start := mustTime("2026-07-06T08:00:00+08:00")
@@ -50,6 +53,46 @@ func TestRecurringDailyWithinWindow(t *testing.T) {
 	layoutAfter := BuildLayout([]*Task{task}, after, noBehaviors, testPosition)
 	if len(layoutAfter.Segments) != 1 || !layoutAfter.Segments[0].Expired {
 		t.Fatalf("after end: want expired segment, got %+v", layoutAfter.Segments)
+	}
+}
+
+func TestDurationRecurringAdvanceUsesCompletionTime(t *testing.T) {
+	// 倒计时循环：起点=创建时刻，时长 2 小时。
+	created := mustTime("2026-07-06T08:00:00+08:00")
+	task := &Task{
+		ID: "c", Name: "Countdown", Type: Instant, Color: "#1E88E5",
+		CreatedAt:  created,
+		EndTs:      created.Add(2 * time.Hour).Unix(),
+		Recurrence: &Recurrence{Mode: RecurDuration},
+		Status:     StatusActive,
+	}
+	if !task.IsRecurring() {
+		t.Fatal("duration instant task should be recurring")
+	}
+	// 完成时刻晚于原截止：新一期应以完成时刻为起点，保持 2 小时时长。
+	done := mustTime("2026-07-06T11:30:00+08:00")
+	next := task.Clone()
+	if !next.AdvanceIfRecurring(done) {
+		t.Fatal("advance duration failed")
+	}
+	if next.StartTs != done.Unix() {
+		t.Fatalf("next startTs=%d, want %d", next.StartTs, done.Unix())
+	}
+	if next.EndTs != done.Unix()+int64(2*time.Hour/time.Second) {
+		t.Fatalf("next endTs=%d, want %d", next.EndTs, done.Unix()+7200)
+	}
+}
+
+func TestScheduledDurationModeNotRecurring(t *testing.T) {
+	// duration 模式只对倒计时（instant）有效，定时任务不应被视为循环。
+	start := mustTime("2026-07-06T08:00:00+08:00")
+	task := &Task{
+		ID: "s", Type: Scheduled,
+		StartTs: start.Unix(), EndTs: start.Add(time.Hour).Unix(),
+		Recurrence: &Recurrence{Mode: RecurDuration},
+	}
+	if task.IsRecurring() {
+		t.Fatal("scheduled + duration must not be recurring")
 	}
 }
 
