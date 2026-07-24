@@ -37,7 +37,14 @@ public partial class App : Application
     private System.Threading.Mutex? _instanceMutex;
 
     private UpdateCoordinator _updates = null!;
-    private DispatcherTimer? _updateTimer;
+    /// <summary>日调度轮询定时器：短周期驱动「当日单元」（日活心跳 + 每日更新检查），替代不可靠的 1 天相对定时器。</summary>
+    private DispatcherTimer? _dailyTimer;
+    /// <summary>墙钟日调度：跨休眠也能在唤醒后按真实经过时间补发当日单元。</summary>
+    private DailyScheduler? _dailySchedule;
+    /// <summary>「当日单元」最小间隔（墙钟）。</summary>
+    private static readonly TimeSpan DailyInterval = TimeSpan.FromDays(1);
+    /// <summary>日调度轮询间隔：常开机器据此在到点后至多约 30 分钟内补发当日单元。</summary>
+    private static readonly TimeSpan DailySchedulePollInterval = TimeSpan.FromMinutes(30);
     /// <summary>休眠唤醒后至该时刻前跳过自动检查更新（避免补火日检 + 半开网络导致运行时故障）。</summary>
     private DateTime _autoUpdateCooldownUntilUtc = DateTime.MinValue;
     /// <summary>最近一次 PowerResume 时刻（UTC）；用于抑制唤醒后立即硬重建 Overlay。</summary>
@@ -157,13 +164,39 @@ public partial class App : Application
         };
         initial.Start();
 
-        _updateTimer = new DispatcherTimer { Interval = TimeSpan.FromDays(1) };
-        _updateTimer.Tick += (_, _) =>
+        // 日活心跳 + 每日更新检查改为「墙钟」判定：短周期轮询 + 唤醒补火（见 MaybeRunDailyUnit）。
+        // 旧实现用 1 天 DispatcherTimer 且唤醒时 Stop/Start，导致每日休眠的机器倒计时反复清零、
+        // 永远攒不满 24h → app_active 与每日日检长期空缺（用户"几天不重启却无任何上报"即由此而来）。
+        _dailySchedule = new DailyScheduler(DateTime.UtcNow, DailyInterval);
+        _dailyTimer = new DispatcherTimer { Interval = DailySchedulePollInterval };
+        _dailyTimer.Tick += (_, _) => MaybeRunDailyUnit("poll");
+        _dailyTimer.Start();
+    }
+
+    /// <summary>
+    /// 墙钟日调度：距上次「当日单元」满 <see cref="DailyInterval"/> 才触发一次。
+    /// 由短周期轮询与休眠唤醒共同驱动，跨休眠也能在唤醒后按真实经过时间补发，
+    /// 替代不可靠的 1 天相对定时器。统一切回 UI 线程访问 <see cref="_dailySchedule"/>，避免并发重入。
+    /// </summary>
+    private void MaybeRunDailyUnit(string reason)
+    {
+        if (!Dispatcher.CheckAccess())
         {
-            _telemetry.TrackEvent("app_active"); // 日活心跳：长期挂托盘不重启的用户也能被正确计入
-            KickAutoUpdateCheck("daily");
-        };
-        _updateTimer.Start();
+            Dispatcher.BeginInvoke(() => MaybeRunDailyUnit(reason));
+            return;
+        }
+
+        if (_dailySchedule?.TryFire(DateTime.UtcNow) != true) return;
+
+        DesktopLog.Info($"Daily unit fired reason={reason}");
+        // 日活心跳：无条件每天一条，作为 DAU 唯一真相；更新态势仅作为 props 搭车同一事件。
+        // 不以「已启用更新」替代心跳——否则已是最新版的活跃用户将零上报，DAU 被严重低估。
+        _telemetry.TrackEvent("app_active", new Dictionary<string, object>
+        {
+            ["autoUpdate"] = (_updates?.AutoUpdateEnabled ?? false) ? "on" : "off",
+            ["channel"] = UpdateCoordinator.IsStoreManaged ? "store" : "sideload",
+        });
+        KickAutoUpdateCheck("daily");
     }
 
     /// <summary>自动检查：线程池执行，并尊重唤醒冷却；异常不得冒泡到 DispatcherTimer。</summary>
@@ -209,12 +242,9 @@ public partial class App : Application
         try { _supervisor.PauseSpawning(TimeSpan.FromSeconds(12), "PowerResume"); }
         catch (Exception ex) { DesktopLog.Warn($"PauseSpawning: {ex.Message}"); }
 
-        // DispatcherTimer 在休眠跨越到期点后，唤醒时常立刻补火；Stop/Start 把下次触发推到 +1 天。
-        if (_updateTimer != null)
-        {
-            _updateTimer.Stop();
-            _updateTimer.Start();
-        }
+        // 唤醒即按墙钟补发「当日单元」（若距上次已满 24h）：日活心跳 + 日检不再因每日休眠而长期空缺。
+        // app_active 仅一条后台 HTTP，与唤醒静默无冲突；日检内部仍受上面的 3 分钟冷却自我跳过。
+        MaybeRunDailyUnit("resume");
 
         // 取消检查与 HttpClient 丢弃必须在后台做：UI 线程 Cancel/Dispose 半开请求曾打出 CLR Fatal（0x80131506）。
         var updates = _updates;
@@ -1413,7 +1443,7 @@ public partial class App : Application
         StopSessionSnapshotRetry();
 
         _layoutTimer?.Stop();
-        _updateTimer?.Stop();
+        _dailyTimer?.Stop();
 
         // 须先隐藏托盘再释放 Icon；否则 set_Visible 会访问已 Dispose 的 Icon.Handle。
         var tray = _tray;

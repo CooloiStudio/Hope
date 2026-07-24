@@ -24,11 +24,23 @@ public sealed class TelemetryService
     private readonly string _host;
     private readonly string _sessionId;
 
+    private bool _enabled;
+
     /// <summary>
     /// 是否启用上报。默认关闭：在读取到用户设置（allowTelemetry）之前不发送任何事件，
     /// 确保「用户取消勾选后不发送任何信息」，也避免在意图未知时抢先外发。
+    /// 状态变化时写一条诊断日志，便于本地制品定位「是否根本没启用上报」。
     /// </summary>
-    public bool Enabled { get; set; }
+    public bool Enabled
+    {
+        get => _enabled;
+        set
+        {
+            if (_enabled == value) return;
+            _enabled = value;
+            DesktopLog.Info($"Telemetry enabled={value} host={_host} appKey={AppKey} isDebug={IsDebug}");
+        }
+    }
 
     public TelemetryService()
     {
@@ -36,6 +48,9 @@ public sealed class TelemetryService
             ? "https://eu.aptabase.com"
             : "https://us.aptabase.com";
         _sessionId = NewSessionId();
+        // 注意：Aptabase 摄取端对任意 App-Key（含无效键）都会返回 200 并静默丢弃，
+        // 故「sent -> 200」不代表后台一定收到；App-Key 必须与项目实际键一致。
+        DesktopLog.Info($"Telemetry init host={_host} appKey={AppKey} isDebug={IsDebug} appVersion={AppVersion()}");
     }
 
     /// <summary>上报一个事件（后台异步、失败静默）。props 仅允许字符串/数值。</summary>
@@ -80,7 +95,8 @@ public sealed class TelemetryService
 
             using var resp = await Http.SendAsync(req).ConfigureAwait(false);
             if (resp.IsSuccessStatusCode)
-                DesktopLog.Info($"Telemetry sent '{eventName}' -> {(int)resp.StatusCode}");
+                // 200 仅表示摄取端收下请求；若 App-Key 与项目不符，Aptabase 会静默丢弃且仍返回 200。
+                DesktopLog.Info($"Telemetry POST '{eventName}' -> {(int)resp.StatusCode} (host={_host} appKey={AppKey})");
             else
                 DesktopLog.Warn($"Telemetry '{eventName}' failed: HTTP {(int)resp.StatusCode}");
         }
