@@ -239,8 +239,15 @@
                                 </DataTemplate>
                             </DataGridTemplateColumn.CellTemplate>
                         </DataGridTemplateColumn>
-                        <DataGridTextColumn Header="进度" Binding="{Binding ProgressLabel}" Width="69" MinWidth="69"
-                                            ElementStyle="{StaticResource TaskGridTextBlockStyle}" />
+                        <DataGridTemplateColumn Header="进度" Width="120" MinWidth="100">
+                            <DataGridTemplateColumn.CellTemplate>
+                                <DataTemplate>
+                                    <controls:AlternatingProgressText
+                                        Primary="{Binding ProgressLabel}"
+                                        Secondary="{Binding ProgressSpanLabel}" />
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellTemplate>
+                        </DataGridTemplateColumn>
                         <DataGridTemplateColumn Header="操作" Width="72" MinWidth="72">
                             <DataGridTemplateColumn.CellTemplate>
                                 <DataTemplate>

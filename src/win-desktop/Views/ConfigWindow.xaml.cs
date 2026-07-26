@@ -2651,8 +2651,11 @@ public sealed class TaskRow : INotifyPropertyChanged
 {
     public event PropertyChangedEventHandler? PropertyChanged;
 
-    internal void RefreshProgressLabel() =>
+    internal void RefreshProgressLabel()
+    {
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(ProgressLabel)));
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(ProgressSpanLabel)));
+    }
 
     public string Id { get; init; } = "";
     public string Name { get; init; } = "";
@@ -2678,6 +2681,8 @@ public sealed class TaskRow : INotifyPropertyChanged
     public string RecurLabel => FormatRecurLabel(Type, Recurrence);
     public string StatusLabel => Completed ? "已完成" : TypeLabel;
     public string ProgressLabel => TaskSchedule.GetListProgressLabel(this, DateTimeOffset.Now);
+    /// <summary>进度列副文案（剩余/总时长）；非进行中为 null。</summary>
+    public string? ProgressSpanLabel => TaskSchedule.GetListProgressSpanLabel(this, DateTimeOffset.Now);
     public Brush ColorBrush
     {
         get

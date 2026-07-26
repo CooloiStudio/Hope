@@ -7,12 +7,12 @@ using UserControl = System.Windows.Controls.UserControl;
 namespace Hope.Desktop.Controls;
 
 /// <summary>
-/// 列表日期列：前天~后天范围内，在「08:01 07-02」与「08:01 今天」间交替展示（停留 3s、渐变 0.5s）。
+/// 列表日期列：前天~后天范围内，在「08:01 07-02」与「08:01 今天」间交替展示（停留 4s、渐变 0.5s）。
 /// 相对文案按当前日历日计算；跨日/唤醒时只更新文案，不重启动画，避免渐变被掐掉。
 /// </summary>
 public partial class AlternatingDateText : UserControl
 {
-    private const double HoldSeconds = 3;
+    private const double HoldSeconds = 4;
     private const double FadeSeconds = 0.5;
     private static readonly TimeSpan CycleDuration = TimeSpan.FromSeconds(HoldSeconds * 2 + FadeSeconds * 2);
 

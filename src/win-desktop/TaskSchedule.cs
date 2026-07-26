@@ -44,14 +44,43 @@ public static class TaskSchedule
         return Math.Clamp(p, 0, 100);
     }
 
+    /// <summary>
+    /// 列表百分比展示：向下取整到 1 位小数；未截止时封顶 99.9%，避免未到期却显示 100%。
+    /// </summary>
+    public static string FormatListPercent(double percent, bool expired)
+    {
+        if (expired) return "100.0%";
+        var floored = Math.Floor(percent * 10.0) / 10.0;
+        if (floored >= 100.0) floored = 99.9;
+        return floored.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture) + "%";
+    }
+
     public static DateTimeOffset EffectiveEndDisplay(string type, long startTs, long endTs, DateTimeOffset? createdAt) =>
         DateTimeOffset.FromUnixTimeSeconds(EffectiveEndTs(endTs)).ToLocalTime();
 
-    /// <summary>列表进度列：已完成 / 未开始 / 已到期 / 百分比。</summary>
+    /// <summary>列表进度列主文案：已完成 / 未开始 / 已到期 / 百分比。</summary>
     public static string GetListProgressLabel(TaskRow row, DateTimeOffset now)
     {
         if (row.Completed) return "已完成";
         return GetActiveProgressLabel(row.Type, row.StartTs, row.EndTs, row.CreatedAt, now);
+    }
+
+    /// <summary>
+    /// 列表进度列副文案（与百分比交替）：进行中为「剩余/总时长」；其余状态返回 null（不渐变）。
+    /// </summary>
+    public static string? GetListProgressSpanLabel(TaskRow row, DateTimeOffset now)
+    {
+        if (row.Completed) return null;
+        if (!HasStarted(row.Type, row.StartTs, row.EndTs, row.CreatedAt, now)) return null;
+        if (IsExpired(row.Type, row.StartTs, row.EndTs, row.CreatedAt, now)) return null;
+
+        var start = EffectiveStartTs(row.Type, row.StartTs, row.EndTs, row.CreatedAt);
+        var end = EffectiveEndTs(row.EndTs);
+        var total = end - start;
+        if (total <= 0) return null;
+        var remaining = end - now.ToUnixTimeSeconds();
+        if (remaining < 0) remaining = 0;
+        return $"{FormatProgressClock(remaining, total)}/{FormatProgressClock(total, total)}";
     }
 
     /// <summary>托盘状态列：未开始 / 已到期 / 倒计时。</summary>
@@ -73,7 +102,33 @@ public static class TaskSchedule
         if (IsExpired(type, startTs, endTs, createdAt, now))
             return "已到期";
         var pct = Percent(type, startTs, endTs, createdAt, now);
-        return $"{Math.Round(pct):0}%";
+        return FormatListPercent(pct, expired: false);
+    }
+
+    /// <summary>
+    /// 进度列时长（精度到分，不展示秒）：总时长 ≤1 小时用分钟数（允许 60）；
+    /// &lt;1 天用 HH:mm；否则「N天 HH:mm」。秒向下取整到分。
+    /// <paramref name="styleTotal"/> 决定整段「剩余/总时长」的统一样式。
+    /// </summary>
+    public static string FormatProgressClock(long seconds, long styleTotal)
+    {
+        if (seconds < 0) seconds = 0;
+        if (styleTotal < 0) styleTotal = 0;
+
+        // 统一砍掉秒：整分钟向下取整（剩余 59:49 → 59 分）。
+        var wholeMinutes = seconds / 60;
+        var styleMinutes = styleTotal / 60;
+
+        if (styleTotal <= 3600)
+            return wholeMinutes.ToString("00");
+
+        var days = wholeMinutes / (24 * 60);
+        var remMin = wholeMinutes % (24 * 60);
+        var hours = remMin / 60;
+        var minutes = remMin % 60;
+        if (styleTotal >= 86400 || styleMinutes >= 24 * 60 || days >= 1)
+            return $"{days}天 {hours:00}:{minutes:00}";
+        return $"{hours:00}:{minutes:00}";
     }
 
     /// <summary>由 IPC 任务解析起止戳（优先 startTs/endTs，回退旧版 startAt/endAt）。</summary>
