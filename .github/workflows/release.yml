@@ -7,8 +7,8 @@
 # Release 正文取自 CHANGELOG.md 中与该版本号匹配的小节（### v<版本>）。
 # MSIX 身份见 packaging/README.md（HOPE_MSIX_IDENTITY_NAME / HOPE_MSIX_PUBLISHER）。
 #
-# 触发方式：向 release 分支上的提交打 tag 并推送（tag 形如 v0.13.83）。
-# 仅推送到 release 分支、未打 tag 的提交不会发版。
+# 触发方式：在 master 可达的提交上打 tag 并推送（tag 形如 v0.13.83）。
+# 仅推送分支、未打 tag 的提交不会发版。仓库只保留 master 一条长驻分支。
 
 on:
   push:
@@ -26,15 +26,15 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Verify tag commit is on release branch
+      - name: Verify tag commit is on master branch
         shell: pwsh
         run: |
-          git fetch origin release --quiet
-          git merge-base --is-ancestor ${{ github.sha }} origin/release
+          git fetch origin master --quiet
+          git merge-base --is-ancestor ${{ github.sha }} origin/master
           if ($LASTEXITCODE -ne 0) {
-            throw "Tag ${{ github.ref_name }} 必须打在 release 分支可达的提交上"
+            throw "Tag ${{ github.ref_name }} 必须打在 master 分支可达的提交上"
           }
-          Write-Host "Tag ${{ github.ref_name }} is on release branch"
+          Write-Host "Tag ${{ github.ref_name }} is on master branch"
 
       - name: Setup Go
         uses: actions/setup-go@v5

@@ -1,28 +1,33 @@
 # Hope — 双远端一键推送（Windows PowerShell，无需 make）
 #
+# 仓库长驻分支仅 master；发版靠注解 tag。
+#
 # 用法：
-#   pwsh ./scripts/push-remotes.ps1
+#   pwsh ./scripts/push-remotes.ps1                         # 推 master
 #   pwsh ./scripts/push-remotes.ps1 -Force
-#   pwsh ./scripts/push-remotes.ps1 -Tag v0.13.90
-#   pwsh ./scripts/push-remotes.ps1 -Force -Tag 0.13.90
-#   pwsh ./scripts/push-remotes.ps1 -TagOnly -Tag v0.13.90
+#   pwsh ./scripts/push-remotes.ps1 -Force -Tag 0.13.90     # 只推 tag → 仅触发 release
+#   pwsh ./scripts/push-remotes.ps1 -TagOnly -Tag v0.13.90  # 同上（兼容旧用法）
+#   pwsh ./scripts/push-remotes.ps1 -Force -Tag 0.13.90 -AlsoPushBranches  # master + tag
 #
 # 参数：
-#   -Force    使用 --force-with-lease 覆盖远端分支/标签
-#   -Tag      发版标签（可写 v0.13.90 或 0.13.90，自动补 v）
-#   -TagOnly  只打/推 tag，不推分支
+#   -Force             分支用 --force-with-lease；tag 用 --force
+#   -Tag               发版标签（可写 v0.13.90 或 0.13.90，自动补 v）
+#                      一旦指定 -Tag，默认只推该 tag，不推分支（避免连带触发 ci）
+#   -TagOnly           兼容开关：与「只指定 -Tag」行为相同
+#   -AlsoPushBranches  与 -Tag 联用时，额外推送 master
 
 [CmdletBinding()]
 param(
     [switch]$Force,
     [string]$Tag = "",
-    [switch]$TagOnly
+    [switch]$TagOnly,
+    [switch]$AlsoPushBranches
 )
 
 $ErrorActionPreference = "Stop"
 
 $Remotes = @("origin", "gitee")
-$Branches = @("release", "master", "develop")
+$Branches = @("master")
 $GiteeUrl = "git@gitee.com:CooloiStudio/Hope.git"
 
 function Ensure-GiteeRemote {
@@ -67,7 +72,7 @@ function Push-Tag([string]$tagName) {
     }
     if ($LASTEXITCODE -ne 0) { throw "git tag failed: $tagName" }
 
-    # tag 强制推送用 --force：--force-with-lease 对 tag 常因缺少远端跟踪而报 stale info
+    # tag 强制推送用 --force：--force-with-lease 对 tag 常因缺少期望跟踪而报 stale info
     foreach ($remote in $Remotes) {
         if ($Force) {
             Write-Host "==> git push --force $remote $tagName"
@@ -81,18 +86,26 @@ function Push-Tag([string]$tagName) {
 }
 
 Ensure-GiteeRemote
-Write-Host "==> Force=$Force Tag=$Tag TagOnly=$TagOnly"
-
-if (-not $TagOnly) {
-    Push-Branches
-}
 
 $normalized = Normalize-Tag $Tag
 if ($TagOnly -and -not $normalized) {
     throw "TagOnly 需要同时指定 -Tag（例如 -Tag v0.13.90）"
 }
+
+# 指定了 -Tag：默认只推 tag（仅触发 release.yml）；要连带推 master 需 -AlsoPushBranches。
+# 未指定 -Tag：推 master（触发 ci.yml）。
+$pushBranches = if ($normalized) { [bool]$AlsoPushBranches } else { -not $TagOnly }
+
+Write-Host "==> Force=$Force Tag=$Tag TagOnly=$TagOnly AlsoPushBranches=$AlsoPushBranches → pushBranches=$pushBranches (master only)"
+
+if ($pushBranches) {
+    Push-Branches
+}
+
 if ($normalized) {
     Push-Tag $normalized
+} elseif (-not $pushBranches) {
+    throw "没有可推送的内容：请指定 -Tag，或去掉 -TagOnly 以推送 master"
 }
 
 Write-Host "==> done"

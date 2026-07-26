@@ -1,25 +1,28 @@
 #!/usr/bin/env bash
 # Hope — 双远端一键推送（Git Bash，无需 make）
 #
+# 仓库长驻分支仅 master；发版靠注解 tag。
+#
 # 用法：
 #   ./scripts/push-remotes.sh
 #   ./scripts/push-remotes.sh --force
-#   ./scripts/push-remotes.sh --tag v0.13.90
-#   ./scripts/push-remotes.sh --force --tag 0.13.90
-#   ./scripts/push-remotes.sh --tag-only --tag v0.13.90
+#   ./scripts/push-remotes.sh --force --tag 0.13.90              # 只推 tag → 仅触发 release
+#   ./scripts/push-remotes.sh --tag-only --tag v0.13.90          # 同上（兼容旧用法）
+#   ./scripts/push-remotes.sh --force --tag 0.13.90 --also-push-branches  # master + tag
 
 set -euo pipefail
 
 REMOTES=(origin gitee)
-BRANCHES=(release master develop)
+BRANCHES=(master)
 GITEE_URL="git@gitee.com:CooloiStudio/Hope.git"
 
 FORCE=0
 TAG=""
 TAG_ONLY=0
+ALSO_PUSH_BRANCHES=0
 
 usage() {
-  echo "Usage: $0 [--force] [--tag vX.Y.Z] [--tag-only]"
+  echo "Usage: $0 [--force] [--tag vX.Y.Z] [--tag-only] [--also-push-branches]"
 }
 
 while [[ $# -gt 0 ]]; do
@@ -29,6 +32,7 @@ while [[ $# -gt 0 ]]; do
       [[ $# -ge 2 ]] || { echo "ERROR: --tag needs a value"; exit 1; }
       TAG="$2"; shift 2 ;;
     --tag-only) TAG_ONLY=1; shift ;;
+    --also-push-branches) ALSO_PUSH_BRANCHES=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown arg: $1"; usage; exit 1 ;;
   esac
@@ -48,7 +52,26 @@ normalize_tag() {
 }
 
 ensure_gitee
-echo "==> FORCE=$FORCE TAG=$TAG TAG_ONLY=$TAG_ONLY"
+
+tag="$(normalize_tag "$TAG")"
+if [[ "$TAG_ONLY" == "1" && -z "$tag" ]]; then
+  echo "ERROR: --tag-only requires --tag"
+  exit 1
+fi
+
+# 指定了 --tag：默认只推 tag（仅触发 release.yml）；要连带推 master 需 --also-push-branches。
+# 未指定 --tag：推 master（触发 ci.yml）。
+if [[ -n "$tag" ]]; then
+  PUSH_BRANCHES=$ALSO_PUSH_BRANCHES
+else
+  if [[ "$TAG_ONLY" == "1" ]]; then
+    PUSH_BRANCHES=0
+  else
+    PUSH_BRANCHES=1
+  fi
+fi
+
+echo "==> FORCE=$FORCE TAG=$TAG TAG_ONLY=$TAG_ONLY ALSO_PUSH_BRANCHES=$ALSO_PUSH_BRANCHES → push_branches=$PUSH_BRANCHES (master only)"
 
 PUSH_FLAGS=()
 TAG_FLAGS=()
@@ -57,7 +80,7 @@ if [[ "$FORCE" == "1" ]]; then
   TAG_FLAGS+=(-f)
 fi
 
-if [[ "$TAG_ONLY" != "1" ]]; then
+if [[ "$PUSH_BRANCHES" == "1" ]]; then
   for remote in "${REMOTES[@]}"; do
     for branch in "${BRANCHES[@]}"; do
       echo "==> git push ${PUSH_FLAGS[*]:-} $remote $branch"
@@ -66,17 +89,11 @@ if [[ "$TAG_ONLY" != "1" ]]; then
   done
 fi
 
-tag="$(normalize_tag "$TAG")"
-if [[ "$TAG_ONLY" == "1" && -z "$tag" ]]; then
-  echo "ERROR: --tag-only requires --tag"
-  exit 1
-fi
-
 if [[ -n "$tag" ]]; then
   echo "==> git tag ${TAG_FLAGS[*]:-} $tag"
   git tag "${TAG_FLAGS[@]}" "$tag"
   for remote in "${REMOTES[@]}"; do
-    # tag 强制推送用 --force：--force-with-lease 对 tag 常因缺少远端跟踪而报 stale info
+    # tag 强制推送用 --force：--force-with-lease 对 tag 常因缺少期望跟踪而报 stale info
     if [[ "$FORCE" == "1" ]]; then
       echo "==> git push --force $remote $tag"
       git push --force "$remote" "$tag"
@@ -85,6 +102,9 @@ if [[ -n "$tag" ]]; then
       git push "$remote" "$tag"
     fi
   done
+elif [[ "$PUSH_BRANCHES" != "1" ]]; then
+  echo "ERROR: nothing to push; pass --tag, or omit --tag-only to push master"
+  exit 1
 fi
 
 echo "==> done"

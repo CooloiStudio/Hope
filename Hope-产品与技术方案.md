@@ -1085,9 +1085,11 @@ Hope/
 
 ## 8. CI/CD（Phase 1）✅
 
-**`release.yml` 步骤（触发：在 `release` 分支可达的提交上打 tag `v*` 并推送）：**
+**分支策略**：远程长驻仅 `master`；日常用短期 `feature/*`，发版打注解 tag `v*`。
 
-1. [x] Checkout；校验 tag 提交在 `release` 分支上
+**`release.yml` 步骤（触发：在 `master` 可达的提交上打 tag `v*` 并推送）：**
+
+1. [x] Checkout；校验 tag 提交在 `master` 分支上
 2. [x] Setup Go、.NET 10 SDK
 3. [x] 读取桌面端 `Hope.Desktop.csproj` 的 `<Version>`，并与 tag 版本一致
 4. [x] 从 `CHANGELOG.md` 抽取 `### v<版本>` 小节作为 Release 正文（抽取时去掉常见 Markdown 标记，便于客户端纯文本展示）；抽不到则回退 GitHub 自动生成
