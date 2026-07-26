@@ -74,6 +74,9 @@ public sealed class TaskDto
     [JsonPropertyName("expiredBehaviors")] public List<string>? ExpiredBehaviors { get; set; }
     // 循环规则；null 表示单次任务（仅定时任务可用）。
     [JsonPropertyName("recurrence")] public RecurrenceDto? Recurrence { get; set; }
+    // 倒计时编辑偏好：duration（按时长）/ deadline（按截止）。
+    // null/空 = duration（旧数据缺省）；勿在属性上写默认值，避免反序列化后误触发写回。
+    [JsonPropertyName("countdownEditMode")] public string? CountdownEditMode { get; set; }
 }
 
 /// <summary>循环规则，字段与 Go 端 task.Recurrence 对齐。</summary>

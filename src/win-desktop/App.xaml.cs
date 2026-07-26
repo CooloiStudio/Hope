@@ -1208,11 +1208,11 @@ public partial class App : Application
     private void SetupTray()
     {
         var menu = new ContextMenuStrip();
-        menu.Items.Add("打开设置(&S)", null, (_, _) => ShowConfig());
-        menu.Items.Add("检查更新(&U)", null, (_, _) => SafeStartUpdateCheck(manual: true, "tray"));
-        var refreshItem = new ToolStripMenuItem("刷新进度条(&R)")
+        menu.Items.Add("打开设置", null, (_, _) => ShowConfig());
+        menu.Items.Add("检查更新", null, (_, _) => SafeStartUpdateCheck(manual: true, "tray"));
+        var refreshItem = new ToolStripMenuItem("刷新进度条")
         {
-            ToolTipText = "重建进度条窗口；同时将进行中的倒计时任务从当前时刻重新起算并保持原时长（定时任务不变）",
+            ToolTipText = "重建进度条窗口（不改变任务进度）",
         };
         refreshItem.Click += (_, _) => Dispatcher.BeginInvoke(() =>
         {
@@ -1221,7 +1221,7 @@ public partial class App : Application
         });
         menu.Items.Add(refreshItem);
         menu.Items.Add(new ToolStripSeparator());
-        menu.Items.Add("退出(&Q)", null, (_, _) => QuitAll());
+        menu.Items.Add("退出", null, (_, _) => QuitAll());
 
         _tray = new NotifyIcon
         {
@@ -1234,7 +1234,7 @@ public partial class App : Application
     }
 
     /// <summary>
-    /// 用户主动「刷新进度条」：先重置进行中即时任务起点，再销毁重建 Overlay。
+    /// 用户主动「刷新进度条」：仅销毁重建 Overlay 窗口，不改任务时间/进度。
     /// </summary>
     internal void RefreshProgressBarManual()
     {
@@ -1243,20 +1243,7 @@ public partial class App : Application
             // 用户主动刷新：立刻结束唤醒静默期，避免 ForceClose 后 EnsureOverlays/状态派发仍被 defer，
             // 出现「进度条消失很久才回来」的体感。
             ForceEndResumeQuiesce("manual-refresh");
-
-            var now = DateTimeOffset.Now;
-            int resetCount = 0;
-            foreach (var task in _session.Tasks)
-            {
-                if (!ProgressBarRefresh.ShouldResetInstantStart(task, now)) continue;
-                _ipc.Send(new Command
-                {
-                    Action = "updateTask",
-                    Task = ProgressBarRefresh.WithInstantStartReset(task, now),
-                });
-                resetCount++;
-            }
-            DesktopLog.Info($"RefreshProgressBarManual instantReset={resetCount}");
+            DesktopLog.Info("RefreshProgressBarManual redraw-only");
             ResetOverlays("manual");
         }
         catch (Exception ex)

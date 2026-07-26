@@ -295,7 +295,7 @@
                                          Foreground="{DynamicResource TextOnAccentFillColorPrimaryBrush}"
                                          HorizontalAlignment="Stretch" Height="32" Margin="0,0,0,0"
                                          Click="OnRefreshProgressBarClick"
-                                         ToolTip="重建进度条窗口；同时将进行中的倒计时任务从当前时刻重新起算并保持原时长（定时任务不变）。快捷键 ctrl+r" />
+                                         ToolTip="重建进度条窗口（不改变任务进度）" />
 
                             <DockPanel Margin="0,12,0,0">
                                 <TextBlock Style="{StaticResource SettingsFieldLabel}" Text="粗细"
@@ -636,7 +636,7 @@
                             <!-- 类型 -->
                             <DockPanel>
                                 <TextBlock Style="{StaticResource FieldLabel}" Text="类型"
-                                           ToolTip="定时含开始时间；倒计时从创建时刻起算，按「天 / 时 / 分」倒数到截止" />
+                                           ToolTip="定时含开始时间；倒计时从创建时刻起算，可按时长或按截止编辑（二选一）" />
                                 <StackPanel Orientation="Horizontal">
                                     <RadioButton x:Name="TypeScheduledRadio" GroupName="TaskType"
                                                  Content="定时任务"
@@ -649,7 +649,7 @@
                                                  Margin="12,0,0,0"
                                                  VerticalAlignment="Center"
                                                  HorizontalAlignment="Left"
-                                                 ToolTip="从创建时刻起算：按「天 / 时 / 分」倒数到截止（与截止时间双向同步）" />
+                                                 ToolTip="从创建时刻起算：默认按时长（天/时/分）编辑，也可切换为按截止时刻" />
                                 </StackPanel>
                             </DockPanel>
 
@@ -740,43 +740,69 @@
                                 </DockPanel>
                             </StackPanel>
 
-                            <!-- 倒计时：从创建时刻起算的时长（天 / 时 / 分），与截止时间双向同步；仅倒计时可见 -->
+                            <!-- 倒计时：目标 Radio（同「类型」样式）在上，其下为居中只读文案 + 编辑内容。 -->
                             <StackPanel x:Name="CountdownPanel" Visibility="Collapsed">
                                 <Separator Style="{StaticResource TaskEditSeparator}" />
-                                <DockPanel>
-                                    <TextBlock Style="{StaticResource FieldLabel}" Text="倒计时"
-                                               ToolTip="从现在起的倒计时时长；修改此处会同步更新下方截止时间" />
+                                <DockPanel Margin="0,0,0,8">
+                                    <TextBlock Style="{StaticResource FieldLabel}" Width="80" Text="倒计时目标"
+                                               ToolTip="选择倒计时以时长还是以截止时刻为目标来编辑" />
                                     <StackPanel Orientation="Horizontal">
-                                        <ui:TextBox x:Name="CountdownDaysBox" Width="86" MaxLength="5"
-                                                    PlaceholderText="0" TextChanged="OnCountdownBoxChanged"
-                                                    ToolTip="天（0~36500）" />
-                                        <TextBlock Text="天" VerticalAlignment="Center" Margin="6,0,10,0" />
-                                        <ui:TextBox x:Name="CountdownHoursBox" Width="64" MaxLength="2"
-                                                    PlaceholderText="0" TextChanged="OnCountdownBoxChanged"
-                                                    ToolTip="小时（0~23）" />
-                                        <TextBlock Text="时" VerticalAlignment="Center" Margin="6,0,10,0" />
-                                        <ui:TextBox x:Name="CountdownMinutesBox" Width="64" MaxLength="2"
-                                                    PlaceholderText="0" TextChanged="OnCountdownBoxChanged"
-                                                    ToolTip="分钟（0~59）" />
-                                        <TextBlock Text="分" VerticalAlignment="Center" Margin="6,0,0,0" />
+                                        <RadioButton x:Name="CountdownModeDurationRadio" GroupName="CountdownEditMode"
+                                                     Content="按时长"
+                                                     IsChecked="True"
+                                                     VerticalAlignment="Center"
+                                                     HorizontalAlignment="Left"
+                                                     Checked="OnCountdownModeRadioChanged"
+                                                     ToolTip="按天 / 时 / 分编辑倒计时；截止时刻在下方只读显示" />
+                                        <RadioButton x:Name="CountdownModeDeadlineRadio" GroupName="CountdownEditMode"
+                                                     Content="按截止"
+                                                     Margin="12,0,0,0"
+                                                     VerticalAlignment="Center"
+                                                     HorizontalAlignment="Left"
+                                                     Checked="OnCountdownModeRadioChanged"
+                                                     ToolTip="按截止日期与时刻编辑；倒计时时长在下方只读显示" />
                                     </StackPanel>
                                 </DockPanel>
-                                <DockPanel Margin="0,4,0,0">
-                                    <TextBlock Style="{StaticResource QuickFillLabel}" Text="快填"
-                                               ToolTip="一键填入常用倒计时时长" />
-                                    <WrapPanel>
-                                        <ui:Button Content="30分" Tag="Countdown:M30" Padding="6,2" Margin="2,0,2,2" Click="OnCountdownQuickFill" ToolTip="倒计时 30 分钟" />
-                                        <ui:Button Content="1时" Tag="Countdown:H1" Padding="6,2" Margin="2,0,2,2" Click="OnCountdownQuickFill" ToolTip="倒计时 1 小时" />
-                                        <ui:Button Content="2时" Tag="Countdown:H2" Padding="6,2" Margin="2,0,2,2" Click="OnCountdownQuickFill" ToolTip="倒计时 2 小时" />
-                                        <ui:Button Content="8时" Tag="Countdown:H8" Padding="6,2" Margin="2,0,2,2" Click="OnCountdownQuickFill" ToolTip="倒计时 8 小时" />
-                                        <ui:Button Content="1天" Tag="Countdown:D1" Padding="6,2" Margin="2,0,2,2" Click="OnCountdownQuickFill" ToolTip="倒计时 1 天" />
-                                        <ui:Button Content="7天" Tag="Countdown:D7" Padding="6,2" Margin="2,0,2,2" Click="OnCountdownQuickFill" ToolTip="倒计时 7 天" />
-                                    </WrapPanel>
-                                </DockPanel>
-                                <CheckBox x:Name="CountdownRecurCheck" Content="循环（完成后按相同时长重新开始）"
-                                          Margin="0,8,0,0" HorizontalAlignment="Left"
-                                          Checked="OnCountdownRecurChanged" Unchecked="OnCountdownRecurChanged"
-                                          ToolTip="勾选后，点「完成」时会以完成时刻为新起点、按相同时长自动新建一个倒计时" />
+                                <TextBlock x:Name="CountdownSummaryHero"
+                                           Margin="0,0,0,8"
+                                           FontWeight="Bold"
+                                           TextWrapping="Wrap"
+                                           TextAlignment="Center"
+                                           HorizontalAlignment="Stretch"
+                                           Foreground="{DynamicResource TextFillColorPrimaryBrush}"
+                                           ToolTip="当前编辑对侧的只读结果：按时长时显示截止时刻，按截止时显示时长" />
+                                <StackPanel x:Name="CountdownDurationEdit">
+                                    <DockPanel>
+                                        <TextBlock Style="{StaticResource FieldLabel}" Text="倒计时"
+                                                   ToolTip="从现在起的倒计时时长" />
+                                        <StackPanel Orientation="Horizontal">
+                                            <ui:TextBox x:Name="CountdownDaysBox" Width="86" MaxLength="5"
+                                                        PlaceholderText="0" TextChanged="OnCountdownBoxChanged"
+                                                        ToolTip="天（0~36500）" />
+                                            <TextBlock Text="天" VerticalAlignment="Center" Margin="6,0,10,0" />
+                                            <ui:TextBox x:Name="CountdownHoursBox" Width="64" MaxLength="2"
+                                                        PlaceholderText="0" TextChanged="OnCountdownBoxChanged"
+                                                        ToolTip="小时（0~23）" />
+                                            <TextBlock Text="时" VerticalAlignment="Center" Margin="6,0,10,0" />
+                                            <ui:TextBox x:Name="CountdownMinutesBox" Width="64" MaxLength="2"
+                                                        PlaceholderText="0" TextChanged="OnCountdownBoxChanged"
+                                                        ToolTip="分钟（0~59）" />
+                                            <TextBlock Text="分" VerticalAlignment="Center" Margin="6,0,0,0" />
+                                        </StackPanel>
+                                    </DockPanel>
+                                    <DockPanel Margin="0,4,0,0">
+                                        <TextBlock Style="{StaticResource QuickFillLabel}" Text="快填"
+                                                   ToolTip="一键填入常用倒计时时长" />
+                                        <WrapPanel>
+                                            <ui:Button Content="30分" Tag="Countdown:M30" Padding="6,2" Margin="2,0,2,2" Click="OnCountdownQuickFill" ToolTip="倒计时 30 分钟" />
+                                            <ui:Button Content="1时" Tag="Countdown:H1" Padding="6,2" Margin="2,0,2,2" Click="OnCountdownQuickFill" ToolTip="倒计时 1 小时" />
+                                            <ui:Button Content="2时" Tag="Countdown:H2" Padding="6,2" Margin="2,0,2,2" Click="OnCountdownQuickFill" ToolTip="倒计时 2 小时" />
+                                            <ui:Button Content="8时" Tag="Countdown:H8" Padding="6,2" Margin="2,0,2,2" Click="OnCountdownQuickFill" ToolTip="倒计时 8 小时" />
+                                            <ui:Button Content="1天" Tag="Countdown:D1" Padding="6,2" Margin="2,0,2,2" Click="OnCountdownQuickFill" ToolTip="倒计时 1 天" />
+                                            <ui:Button Content="7天" Tag="Countdown:D7" Padding="6,2" Margin="2,0,2,2" Click="OnCountdownQuickFill" ToolTip="倒计时 7 天" />
+                                        </WrapPanel>
+                                    </DockPanel>
+                                </StackPanel>
                             </StackPanel>
 
                             <!-- 开始→截止分割线；定时任务在此展示时长 -->
@@ -791,6 +817,8 @@
                                            ToolTip="开始到截止的时长（起点锚定日历拆分：年/月/天/时/分）" />
                             </Grid>
 
+                            <!-- 截止：定时任务始终可编辑；倒计时仅「按截止」模式可编辑 -->
+                            <StackPanel x:Name="EndPanel">
                             <!-- 截止日期 -->
                             <DockPanel>
                                 <TextBlock Style="{StaticResource FieldLabel}" Text="截止日期"
@@ -831,6 +859,12 @@
                                     <ui:Button Content="+12H" Tag="EndTime:H12" Padding="6,2" Margin="2,0,2,2" Click="OnTimeQuickFill" ToolTip="当前时间加 12 小时" />
                                 </WrapPanel>
                             </DockPanel>
+                            </StackPanel>
+
+                            <CheckBox x:Name="CountdownRecurCheck" Content="循环（完成后按相同时长重新开始）"
+                                      Margin="0,10,0,0" HorizontalAlignment="Left" Visibility="Collapsed"
+                                      Checked="OnCountdownRecurChanged" Unchecked="OnCountdownRecurChanged"
+                                      ToolTip="勾选后，点「完成」时会以完成时刻为新起点、按相同时长自动新建一个倒计时" />
 
                             <!-- 操作按钮：仅可见项等宽并排（见 LayoutTaskActionButtons） -->
                             <Grid x:Name="TaskActionBar" Margin="0,14,0,0">

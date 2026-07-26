@@ -4,6 +4,7 @@ package task
 
 import (
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -99,6 +100,23 @@ type Task struct {
 	ExpiredBehaviors []string `json:"expiredBehaviors,omitempty"`
 	// Recurrence 为循环规则；nil / Mode 为空表示单次任务。
 	Recurrence *Recurrence `json:"recurrence,omitempty"`
+	// CountdownEditMode 为倒计时任务编辑区偏好：duration（按时长）/ deadline（按截止）。
+	// 空或缺省视为 duration；仅 UI 使用，业务逻辑不依赖。omitempty 避免旧数据被无意义写回。
+	CountdownEditMode string `json:"countdownEditMode,omitempty"`
+}
+
+// CountdownEditMode 合法取值。
+const (
+	CountdownEditDuration = "duration"
+	CountdownEditDeadline = "deadline"
+)
+
+// NormalizeCountdownEditMode 将任意存盘值规范为 duration / deadline；空、缺省、非法均视为 duration。
+func NormalizeCountdownEditMode(s string) string {
+	if strings.EqualFold(s, CountdownEditDeadline) {
+		return CountdownEditDeadline
+	}
+	return CountdownEditDuration
 }
 
 // IsCompleted 报告任务是否被用户标记为已完成。
