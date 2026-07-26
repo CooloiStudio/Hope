@@ -1772,6 +1772,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.";
         DuplicateTaskButton.Visibility = Visibility.Collapsed;
         CompleteTaskButton.Visibility = Visibility.Collapsed;
         DeleteEditingTaskButton.Visibility = Visibility.Collapsed;
+        UpdateStartCountdownButtonVisibility();
         LayoutTaskActionButtons();
         SetEditorTitle("新建任务");
         ClearFormValidationToast();
@@ -1875,7 +1876,86 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.";
             DuplicateTaskButton.Visibility = Visibility.Collapsed;
             CompleteTaskButton.Visibility = Visibility.Visible;
         }
+        UpdateStartCountdownButtonVisibility(row);
         LayoutTaskActionButtons();
+    }
+
+    /// <summary>
+    /// 「开始计时」仅对未完成的倒计时任务显示（含新建未保存）。
+    /// </summary>
+    private void UpdateStartCountdownButtonVisibility(TaskRow? row = null)
+    {
+        if (StartCountdownButton == null) return;
+        bool instant = SelectedType() == "instant";
+        bool completed = row?.Completed
+            ?? (_editingId != null && (_rows.FirstOrDefault(r => r.Id == _editingId)?.Completed ?? false));
+        StartCountdownButton.Visibility = (instant && !completed) ? Visibility.Visible : Visibility.Collapsed;
+        // 无「开始计时」时，操作栏上方留出与原先一致的顶距。
+        if (TaskActionBar != null)
+            TaskActionBar.Margin = StartCountdownButton.Visibility == Visibility.Visible
+                ? new Thickness(0, 8, 0, 0)
+                : new Thickness(0, 14, 0, 0);
+    }
+
+    /// <summary>
+    /// 以当前时刻为起点重新开始倒计时，保持「天/时/分」时长不变（解决创建后久置再编辑起点仍是创建时刻的问题）。
+    /// </summary>
+    private void OnStartCountdownClick(object sender, RoutedEventArgs e)
+    {
+        if (SelectedType() != "instant") return;
+
+        // 优先用当前时长框；若为空则从截止−旧起点回推。
+        var (days, hours, minutes) = ReadCountdownBoxes();
+        long dur = TaskSchedule.ComposeDaysHoursMinutes(days, hours, minutes);
+        if (dur <= 0 && TryComposeDateTime(EndDatePicker, EndHourBox, EndMinuteBox, out var endBefore))
+        {
+            dur = endBefore.ToUnixTimeSeconds() - _taskCreatedAt.ToUnixTimeSeconds();
+            if (dur < 0) dur = 0;
+        }
+        if (dur <= 0)
+        {
+            ToastCaution("请先设置倒计时时长");
+            return;
+        }
+
+        _taskCreatedAt = TruncateToMinute(DateTimeOffset.Now);
+        var (d, h, m) = TaskSchedule.SplitDaysHoursMinutes(dur);
+        _countdownSyncing = true;
+        try
+        {
+            CountdownDaysBox.Text = d.ToString();
+            CountdownHoursBox.Text = h.ToString("00");
+            CountdownMinutesBox.Text = m.ToString("00");
+            var end = _taskCreatedAt.LocalDateTime.AddSeconds(dur);
+            SetDateTime(EndDatePicker, EndHourBox, EndMinuteBox, end);
+        }
+        finally { _countdownSyncing = false; }
+
+        UpdateCountdownSummaries();
+        _autoSaveTimer?.Stop();
+        if (!_session.Write.CanAutoSaveTask(_session, _editingId))
+        {
+            ToastCaution("当前无法保存，请稍后再试");
+            return;
+        }
+        var dto = BuildCurrentDto();
+        if (dto == null)
+        {
+            ToastFormValidation(_buildDtoError ?? "请先完善任务信息");
+            return;
+        }
+        ClearFormValidationToast();
+        if (!_ipc.IsConnected)
+        {
+            ToastDanger("未连接到核心进程，无法保存");
+            return;
+        }
+        bool isNew = _editingId == null;
+        _ipc.Send(new Command { Action = isNew ? "createTask" : "updateTask", Task = dto });
+        _editingId = dto.Id;
+        _lastSavedDto = dto;
+        ToastSuccess("已开始计时");
+        ScheduleFitHeightToTaskEditor();
     }
 
     /// <summary>按可见按钮重建等宽列，避免 Collapsed 占位导致空隙。</summary>
@@ -2146,6 +2226,11 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.";
             }
             startTs = s.ToUnixTimeSeconds();
         }
+        else
+        {
+            // 倒计时：起点与 CreatedAt 对齐，避免仅写 CreatedAt、StartTs 仍停留在旧值。
+            startTs = _taskCreatedAt.ToUnixTimeSeconds();
+        }
 
         if (!IsTaskTimeRangeValid(type, startTs, endTs, _taskCreatedAt, out var timeError))
         {
@@ -2279,6 +2364,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.";
         if (!scheduled) SyncEndToCountdown();
         UpdateCountdownEditModeUi();
         UpdateDurationLabel();
+        UpdateStartCountdownButtonVisibility();
         ScheduleFitHeightToTaskEditor();
     }
 

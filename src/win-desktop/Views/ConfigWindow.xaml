@@ -866,8 +866,15 @@
                                       Checked="OnCountdownRecurChanged" Unchecked="OnCountdownRecurChanged"
                                       ToolTip="勾选后，点「完成」时会以完成时刻为新起点、按相同时长自动新建一个倒计时" />
 
+                            <!-- 倒计时「开始计时」：在完成/删除之上；配色同「添加任务」 -->
+                            <ui:Button x:Name="StartCountdownButton" Content="开始计时"
+                                       Appearance="Success"
+                                       HorizontalAlignment="Stretch" Height="30" Margin="0,14,0,0"
+                                       Click="OnStartCountdownClick" Visibility="Collapsed"
+                                       ToolTip="以当前时刻为起点重新开始倒计时，并保持设定的时长" />
+
                             <!-- 操作按钮：仅可见项等宽并排（见 LayoutTaskActionButtons） -->
-                            <Grid x:Name="TaskActionBar" Margin="0,14,0,0">
+                            <Grid x:Name="TaskActionBar" Margin="0,8,0,0">
                                 <ui:Button x:Name="DuplicateTaskButton" Content="重建为新任务"
                                            HorizontalAlignment="Stretch" Height="30" Margin="3,0"
                                            Click="OnDuplicateTask" Visibility="Collapsed"
