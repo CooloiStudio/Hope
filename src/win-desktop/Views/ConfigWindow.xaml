@@ -784,15 +784,18 @@
                                                    ToolTip="从现在起的倒计时时长" />
                                         <StackPanel Orientation="Horizontal">
                                             <ui:TextBox x:Name="CountdownDaysBox" Width="86" MaxLength="5"
-                                                        PlaceholderText="0" TextChanged="OnCountdownBoxChanged"
+                                                        PlaceholderText="0" ClearButtonEnabled="False"
+                                                        TextChanged="OnCountdownBoxChanged"
                                                         ToolTip="天（0~36500）" />
                                             <TextBlock Text="天" VerticalAlignment="Center" Margin="6,0,10,0" />
                                             <ui:TextBox x:Name="CountdownHoursBox" Width="64" MaxLength="2"
-                                                        PlaceholderText="0" TextChanged="OnCountdownBoxChanged"
+                                                        PlaceholderText="0" ClearButtonEnabled="False"
+                                                        TextChanged="OnCountdownBoxChanged"
                                                         ToolTip="小时（0~23）" />
                                             <TextBlock Text="时" VerticalAlignment="Center" Margin="6,0,10,0" />
                                             <ui:TextBox x:Name="CountdownMinutesBox" Width="64" MaxLength="2"
-                                                        PlaceholderText="0" TextChanged="OnCountdownBoxChanged"
+                                                        PlaceholderText="0" ClearButtonEnabled="False"
+                                                        TextChanged="OnCountdownBoxChanged"
                                                         ToolTip="分钟（0~59）" />
                                             <TextBlock Text="分" VerticalAlignment="Center" Margin="6,0,0,0" />
                                         </StackPanel>
