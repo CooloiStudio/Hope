@@ -53,4 +53,29 @@ public sealed class TaskScheduleRelativeDateTests
         var value = AtLocal(new DateTimeOffset(2026, 7, 19, 0, 0, 0, TimeSpan.FromHours(8)), 8, 1);
         Assert.Equal("08:01 07-19", TaskSchedule.FormatListAbsolute(value));
     }
+
+    [Theory]
+    [InlineData(-2, "将于 前天 08:01 截止")]
+    [InlineData(-1, "将于 昨天 08:01 截止")]
+    [InlineData(0, "将于 今天 08:01 截止")]
+    [InlineData(1, "将于 明天 08:01 截止")]
+    [InlineData(2, "将于 后天 08:01 截止")]
+    public void FormatCountdownDeadlineSummary_UsesFriendlyDayWithinWindow(int dayOffset, string expected)
+    {
+        var now = AtLocal(Anchor, 9, 8);
+        var end = AtLocal(Anchor.AddDays(dayOffset), 8, 1);
+        Assert.Equal(expected, TaskSchedule.FormatCountdownDeadlineSummary(end, now));
+    }
+
+    [Theory]
+    [InlineData(-3)]
+    [InlineData(3)]
+    [InlineData(30)]
+    public void FormatCountdownDeadlineSummary_OutsideWindow_UsesYmd(int dayOffset)
+    {
+        var now = AtLocal(Anchor);
+        var end = AtLocal(Anchor.AddDays(dayOffset), 8, 1);
+        var expected = $"将于 {end.LocalDateTime:yyyy-MM-dd HH:mm} 截止";
+        Assert.Equal(expected, TaskSchedule.FormatCountdownDeadlineSummary(end, now));
+    }
 }

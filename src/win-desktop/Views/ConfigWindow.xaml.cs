@@ -1881,7 +1881,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.";
     }
 
     /// <summary>
-    /// 「开始计时」仅对未完成的倒计时任务显示（含新建未保存）。
+    /// 「重新开始计时」仅对未完成的倒计时任务显示（含新建未保存）。
     /// </summary>
     private void UpdateStartCountdownButtonVisibility(TaskRow? row = null)
     {
@@ -1890,7 +1890,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.";
         bool completed = row?.Completed
             ?? (_editingId != null && (_rows.FirstOrDefault(r => r.Id == _editingId)?.Completed ?? false));
         StartCountdownButton.Visibility = (instant && !completed) ? Visibility.Visible : Visibility.Collapsed;
-        // 无「开始计时」时，操作栏上方留出与原先一致的顶距。
+        // 无「重新开始计时」时，操作栏上方留出与原先一致的顶距。
         if (TaskActionBar != null)
             TaskActionBar.Margin = StartCountdownButton.Visibility == Visibility.Visible
                 ? new Thickness(0, 8, 0, 0)
@@ -1952,10 +1952,27 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.";
         }
         bool isNew = _editingId == null;
         _ipc.Send(new Command { Action = isNew ? "createTask" : "updateTask", Task = dto });
+        EnterEditingAfterSave(dto, isNew);
+        ToastSuccess(isNew ? "已创建并开始计时" : "已重新开始计时");
+        ScheduleFitHeightToTaskEditor();
+    }
+
+    /// <summary>保存成功后进入编辑态：标题、操作按钮与列表高亮。</summary>
+    private void EnterEditingAfterSave(TaskDto dto, bool isNew)
+    {
         _editingId = dto.Id;
         _lastSavedDto = dto;
-        ToastSuccess("已开始计时");
-        ScheduleFitHeightToTaskEditor();
+        if (!isNew) return;
+
+        SetEditorTitle($"正在编辑：{dto.Name}");
+        var row = _rows.FirstOrDefault(r => r.Id == dto.Id) ?? TaskRow.From(dto);
+        UpdateTaskActionButtons(row);
+        if (_rows.Any(r => r.Id == dto.Id))
+        {
+            _suppressTaskSelectionReload = true;
+            try { TaskGrid.SelectedItem = row; }
+            finally { _suppressTaskSelectionReload = false; }
+        }
     }
 
     /// <summary>按可见按钮重建等宽列，避免 Collapsed 占位导致空隙。</summary>
@@ -2195,15 +2212,20 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.";
         bool isNew = _editingId == null;
         _ipc.Send(new Command { Action = isNew ? "createTask" : "updateTask", Task = dto });
         ToastSuccess(isNew ? "已创建" : "已更新");
-        _editingId = dto.Id;
-        _lastSavedDto = dto;
+        EnterEditingAfterSave(dto, isNew);
     }
 
     private TaskDto? BuildCurrentDto()
     {
         _buildDtoError = null;
         var name = NameBox.Text.Trim();
-        if (string.IsNullOrEmpty(name)) return null;
+        if (string.IsNullOrEmpty(name))
+        {
+            // 新建倒计时缺名称：自定义气泡提示，且不创建。
+            if (_editingId == null && SelectedType() == "instant")
+                _buildDtoError = "请先填写倒计时任务名称";
+            return null;
+        }
         if (!TryParseColor(ColorBox.Text, out var color)) return null;
         if (!TryComposeDateTime(EndDatePicker, EndHourBox, EndMinuteBox, out var end))
         {
@@ -2420,7 +2442,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.";
         }
         else if (TryComposeDateTime(EndDatePicker, EndHourBox, EndMinuteBox, out var end))
         {
-            CountdownSummaryHero.Text = $"将于 {end.LocalDateTime:yyyy-MM-dd HH:mm} 截止";
+            CountdownSummaryHero.Text = TaskSchedule.FormatCountdownDeadlineSummary(end, DateTimeOffset.Now);
         }
         else
         {

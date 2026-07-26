@@ -119,9 +119,29 @@ public static class TaskSchedule
     /// <summary>列表相对日期（前天~后天）：如「08:01 今天」；超出范围返回 null。</summary>
     public static string? FormatListRelative(DateTimeOffset value, DateTimeOffset now)
     {
-        var local = value.LocalDateTime;
-        var dayDiff = (local.Date - now.LocalDateTime.Date).Days;
-        var relative = dayDiff switch
+        var relative = FriendlyDayLabel(value, now);
+        if (relative == null) return null;
+        return $"{value.LocalDateTime:HH:mm} {relative}";
+    }
+
+    /// <summary>
+    /// 倒计时「按时长」只读截止文案：前天~后天用友好日名，其余用年月日。
+    /// 例：「将于 今天 14:30 截止」「将于 2026-08-01 09:00 截止」。
+    /// </summary>
+    public static string FormatCountdownDeadlineSummary(DateTimeOffset end, DateTimeOffset now)
+    {
+        var local = end.LocalDateTime;
+        var day = FriendlyDayLabel(end, now);
+        return day != null
+            ? $"将于 {day} {local:HH:mm} 截止"
+            : $"将于 {local:yyyy-MM-dd HH:mm} 截止";
+    }
+
+    /// <summary>相对日历日标签（前天~后天）；超出窗口返回 null。</summary>
+    public static string? FriendlyDayLabel(DateTimeOffset value, DateTimeOffset now)
+    {
+        var dayDiff = (value.LocalDateTime.Date - now.LocalDateTime.Date).Days;
+        return dayDiff switch
         {
             -2 => "前天",
             -1 => "昨天",
@@ -130,8 +150,6 @@ public static class TaskSchedule
             2 => "后天",
             _ => null,
         };
-        if (relative == null) return null;
-        return $"{local:HH:mm} {relative}";
     }
 
     // ===== 时长展示 / 拆分（编辑区） =====
