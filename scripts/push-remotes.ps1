@@ -3,25 +3,21 @@
 # 仓库长驻分支仅 master；发版靠注解 tag。
 #
 # 用法：
-#   pwsh ./scripts/push-remotes.ps1                         # 推 master
+#   pwsh ./scripts/push-remotes.ps1                      # 推 master
 #   pwsh ./scripts/push-remotes.ps1 -Force
-#   pwsh ./scripts/push-remotes.ps1 -Force -Tag 0.13.90     # 只推 tag → 仅触发 release
-#   pwsh ./scripts/push-remotes.ps1 -TagOnly -Tag v0.13.90  # 同上（兼容旧用法）
-#   pwsh ./scripts/push-remotes.ps1 -Force -Tag 0.13.90 -AlsoPushBranches  # master + tag
+#   pwsh ./scripts/push-remotes.ps1 -Force -Tag 0.13.90  # 默认：先推 master，再推 tag
+#   pwsh ./scripts/push-remotes.ps1 -TagOnly -Tag v0.13.90  # 仅推 tag（不推分支）
 #
 # 参数：
-#   -Force             分支用 --force-with-lease；tag 用 --force
-#   -Tag               发版标签（可写 v0.13.90 或 0.13.90，自动补 v）
-#                      一旦指定 -Tag，默认只推该 tag，不推分支（避免连带触发 ci）
-#   -TagOnly           兼容开关：与「只指定 -Tag」行为相同
-#   -AlsoPushBranches  与 -Tag 联用时，额外推送 master
+#   -Force    分支用 --force-with-lease；tag 用 --force
+#   -Tag      发版标签（可写 v0.13.90 或 0.13.90，自动补 v）
+#   -TagOnly  只推 tag，不推 master（默认会推 master）
 
 [CmdletBinding()]
 param(
     [switch]$Force,
     [string]$Tag = "",
-    [switch]$TagOnly,
-    [switch]$AlsoPushBranches
+    [switch]$TagOnly
 )
 
 $ErrorActionPreference = "Stop"
@@ -92,11 +88,10 @@ if ($TagOnly -and -not $normalized) {
     throw "TagOnly 需要同时指定 -Tag（例如 -Tag v0.13.90）"
 }
 
-# 指定了 -Tag：默认只推 tag（仅触发 release.yml）；要连带推 master 需 -AlsoPushBranches。
-# 未指定 -Tag：推 master（触发 ci.yml）。
-$pushBranches = if ($normalized) { [bool]$AlsoPushBranches } else { -not $TagOnly }
+# 默认推 master；仅 -TagOnly 时跳过分支。
+$pushBranches = -not $TagOnly
 
-Write-Host "==> Force=$Force Tag=$Tag TagOnly=$TagOnly AlsoPushBranches=$AlsoPushBranches → pushBranches=$pushBranches (master only)"
+Write-Host "==> Force=$Force Tag=$Tag TagOnly=$TagOnly → pushBranches=$pushBranches (master only)"
 
 if ($pushBranches) {
     Push-Branches

@@ -6,9 +6,8 @@
 # 用法：
 #   ./scripts/push-remotes.sh
 #   ./scripts/push-remotes.sh --force
-#   ./scripts/push-remotes.sh --force --tag 0.13.90              # 只推 tag → 仅触发 release
-#   ./scripts/push-remotes.sh --tag-only --tag v0.13.90          # 同上（兼容旧用法）
-#   ./scripts/push-remotes.sh --force --tag 0.13.90 --also-push-branches  # master + tag
+#   ./scripts/push-remotes.sh --force --tag 0.13.90       # 默认：先推 master，再推 tag
+#   ./scripts/push-remotes.sh --tag-only --tag v0.13.90   # 仅推 tag（不推分支）
 
 set -euo pipefail
 
@@ -19,10 +18,9 @@ GITEE_URL="git@gitee.com:CooloiStudio/Hope.git"
 FORCE=0
 TAG=""
 TAG_ONLY=0
-ALSO_PUSH_BRANCHES=0
 
 usage() {
-  echo "Usage: $0 [--force] [--tag vX.Y.Z] [--tag-only] [--also-push-branches]"
+  echo "Usage: $0 [--force] [--tag vX.Y.Z] [--tag-only]"
 }
 
 while [[ $# -gt 0 ]]; do
@@ -32,7 +30,6 @@ while [[ $# -gt 0 ]]; do
       [[ $# -ge 2 ]] || { echo "ERROR: --tag needs a value"; exit 1; }
       TAG="$2"; shift 2 ;;
     --tag-only) TAG_ONLY=1; shift ;;
-    --also-push-branches) ALSO_PUSH_BRANCHES=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown arg: $1"; usage; exit 1 ;;
   esac
@@ -59,19 +56,14 @@ if [[ "$TAG_ONLY" == "1" && -z "$tag" ]]; then
   exit 1
 fi
 
-# 指定了 --tag：默认只推 tag（仅触发 release.yml）；要连带推 master 需 --also-push-branches。
-# 未指定 --tag：推 master（触发 ci.yml）。
-if [[ -n "$tag" ]]; then
-  PUSH_BRANCHES=$ALSO_PUSH_BRANCHES
+# 默认推 master；仅 --tag-only 时跳过分支。
+if [[ "$TAG_ONLY" == "1" ]]; then
+  PUSH_BRANCHES=0
 else
-  if [[ "$TAG_ONLY" == "1" ]]; then
-    PUSH_BRANCHES=0
-  else
-    PUSH_BRANCHES=1
-  fi
+  PUSH_BRANCHES=1
 fi
 
-echo "==> FORCE=$FORCE TAG=$TAG TAG_ONLY=$TAG_ONLY ALSO_PUSH_BRANCHES=$ALSO_PUSH_BRANCHES → push_branches=$PUSH_BRANCHES (master only)"
+echo "==> FORCE=$FORCE TAG=$TAG TAG_ONLY=$TAG_ONLY → push_branches=$PUSH_BRANCHES (master only)"
 
 PUSH_FLAGS=()
 TAG_FLAGS=()
