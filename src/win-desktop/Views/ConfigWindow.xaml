@@ -165,7 +165,7 @@
                             <!-- 方案 A：关闭 DataGrid 网格线后，由单元格统一画一条底边描边，各列粗细一致。 -->
                             <Setter Property="BorderThickness" Value="0,0,0,1" />
                             <Setter Property="BorderBrush" Value="{DynamicResource ControlStrokeColorDefaultBrush}" />
-                            <!-- 单元格撑满整行，底边描边才会在各列对齐到统一的行底部；内容仍居中。 -->
+                            <!-- 单元格撑满整行，底边描边才会在各列对齐到统一的行底部；对齐由列内容自行控制。 -->
                             <Setter Property="VerticalAlignment" Value="Stretch" />
                             <Setter Property="VerticalContentAlignment" Value="Center" />
                             <Setter Property="Foreground" Value="{DynamicResource TextFillColorPrimaryBrush}" />
@@ -202,14 +202,26 @@
                                 </Trigger>
                             </Style.Triggers>
                         </Style>
-                        <!-- 文本列显式固定前景色，避免继承选中态主题反色。 -->
-                        <Style x:Key="TaskGridTextBlockStyle" TargetType="{x:Type TextBlock}">
+                        <!-- 文本列前景色固定；对齐用 HorizontalAlignment，不改表头 ControlTemplate。 -->
+                        <Style x:Key="TaskGridNameTextStyle" TargetType="{x:Type TextBlock}">
                             <Setter Property="Foreground" Value="{DynamicResource TextFillColorPrimaryBrush}" />
                             <Setter Property="VerticalAlignment" Value="Center" />
+                            <Setter Property="HorizontalAlignment" Value="Stretch" />
+                            <Setter Property="TextAlignment" Value="Left" />
+                        </Style>
+                        <Style x:Key="TaskGridCenteredTextStyle" TargetType="{x:Type TextBlock}">
+                            <Setter Property="Foreground" Value="{DynamicResource TextFillColorPrimaryBrush}" />
+                            <Setter Property="VerticalAlignment" Value="Center" />
+                            <Setter Property="HorizontalAlignment" Value="Center" />
+                            <Setter Property="TextAlignment" Value="Center" />
                         </Style>
                     </DataGrid.Resources>
                     <DataGrid.Columns>
-                        <DataGridTemplateColumn Header="颜色" Width="56" MinWidth="56">
+                        <!-- 除「名称」外列宽 Auto；名称列 *。表头用 TextBlock 只调对齐/边距，不覆盖主题 Header 样式。 -->
+                        <DataGridTemplateColumn Width="Auto">
+                            <DataGridTemplateColumn.Header>
+                                <TextBlock Text="颜色" HorizontalAlignment="Center" />
+                            </DataGridTemplateColumn.Header>
                             <DataGridTemplateColumn.CellTemplate>
                                 <DataTemplate>
                                     <Border Width="16" Height="16" CornerRadius="3"
@@ -219,39 +231,69 @@
                                 </DataTemplate>
                             </DataGridTemplateColumn.CellTemplate>
                         </DataGridTemplateColumn>
-                        <DataGridTextColumn Header="名称" Binding="{Binding Name}" Width="*"
-                                            ElementStyle="{StaticResource TaskGridTextBlockStyle}" />
-                        <DataGridTextColumn Header="类型" Binding="{Binding TypeLabel}" Width="60"
-                                            ElementStyle="{StaticResource TaskGridTextBlockStyle}" />
-                        <DataGridTextColumn Header="循环" Binding="{Binding RecurLabel}" Width="72"
-                                            ElementStyle="{StaticResource TaskGridTextBlockStyle}" />
-                        <DataGridTemplateColumn Header="开始" Width="104" MinWidth="104">
+                        <DataGridTextColumn Binding="{Binding Name}" Width="*"
+                                            ElementStyle="{StaticResource TaskGridNameTextStyle}">
+                            <DataGridTextColumn.Header>
+                                <TextBlock Text="名称" HorizontalAlignment="Left" />
+                            </DataGridTextColumn.Header>
+                        </DataGridTextColumn>
+                        <DataGridTextColumn Binding="{Binding TypeLabel}" Width="Auto"
+                                            ElementStyle="{StaticResource TaskGridCenteredTextStyle}">
+                            <DataGridTextColumn.Header>
+                                <TextBlock Text="类型" HorizontalAlignment="Center" />
+                            </DataGridTextColumn.Header>
+                        </DataGridTextColumn>
+                        <DataGridTextColumn Binding="{Binding RecurLabel}" Width="Auto"
+                                            ElementStyle="{StaticResource TaskGridCenteredTextStyle}">
+                            <DataGridTextColumn.Header>
+                                <TextBlock Text="循环" HorizontalAlignment="Center" />
+                            </DataGridTextColumn.Header>
+                        </DataGridTextColumn>
+                        <!-- 起止列外缘 16、相邻内侧 8，避免与邻列数字贴在一起。 -->
+                        <DataGridTemplateColumn Width="Auto">
+                            <DataGridTemplateColumn.Header>
+                                <TextBlock Text="开始" HorizontalAlignment="Center" Margin="16,0,8,0" />
+                            </DataGridTemplateColumn.Header>
                             <DataGridTemplateColumn.CellTemplate>
                                 <DataTemplate>
-                                    <controls:AlternatingDateText Value="{Binding StartDisplayAt}" />
+                                    <controls:AlternatingDateText Value="{Binding StartDisplayAt}"
+                                                                  HorizontalAlignment="Center"
+                                                                  Margin="16,0,8,0" />
                                 </DataTemplate>
                             </DataGridTemplateColumn.CellTemplate>
                         </DataGridTemplateColumn>
-                        <DataGridTemplateColumn Header="截止" Width="104" MinWidth="104">
+                        <DataGridTemplateColumn Width="Auto">
+                            <DataGridTemplateColumn.Header>
+                                <TextBlock Text="截止" HorizontalAlignment="Center" Margin="8,0,16,0" />
+                            </DataGridTemplateColumn.Header>
                             <DataGridTemplateColumn.CellTemplate>
                                 <DataTemplate>
-                                    <controls:AlternatingDateText Value="{Binding EndDisplayAt}" />
+                                    <controls:AlternatingDateText Value="{Binding EndDisplayAt}"
+                                                                  HorizontalAlignment="Center"
+                                                                  Margin="8,0,16,0" />
                                 </DataTemplate>
                             </DataGridTemplateColumn.CellTemplate>
                         </DataGridTemplateColumn>
-                        <DataGridTemplateColumn Header="进度" Width="120" MinWidth="100">
+                        <DataGridTemplateColumn Width="Auto">
+                            <DataGridTemplateColumn.Header>
+                                <TextBlock Text="进度" HorizontalAlignment="Center" />
+                            </DataGridTemplateColumn.Header>
                             <DataGridTemplateColumn.CellTemplate>
                                 <DataTemplate>
                                     <controls:AlternatingProgressText
+                                        HorizontalAlignment="Center"
                                         Primary="{Binding ProgressLabel}"
                                         Secondary="{Binding ProgressSpanLabel}" />
                                 </DataTemplate>
                             </DataGridTemplateColumn.CellTemplate>
                         </DataGridTemplateColumn>
-                        <DataGridTemplateColumn Header="操作" Width="72" MinWidth="72">
+                        <DataGridTemplateColumn Width="Auto">
+                            <DataGridTemplateColumn.Header>
+                                <TextBlock Text="操作" HorizontalAlignment="Center" />
+                            </DataGridTemplateColumn.Header>
                             <DataGridTemplateColumn.CellTemplate>
                                 <DataTemplate>
-                                    <Grid VerticalAlignment="Center">
+                                    <Grid VerticalAlignment="Center" HorizontalAlignment="Center">
                                         <ui:Button Content="完成" Padding="6,2" FontSize="12"
                                                    HorizontalAlignment="Center"
                                                    VerticalAlignment="Center"
@@ -972,9 +1014,17 @@
                                                Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
                                 </Grid>
 
-                                <TextBlock x:Name="UpdateStatusText" TextWrapping="Wrap"
-                                           Text="点击「检查更新」获取最新版本。"
-                                           Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
+                                <DockPanel>
+                                    <TextBlock x:Name="UpdateProgressDetail" DockPanel.Dock="Right"
+                                               Margin="12,0,0,0" VerticalAlignment="Top"
+                                               TextAlignment="Right"
+                                               Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                                               Visibility="Collapsed"
+                                               Text="0%, 0 kBps" />
+                                    <TextBlock x:Name="UpdateStatusText" TextWrapping="Wrap"
+                                               Text="点击「检查更新」获取最新版本。"
+                                               Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
+                                </DockPanel>
                                 <ProgressBar x:Name="UpdateProgress" Height="6" Margin="0,8,0,0"
                                              Minimum="0" Maximum="100" Visibility="Collapsed" />
                                 <TextBox x:Name="UpdateNotesBox" Margin="0,8,0,0"

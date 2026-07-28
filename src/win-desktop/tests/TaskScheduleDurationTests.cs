@@ -17,6 +17,14 @@ public class TaskScheduleDurationTests
     }
 
     [Fact]
+    public void UnderOneHour_StillShowsZeroHour()
+    {
+        // 最小可见到小时：10 分 → 「0小时10分」，避免只写「10分」语义模糊。
+        Assert.Equal("0小时10分", TaskSchedule.FormatDurationBetween(D(2026, 5, 1, 9, 0), D(2026, 5, 1, 9, 10)));
+        Assert.Equal("0小时0分", TaskSchedule.FormatDurationBetween(D(2026, 5, 1, 9, 0), D(2026, 5, 1, 9, 0).AddSeconds(30)));
+    }
+
+    [Fact]
     public void MultiDay_KeepsIntermediateZeroHour()
     {
         // 2 天 0 小时 30 分：中间的 0 小时保留，不满一周不显示周。

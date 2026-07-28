@@ -37,9 +37,17 @@ public sealed class UpdateCoordinator
     public static bool IsStoreManaged => InstallChannel.IsStoreManaged;
 
     public UpdateStatus Status { get; private set; } = UpdateStatus.Idle;
+    /// <summary>下载完成比例 0~1；总长度未知时保持 0。</summary>
     public double DownloadProgress { get; private set; }
+    /// <summary>服务端是否提供了 Content-Length（可显示真实百分比）。</summary>
+    public bool DownloadProgressKnown { get; private set; }
+    /// <summary>瞬时下载速度（千字节/秒，kBps）。</summary>
+    public double DownloadSpeedKBps { get; private set; }
     public UpdateInfo? Latest { get; private set; }
     public string Message { get; private set; } = "";
+
+    private long _downloadBytesSample;
+    private DateTime _downloadSampleAtUtc;
 
     /// <summary>状态变更通知（已切回 UI 线程）。</summary>
     public event Action? StateChanged;
@@ -157,18 +165,42 @@ public sealed class UpdateCoordinator
         {
             SetState(UpdateStatus.Downloading, $"正在下载 {info.Tag}…");
             DownloadProgress = 0;
+            DownloadProgressKnown = false;
+            DownloadSpeedKBps = 0;
+            _downloadBytesSample = 0;
+            _downloadSampleAtUtc = DateTime.UtcNow;
             // 不复用检查用的 CTS：检查那个带 2 分钟自动取消，复用会导致超 2 分钟后下载一进来就被取消。
             // 下载需独立、更宽松的超时（大文件 + 慢网络 + 多通道兜底）。
             _cts?.Dispose();
             _cts = new CancellationTokenSource(TimeSpan.FromMinutes(15));
 
-            var progress = new Progress<double>(p =>
+            var progress = new Progress<DownloadProgressReport>(p =>
             {
-                DownloadProgress = p;
+                if (p.Fraction is { } frac)
+                {
+                    DownloadProgress = frac;
+                    DownloadProgressKnown = true;
+                }
+                var now = DateTime.UtcNow;
+                var dt = (now - _downloadSampleAtUtc).TotalSeconds;
+                if (dt >= 0.25 && p.BytesReceived >= _downloadBytesSample)
+                {
+                    var delta = p.BytesReceived - _downloadBytesSample;
+                    var instant = delta / 1024.0 / dt;
+                    // 指数平滑，避免进度条旁速度数字跳得太狠。
+                    DownloadSpeedKBps = DownloadSpeedKBps <= 0
+                        ? instant
+                        : DownloadSpeedKBps * 0.65 + instant * 0.35;
+                    _downloadBytesSample = p.BytesReceived;
+                    _downloadSampleAtUtc = now;
+                }
                 RaiseOnUi();
             });
 
             _installerPath = await _service.DownloadInstallerAsync(info, progress, _cts.Token).ConfigureAwait(false);
+            DownloadProgress = 1;
+            DownloadProgressKnown = true;
+            DownloadSpeedKBps = 0;
             SetState(UpdateStatus.Ready, $"新版本 {info.Tag} 已就绪，可立即安装。");
             _telemetry?.TrackEvent("update_download", new Dictionary<string, object>
             {

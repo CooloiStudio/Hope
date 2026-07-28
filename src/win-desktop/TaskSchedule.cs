@@ -106,9 +106,9 @@ public static class TaskSchedule
     }
 
     /// <summary>
-    /// 进度列时长（精度到分，不展示秒）：总时长 ≤1 小时用分钟数（允许 60）；
-    /// &lt;1 天用 HH:mm；否则「N天 HH:mm」。秒向下取整到分。
-    /// <paramref name="styleTotal"/> 决定整段「剩余/总时长」的统一样式。
+    /// 进度列时长（精度到分，不展示秒）：不满一天统一为 HH:mm（含不足 1 小时的 00:mm）；
+    /// ≥1 天为「N天 HH:mm」。秒向下取整到分。
+    /// <paramref name="styleTotal"/> 决定是否带「天」前缀（整段「剩余/总时长」样式一致）。
     /// </summary>
     public static string FormatProgressClock(long seconds, long styleTotal)
     {
@@ -119,13 +119,11 @@ public static class TaskSchedule
         var wholeMinutes = seconds / 60;
         var styleMinutes = styleTotal / 60;
 
-        if (styleTotal <= 3600)
-            return wholeMinutes.ToString("00");
-
         var days = wholeMinutes / (24 * 60);
         var remMin = wholeMinutes % (24 * 60);
         var hours = remMin / 60;
         var minutes = remMin % 60;
+        // 最小可见到小时：即使不足 1 小时也出 00:mm，避免「09/10」语义不明。
         if (styleTotal >= 86400 || styleMinutes >= 24 * 60 || days >= 1)
             return $"{days}天 {hours:00}:{minutes:00}";
         return $"{hours:00}:{minutes:00}";
@@ -261,7 +259,19 @@ public static class TaskSchedule
             if (first < 0) first = i;
             last = i;
         }
-        if (first < 0) return "0分"; // 不足 1 分钟
+        // 最小可见到小时：不足 1 小时（仅有「分」）时仍带出「0小时」。
+        const int hoursIndex = 3;
+        const int minutesIndex = 4;
+        if (first < 0)
+        {
+            // 不足 1 分钟
+            first = hoursIndex;
+            last = minutesIndex;
+        }
+        else if (first > hoursIndex)
+        {
+            first = hoursIndex;
+        }
 
         var sb = new System.Text.StringBuilder();
         for (int i = first; i <= last; i++)

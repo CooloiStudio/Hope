@@ -1223,7 +1223,21 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
 
         bool downloading = st == Services.UpdateStatus.Downloading;
         UpdateProgress.Visibility = downloading ? Visibility.Visible : Visibility.Collapsed;
+        UpdateProgress.IsIndeterminate = downloading && !_updates.DownloadProgressKnown;
         UpdateProgress.Value = Math.Clamp(_updates.DownloadProgress * 100.0, 0, 100);
+        if (downloading)
+        {
+            var pctText = _updates.DownloadProgressKnown
+                ? $"{(int)Math.Floor(Math.Clamp(_updates.DownloadProgress * 100.0, 0, 100))}%"
+                : "--%";
+            var kbps = Math.Max(0, (int)Math.Round(_updates.DownloadSpeedKBps));
+            UpdateProgressDetail.Text = $"{pctText}, {kbps} kBps";
+            UpdateProgressDetail.Visibility = Visibility.Visible;
+        }
+        else
+        {
+            UpdateProgressDetail.Visibility = Visibility.Collapsed;
+        }
 
         CheckUpdateButton.IsEnabled = st != Services.UpdateStatus.Checking && !downloading;
 

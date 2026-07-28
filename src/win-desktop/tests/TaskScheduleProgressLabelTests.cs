@@ -61,13 +61,23 @@ public sealed class TaskScheduleProgressLabelTests
     }
 
     [Fact]
-    public void GetListProgressSpanLabel_OneHour_UsesMinutesOnly()
+    public void GetListProgressSpanLabel_UnderOneHour_UsesHm()
+    {
+        var start = At(2026, 7, 26, 10, 0, 0);
+        var end = start.AddMinutes(10);
+        var now = start.AddMinutes(1); // 剩余 9 分
+        var row = Active(start.ToUnixTimeSeconds(), end.ToUnixTimeSeconds());
+        Assert.Equal("00:09/00:10", TaskSchedule.GetListProgressSpanLabel(row, now));
+    }
+
+    [Fact]
+    public void GetListProgressSpanLabel_OneHour_UsesHm()
     {
         var start = At(2026, 7, 26, 10, 0, 0);
         var end = start.AddHours(1);
         var now = start.AddSeconds(11); // 剩余 3589s → 向下取整 59 分
         var row = Active(start.ToUnixTimeSeconds(), end.ToUnixTimeSeconds());
-        Assert.Equal("59/60", TaskSchedule.GetListProgressSpanLabel(row, now));
+        Assert.Equal("00:59/01:00", TaskSchedule.GetListProgressSpanLabel(row, now));
     }
 
     [Fact]
@@ -93,12 +103,15 @@ public sealed class TaskScheduleProgressLabelTests
     }
 
     [Theory]
-    [InlineData(0, 3600, "00")]
-    [InlineData(3541, 3600, "59")]
-    [InlineData(3600, 3600, "60")]
+    [InlineData(0, 600, "00:00")]
+    [InlineData(540, 600, "00:09")]
+    [InlineData(600, 600, "00:10")]
+    [InlineData(0, 3600, "00:00")]
+    [InlineData(3541, 3600, "00:59")]
+    [InlineData(3600, 3600, "01:00")]
     [InlineData(3661, 7200, "01:01")]
     [InlineData(90061, 172800, "1天 01:01")]
-    public void FormatProgressClock_MinutePrecision_MatchesStyleTotal(long seconds, long styleTotal, string expected)
+    public void FormatProgressClock_AlwaysShowsHoursWhenUnderOneDay(long seconds, long styleTotal, string expected)
     {
         Assert.Equal(expected, TaskSchedule.FormatProgressClock(seconds, styleTotal));
     }

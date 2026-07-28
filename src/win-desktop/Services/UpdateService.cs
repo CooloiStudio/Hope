@@ -14,6 +14,13 @@ public sealed record UpdateInfo(
     IReadOnlyList<string> Sha256Urls,
     string Source);
 
+/// <summary>安装包下载进度：已收字节与可选总长度（用于百分比与速度）。</summary>
+public readonly record struct DownloadProgressReport(long BytesReceived, long? TotalBytes)
+{
+    public double? Fraction =>
+        TotalBytes is > 0 ? Math.Clamp((double)BytesReceived / TotalBytes.Value, 0, 1) : null;
+}
+
 /// <summary>
 /// 全量更新服务：检测最新版本并下载安装包，校验 SHA-256，再静默就地升级。
 /// 数据源优先 GitHub（API / 网页重定向），并以 Gitee（gitee.com/CooloiStudio/Hope）的 Release 作为大陆兜底。
@@ -291,7 +298,7 @@ public sealed class UpdateService
     /// <summary>
     /// 下载安装包到本地（按候选地址顺序兜底 + SHA-256 校验）。成功返回安装包本地路径，失败抛异常。
     /// </summary>
-    public async Task<string> DownloadInstallerAsync(UpdateInfo info, IProgress<double>? progress, CancellationToken ct)
+    public async Task<string> DownloadInstallerAsync(UpdateInfo info, IProgress<DownloadProgressReport>? progress, CancellationToken ct)
     {
         var dir = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
@@ -357,7 +364,7 @@ public sealed class UpdateService
         throw last ?? new InvalidOperationException("所有下载通道均失败");
     }
 
-    private static async Task DownloadToFileAsync(string url, string path, IProgress<double>? progress, CancellationToken ct)
+    private static async Task DownloadToFileAsync(string url, string path, IProgress<DownloadProgressReport>? progress, CancellationToken ct)
     {
         using var resp = await Http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
         resp.EnsureSuccessStatusCode();
@@ -373,8 +380,10 @@ public sealed class UpdateService
         {
             await dst.WriteAsync(buffer.AsMemory(0, n), ct).ConfigureAwait(false);
             read += n;
-            if (total is > 0) progress?.Report((double)read / total.Value);
+            progress?.Report(new DownloadProgressReport(read, total));
         }
+        // 收尾：保证 UI 能到 100%（部分源不给 ContentLength 时仍至少报齐已收字节）。
+        progress?.Report(new DownloadProgressReport(read, total ?? read));
     }
 
     private async Task<string?> TryFetchSha256Async(IReadOnlyList<string> urls, CancellationToken ct)
