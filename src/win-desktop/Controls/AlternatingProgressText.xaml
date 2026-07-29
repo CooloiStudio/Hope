@@ -5,10 +5,14 @@
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              mc:Ignorable="d"
              d:DesignHeight="24" d:DesignWidth="120">
-    <Grid VerticalAlignment="Center">
-        <TextBlock x:Name="PrimaryText" HorizontalAlignment="Left" VerticalAlignment="Center"
+    <Grid VerticalAlignment="Center" HorizontalAlignment="Stretch">
+        <TextBlock x:Name="PrimaryText"
+                   HorizontalAlignment="Center" VerticalAlignment="Center"
+                   TextAlignment="Center" TextTrimming="CharacterEllipsis"
                    Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
-        <TextBlock x:Name="SecondaryText" HorizontalAlignment="Left" VerticalAlignment="Center" Opacity="0"
+        <TextBlock x:Name="SecondaryText"
+                   HorizontalAlignment="Center" VerticalAlignment="Center"
+                   TextAlignment="Center" TextTrimming="CharacterEllipsis" Opacity="0"
                    Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
     </Grid>
 </UserControl>

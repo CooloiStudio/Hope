@@ -147,6 +147,8 @@
                 <ui:DataGrid x:Name="TaskGrid" AutoGenerateColumns="False" IsReadOnly="True"
                           SelectionMode="Single" HeadersVisibility="Column"
                           SelectionChanged="OnSelectTask" GridLinesVisibility="None"
+                          ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                          CanUserResizeColumns="False"
                           Background="{DynamicResource ControlFillColorDefaultBrush}"
                           Foreground="{DynamicResource TextFillColorPrimaryBrush}"
                           BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}">
@@ -208,12 +210,25 @@
                             <Setter Property="VerticalAlignment" Value="Center" />
                             <Setter Property="HorizontalAlignment" Value="Stretch" />
                             <Setter Property="TextAlignment" Value="Left" />
+                            <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+                            <Setter Property="TextWrapping" Value="NoWrap" />
+                            <Setter Property="ToolTip" Value="{Binding Name}" />
                         </Style>
                         <Style x:Key="TaskGridCenteredTextStyle" TargetType="{x:Type TextBlock}">
                             <Setter Property="Foreground" Value="{DynamicResource TextFillColorPrimaryBrush}" />
                             <Setter Property="VerticalAlignment" Value="Center" />
                             <Setter Property="HorizontalAlignment" Value="Center" />
                             <Setter Property="TextAlignment" Value="Center" />
+                        </Style>
+                        <!--
+                          三列表头居中：WPF-UI 默认 HorizontalContentAlignment=Left，只改 TextBlock 无效。
+                          基于 DefaultUiDataGridColumnHeaderStyle，仅把内容槽改为 Stretch，标题用 TextAlignment 居中；
+                          不重写 ControlTemplate，保留主题 Padding/Hover/Sort。
+                        -->
+                        <Style x:Key="TaskGridCenteredHeaderStyle"
+                               TargetType="{x:Type DataGridColumnHeader}"
+                               BasedOn="{StaticResource DefaultUiDataGridColumnHeaderStyle}">
+                            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
                         </Style>
                     </DataGrid.Resources>
                     <DataGrid.Columns>
@@ -249,10 +264,11 @@
                                 <TextBlock Text="循环" HorizontalAlignment="Center" />
                             </DataGridTextColumn.Header>
                         </DataGridTextColumn>
-                        <!-- 起止列外缘 16、相邻内侧 8，避免与邻列数字贴在一起。 -->
-                        <DataGridTemplateColumn Width="Auto">
+                        <!-- 起止列：表头用 TaskGridCenteredHeaderStyle 居中；单元格外缘 16、相邻内侧 8。 -->
+                        <DataGridTemplateColumn Width="Auto"
+                                                HeaderStyle="{StaticResource TaskGridCenteredHeaderStyle}">
                             <DataGridTemplateColumn.Header>
-                                <TextBlock Text="开始" HorizontalAlignment="Center" Margin="16,0,8,0" />
+                                <TextBlock Text="开始" HorizontalAlignment="Stretch" TextAlignment="Center" />
                             </DataGridTemplateColumn.Header>
                             <DataGridTemplateColumn.CellTemplate>
                                 <DataTemplate>
@@ -262,9 +278,10 @@
                                 </DataTemplate>
                             </DataGridTemplateColumn.CellTemplate>
                         </DataGridTemplateColumn>
-                        <DataGridTemplateColumn Width="Auto">
+                        <DataGridTemplateColumn Width="Auto"
+                                                HeaderStyle="{StaticResource TaskGridCenteredHeaderStyle}">
                             <DataGridTemplateColumn.Header>
-                                <TextBlock Text="截止" HorizontalAlignment="Center" Margin="8,0,16,0" />
+                                <TextBlock Text="截止" HorizontalAlignment="Stretch" TextAlignment="Center" />
                             </DataGridTemplateColumn.Header>
                             <DataGridTemplateColumn.CellTemplate>
                                 <DataTemplate>
@@ -274,20 +291,23 @@
                                 </DataTemplate>
                             </DataGridTemplateColumn.CellTemplate>
                         </DataGridTemplateColumn>
-                        <DataGridTemplateColumn Width="Auto">
+                        <!-- 进度列固定 100；表头同样 Stretch + TextAlignment 居中。 -->
+                        <DataGridTemplateColumn Width="100" MinWidth="100" MaxWidth="100"
+                                                HeaderStyle="{StaticResource TaskGridCenteredHeaderStyle}">
                             <DataGridTemplateColumn.Header>
-                                <TextBlock Text="进度" HorizontalAlignment="Center" />
+                                <TextBlock Text="进度" HorizontalAlignment="Stretch" TextAlignment="Center" />
                             </DataGridTemplateColumn.Header>
                             <DataGridTemplateColumn.CellTemplate>
                                 <DataTemplate>
                                     <controls:AlternatingProgressText
-                                        HorizontalAlignment="Center"
+                                        HorizontalAlignment="Stretch"
                                         Primary="{Binding ProgressLabel}"
                                         Secondary="{Binding ProgressSpanLabel}" />
                                 </DataTemplate>
                             </DataGridTemplateColumn.CellTemplate>
                         </DataGridTemplateColumn>
-                        <DataGridTemplateColumn Width="Auto">
+                        <!-- 操作列固定，保证「完成/重建」始终可见。 -->
+                        <DataGridTemplateColumn Width="56" MinWidth="56" MaxWidth="56">
                             <DataGridTemplateColumn.Header>
                                 <TextBlock Text="操作" HorizontalAlignment="Center" />
                             </DataGridTemplateColumn.Header>
@@ -591,17 +611,25 @@
                                        Margin="0,0,0,6" TextWrapping="Wrap"
                                        ToolTip="当前为新建或正在编辑哪条任务（操作结果见右下 Toast）" />
 
-                            <!-- 名称 -->
-                            <DockPanel Margin="0,3,0,0">
-                                <TextBlock Style="{StaticResource FieldLabel}" Text="名称"
-                                           ToolTip="任务显示名称" />
-                                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Margin="6,0,0,0">
-                                    <ui:Button Content="下班" Padding="8,2" Margin="2,0" Click="OnPresetName" ToolTip="将名称设为「下班」" />
-                                    <ui:Button Content="干饭" Padding="8,2" Margin="2,0" Click="OnPresetName" ToolTip="将名称设为「干饭」" />
-                                    <ui:Button Content="放假" Padding="8,2" Margin="2,0" Click="OnPresetName" ToolTip="将名称设为「放假」" />
+                            <!-- 名称：输入占满一行；快填缩小放下方；最多 16 汉字宽（32 半角）。 -->
+                            <StackPanel Margin="0,3,0,0">
+                                <DockPanel>
+                                    <TextBlock Style="{StaticResource FieldLabel}" Text="名称"
+                                               ToolTip="任务显示名称，最多 16 个汉字（或 32 个半角字符）" />
+                                    <ui:TextBox x:Name="NameBox" PlaceholderText="任务名称"
+                                                HorizontalAlignment="Stretch"
+                                                TextChanged="OnNameBoxTextChanged"
+                                                ToolTip="任务显示名称，最多 16 个汉字（或 32 个半角字符）" />
+                                </DockPanel>
+                                <StackPanel Orientation="Horizontal" Margin="64,4,0,0">
+                                    <ui:Button Content="下班" Padding="6,1" Margin="0,0,6,0" FontSize="11"
+                                               Click="OnPresetName" ToolTip="将名称设为「下班」" />
+                                    <ui:Button Content="干饭" Padding="6,1" Margin="0,0,6,0" FontSize="11"
+                                               Click="OnPresetName" ToolTip="将名称设为「干饭」" />
+                                    <ui:Button Content="放假" Padding="6,1" FontSize="11"
+                                               Click="OnPresetName" ToolTip="将名称设为「放假」" />
                                 </StackPanel>
-                                <ui:TextBox x:Name="NameBox" PlaceholderText="任务名称" ToolTip="任务显示名称" />
-                            </DockPanel>
+                            </StackPanel>
 
                             <!-- 颜色 -->
                             <DockPanel Margin="0,6,0,0">
@@ -751,7 +779,7 @@
                                 <DockPanel>
                                     <TextBlock Style="{StaticResource FieldLabel}" Text="开始日期"
                                                ToolTip="定时任务的开始日期" />
-                                    <DatePicker x:Name="StartDatePicker" HorizontalAlignment="Left" Width="200"
+                                    <DatePicker x:Name="StartDatePicker" HorizontalAlignment="Stretch"
                                                 ToolTip="选择开始日期" />
                                 </DockPanel>
                                 <DockPanel Margin="0,4,0,0">
@@ -875,7 +903,7 @@
                             <DockPanel>
                                 <TextBlock Style="{StaticResource FieldLabel}" Text="截止日期"
                                            ToolTip="任务截止日期" />
-                                <DatePicker x:Name="EndDatePicker" HorizontalAlignment="Left" Width="200"
+                                <DatePicker x:Name="EndDatePicker" HorizontalAlignment="Stretch"
                                             ToolTip="选择截止日期" />
                             </DockPanel>
                             <DockPanel Margin="0,4,0,0">

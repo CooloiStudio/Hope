@@ -7,6 +7,7 @@ namespace Hope.Desktop.Controls;
 /// <summary>
 /// 列表进度列：进行中时在「百分比」与「剩余/总时长」间交替展示（停留 4s、渐变 0.5s）；
 /// 已完成 / 未开始 / 已到期等仅显示主文案。秒级刷新只换文案，不重启动画。
+/// 列宽由列表固定，超长文案省略显示。
 /// </summary>
 public partial class AlternatingProgressText : UserControl
 {
@@ -78,6 +79,7 @@ public partial class AlternatingProgressText : UserControl
             return;
         }
 
+        // 副文案始终参与布局；列宽固定时由 TextTrimming 省略超长部分。
         SecondaryText.Text = secondary;
 
         if (_crossFadeActive && !restartAnimation)

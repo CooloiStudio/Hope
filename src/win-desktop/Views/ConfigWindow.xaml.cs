@@ -1451,6 +1451,29 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.";
         if (sender is ContentControl b && b.Content is string name) NameBox.Text = name;
     }
 
+    private bool _adjustingName;
+
+    /// <summary>任务名称最多 16 汉字宽（32 半角）；超出时就地截断并尽量保留光标。</summary>
+    private void OnNameBoxTextChanged(object sender, System.Windows.Controls.TextChangedEventArgs e)
+    {
+        if (_adjustingName) return;
+        var text = NameBox.Text ?? "";
+        var truncated = TextDisplayWidth.TruncateTaskName(text);
+        if (truncated == text) return;
+
+        _adjustingName = true;
+        try
+        {
+            var caret = NameBox.CaretIndex;
+            NameBox.Text = truncated;
+            NameBox.CaretIndex = Math.Min(Math.Max(caret, 0), truncated.Length);
+        }
+        finally
+        {
+            _adjustingName = false;
+        }
+    }
+
     private void OnDateQuickFill(object sender, RoutedEventArgs e)
     {
         if (sender is not FrameworkElement el || el.Tag is not string tag) return;
@@ -2232,7 +2255,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.";
     private TaskDto? BuildCurrentDto()
     {
         _buildDtoError = null;
-        var name = NameBox.Text.Trim();
+        var name = TextDisplayWidth.TruncateTaskName(NameBox.Text.Trim());
         if (string.IsNullOrEmpty(name))
         {
             // 新建倒计时缺名称：自定义气泡提示，且不创建。
@@ -2240,6 +2263,8 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.";
                 _buildDtoError = "请先填写倒计时任务名称";
             return null;
         }
+        if (NameBox.Text != name && !_adjustingName)
+            NameBox.Text = name;
         if (!TryParseColor(ColorBox.Text, out var color)) return null;
         if (!TryComposeDateTime(EndDatePicker, EndHourBox, EndMinuteBox, out var end))
         {
