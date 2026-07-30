@@ -841,7 +841,11 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
 
         if (!force)
             targetH = Math.Max(MinFitWindowHeight, targetH);
-        if (!force && Math.Abs(Height - targetH) < 1.5) return;
+        if (!force && Math.Abs(Height - targetH) < 1.5)
+        {
+            TightenHeightIfViewportExcess(scroll, force);
+            return;
+        }
         Height = targetH;
 
         // 布局生效后再核对：若仍差几像素导致可滚动，按实际 ScrollableHeight 补齐。
@@ -849,11 +853,38 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
         scroll.UpdateLayout();
         if (scroll.ScrollableHeight > 0.5)
         {
-            Height = Math.Ceiling(Height + scroll.ScrollableHeight + 2);
+            Height = Math.Ceiling(Height + scroll.ScrollableHeight);
             UpdateLayout();
+            scroll.UpdateLayout();
         }
 
+        // ScrollViewer 为 Top 对齐：窗高多出来的部分会空在表单下方（按钮底下像多一行）。
+        TightenHeightIfViewportExcess(scroll, force);
+
         TryApplyInitialScreenCenter();
+    }
+
+    /// <summary>
+    /// 若 Tab 内容区高于顶对齐的 ScrollViewer，收掉多余窗高，避免按钮下方出现空白。
+    /// </summary>
+    private void TightenHeightIfViewportExcess(ScrollViewer scroll, bool force)
+    {
+        MainTabs.UpdateLayout();
+        scroll.UpdateLayout();
+        if (scroll.ActualHeight < 1 || MainTabs.ActualHeight < 1) return;
+
+        double tabStripH = GetTabStripHeight();
+        // Tab 内容区上沿有 1px 边框（WPF-UI TabControl BorderThickness=0,1,0,0）。
+        const double tabContentTopBorder = 1;
+        double usedInTabs = tabStripH + tabContentTopBorder + scroll.ActualHeight;
+        double excess = MainTabs.ActualHeight - usedInTabs;
+        if (excess <= 1.5) return;
+
+        double next = Math.Ceiling(Height - excess);
+        if (!force) next = Math.Max(MinFitWindowHeight, next);
+        if (Math.Abs(Height - next) < 1) return;
+        Height = next;
+        UpdateLayout();
     }
 
     /// <summary>应用启动后首次展示时，在主屏工作区内水平+垂直居中（补充 CenterScreen，仅执行一次）。</summary>
@@ -1927,11 +1958,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.";
         bool completed = row?.Completed
             ?? (_editingId != null && (_rows.FirstOrDefault(r => r.Id == _editingId)?.Completed ?? false));
         StartCountdownButton.Visibility = (instant && !completed) ? Visibility.Visible : Visibility.Collapsed;
-        // 无「重新开始计时」时，操作栏上方留出与原先一致的顶距。
-        if (TaskActionBar != null)
-            TaskActionBar.Margin = StartCountdownButton.Visibility == Visibility.Visible
-                ? new Thickness(0, 8, 0, 0)
-                : new Thickness(0, 14, 0, 0);
+        UpdateTaskActionBarTopMargin();
     }
 
     /// <summary>
@@ -2012,13 +2039,14 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.";
         }
     }
 
-    /// <summary>按可见按钮重建等宽列，避免 Collapsed 占位导致空隙。</summary>
+    /// <summary>按可见按钮重建等宽列；全部隐藏时折叠整栏，避免空 Grid 仍占顶距造成页底空白。</summary>
     private void LayoutTaskActionButtons()
     {
         if (TaskActionBar == null) return;
         var visible = new[] { DuplicateTaskButton, CompleteTaskButton, DeleteEditingTaskButton }
             .Where(b => b.Visibility == Visibility.Visible)
             .ToArray();
+        TaskActionBar.Visibility = visible.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
         TaskActionBar.ColumnDefinitions.Clear();
         for (int i = 0; i < visible.Length; i++)
             TaskActionBar.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
@@ -2026,6 +2054,19 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.";
             Grid.SetColumn(b, 0);
         for (int i = 0; i < visible.Length; i++)
             Grid.SetColumn(visible[i], i);
+        // 无操作栏时不必再改 Margin；有栏时按是否显示「重新开始计时」调整顶距。
+        if (visible.Length > 0)
+            UpdateTaskActionBarTopMargin();
+    }
+
+    /// <summary>无「重新开始计时」时，操作栏上方留出与原先一致的顶距。</summary>
+    private void UpdateTaskActionBarTopMargin()
+    {
+        if (TaskActionBar == null || TaskActionBar.Visibility != Visibility.Visible) return;
+        bool startVisible = StartCountdownButton?.Visibility == Visibility.Visible;
+        TaskActionBar.Margin = startVisible
+            ? new Thickness(0, 8, 0, 0)
+            : new Thickness(0, 14, 0, 0);
     }
 
     private void OnDuplicateTask(object sender, RoutedEventArgs e)
@@ -2471,6 +2512,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.";
         if (SelectedType() != "instant")
         {
             CountdownSummaryHero.Text = "";
+            CountdownSummaryHero.Visibility = Visibility.Collapsed;
             return;
         }
 
@@ -2487,6 +2529,10 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.";
         {
             CountdownSummaryHero.Text = "截止时刻待定";
         }
+        // 空文案时折叠，避免 TextBlock 仍占一行高度。
+        CountdownSummaryHero.Visibility = string.IsNullOrWhiteSpace(CountdownSummaryHero.Text)
+            ? Visibility.Collapsed
+            : Visibility.Visible;
     }
 
     private bool _countdownModeTabSyncing;

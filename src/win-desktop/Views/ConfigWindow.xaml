@@ -846,6 +846,7 @@
                                            TextWrapping="Wrap"
                                            TextAlignment="Center"
                                            HorizontalAlignment="Stretch"
+                                           Visibility="Collapsed"
                                            Foreground="{DynamicResource TextFillColorPrimaryBrush}"
                                            ToolTip="当前编辑对侧的只读结果：按时长时显示截止时刻，按截止时显示时长" />
                                 <StackPanel x:Name="CountdownDurationEdit">
@@ -953,8 +954,8 @@
                                        Click="OnStartCountdownClick" Visibility="Collapsed"
                                        ToolTip="以当前时刻为起点重新开始倒计时，并保持设定的时长" />
 
-                            <!-- 操作按钮：仅可见项等宽并排（见 LayoutTaskActionButtons） -->
-                            <Grid x:Name="TaskActionBar" Margin="0,8,0,0">
+                            <!-- 操作按钮：仅可见项等宽并排；无可见项时整栏折叠（见 LayoutTaskActionButtons） -->
+                            <Grid x:Name="TaskActionBar" Margin="0,8,0,0" Visibility="Collapsed">
                                 <ui:Button x:Name="DuplicateTaskButton" Content="重建为新任务"
                                            HorizontalAlignment="Stretch" Height="30" Margin="3,0"
                                            Click="OnDuplicateTask" Visibility="Collapsed"
