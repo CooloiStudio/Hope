@@ -275,6 +275,36 @@ public partial class OverlayWindow : Window
             NativeMethods.EnsureOverlayTopmost(_hwnd);
     }
 
+    /// <summary>
+    /// 重申窗口在 Win32 侧的分层与置顶状态，并回报重申后的实况。
+    /// 系统摘掉 WS_EX_TOPMOST 时 WPF 的 Topmost 依赖属性仍读作 true，直接赋值不会重下 SetWindowPos，
+    /// 必须翻转一次或直接走 Win32，否则唤醒后那条窄带会一直被其他窗口盖住。
+    /// </summary>
+    public OverlayWindowFacts ReassertPresence()
+    {
+        if (_hwnd == IntPtr.Zero) return default;
+        try
+        {
+            NativeMethods.ApplyOverlayStyles(_hwnd);
+            // 窗口按状态本就该隐藏时不能抬升：EnsureOverlayTopmost 带 SWP_SHOWWINDOW，会把空进度条显示出来。
+            if (IsVisible)
+            {
+                Topmost = false;
+                Topmost = true;
+                NativeMethods.EnsureOverlayTopmost(_hwnd);
+            }
+        }
+        catch (Exception ex)
+        {
+            DesktopLog.Warn($"Overlay.ReassertPresence pos={Position} failed: {ex.Message}");
+        }
+
+        return NativeMethods.ReadOverlayWindowFacts(_hwnd);
+    }
+
+    /// <summary>只采样不改动，供低频巡检判断置顶是否掉了。</summary>
+    public OverlayWindowFacts ReadPresenceFacts() => NativeMethods.ReadOverlayWindowFacts(_hwnd);
+
     /// <summary>清除渲染缓存，强制下次按当前分段重绘（休眠唤醒等场景）。</summary>
     public void InvalidateVisualCache()
     {

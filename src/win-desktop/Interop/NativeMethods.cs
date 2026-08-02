@@ -8,6 +8,7 @@ internal static class NativeMethods
     public const int GWL_EXSTYLE = -20;
     public const int GWL_STYLE = -16;
 
+    public const int WS_EX_TOPMOST = 0x00000008;
     public const int WS_EX_TRANSPARENT = 0x00000020;
     public const int WS_EX_TOOLWINDOW = 0x00000080;
     public const int WS_EX_LAYERED = 0x00080000;
@@ -123,5 +124,30 @@ internal static class NativeMethods
         if (hwnd == IntPtr.Zero) return;
         SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0,
             SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+    }
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool IsWindow(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool IsWindowVisible(IntPtr hWnd);
+
+    /// <summary>采样 Overlay 窗口的 Win32 实况，供 <see cref="OverlayPresencePolicy"/> 判定是否已掉出置顶层。</summary>
+    public static OverlayWindowFacts ReadOverlayWindowFacts(IntPtr hwnd)
+    {
+        if (hwnd == IntPtr.Zero || !IsWindow(hwnd)) return default;
+
+        int ex = GetWindowLong(hwnd, GWL_EXSTYLE);
+        bool hasArea = GetWindowRect(hwnd, out var rect) &&
+                       rect.Right > rect.Left && rect.Bottom > rect.Top;
+
+        return new OverlayWindowFacts(
+            HandleAlive: true,
+            SystemVisible: IsWindowVisible(hwnd),
+            Topmost: (ex & WS_EX_TOPMOST) != 0,
+            Layered: (ex & WS_EX_LAYERED) != 0,
+            HasArea: hasArea);
     }
 }

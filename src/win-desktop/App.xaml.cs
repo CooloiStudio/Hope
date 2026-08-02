@@ -69,6 +69,11 @@ public partial class App : Application
     private DispatcherTimer? _displayChangeDebounce;
     private DispatcherTimer? _overlayResetDebounce;
     private DispatcherTimer? _postResumeSettleTimer;
+    private DispatcherTimer? _overlayPresenceTimer;
+
+    /// <summary>连续补置顶未生效的次数，以及退避到期时刻（避免与独占全屏程序 1Hz 拉锯）。</summary>
+    private int _topmostRepairFailures;
+    private DateTime _topmostRepairBackoffUntilUtc = DateTime.MinValue;
     private ShellCompositionWatcher? _shellWatcher;
     private List<Segment> _lastStateSegments = new();
     private bool _lastCelebrate;
@@ -133,7 +138,7 @@ public partial class App : Application
         {
             Interval = TimeSpan.FromSeconds(1),
         };
-        _layoutTimer.Tick += (_, _) => RefreshScreenLayout();
+        _layoutTimer.Tick += OnLayoutTimerTick;
         _layoutTimer.Start();
 
         SystemEvents.DisplaySettingsChanged += OnDisplaySettingsChanged;
@@ -629,6 +634,7 @@ public partial class App : Application
             }
             RequestOverlayStateRefresh();
             ScheduleRefreshScreenLayout("SessionUnlock", delayMs: 400);
+            ScheduleOverlayPresenceCheck("SessionUnlock", delayMs: 1500);
         }
         catch (Exception ex)
         {
@@ -701,6 +707,7 @@ public partial class App : Application
         try { _layoutTimer?.Stop(); } catch { /* ignore */ }
         try { _displayChangeDebounce?.Stop(); } catch { /* ignore */ }
         try { _overlayResetDebounce?.Stop(); } catch { /* ignore */ }
+        try { _overlayPresenceTimer?.Stop(); } catch { /* ignore */ }
         try { StopSessionSnapshotRetry(); } catch { /* ignore */ }
         foreach (var overlay in _overlays.Values.ToList())
         {
@@ -777,6 +784,8 @@ public partial class App : Application
                 RequestOverlayStateRefresh();
             }
             ScheduleRefreshScreenLayout("PowerResumeSettle", delayMs: 400);
+            // 等状态回来并完成一次布局刷新后再校验，避免把「尚未收到分段所以还没 Show」误判成异常。
+            ScheduleOverlayPresenceCheck("PowerResumeSettle", delayMs: 1500);
         }
         catch (Exception ex)
         {
@@ -827,6 +836,112 @@ public partial class App : Application
         }
         else
             _pendingStateDuringQuiesce = false;
+    }
+
+    private void OnLayoutTimerTick(object? sender, EventArgs e)
+    {
+        RefreshScreenLayout();
+        PatrolOverlayTopmost();
+    }
+
+    /// <summary>
+    /// 低频巡检：置顶层级被系统摘掉时补回来。
+    /// 独占全屏应用退出、explorer 重启等场景不会走唤醒 settle，仅靠建窗时那一次 Topmost 撑不住。
+    /// </summary>
+    private void PatrolOverlayTopmost()
+    {
+        if (IsInResumeQuiesce()) return;
+        if (DateTime.UtcNow < _topmostRepairBackoffUntilUtc) return;
+
+        foreach (var kv in _overlays)
+        {
+            var overlay = kv.Value;
+            try
+            {
+                if (!overlay.IsVisible) continue;
+                var facts = overlay.ReadPresenceFacts();
+                if (!OverlayPresencePolicy.NeedsTopmostRepair(overlay.IsVisible, facts))
+                {
+                    _topmostRepairFailures = 0;
+                    continue;
+                }
+
+                // 仅在真的掉出置顶层时才写日志，正常巡检不产生噪声。
+                DesktopLog.Info($"Overlay topmost lost pos={kv.Key} facts=[{facts}], reasserting");
+                var after = overlay.ReassertPresence();
+                DesktopLog.Info($"Overlay topmost reasserted pos={kv.Key} facts=[{after}]");
+
+                if (after.Topmost)
+                {
+                    _topmostRepairFailures = 0;
+                    continue;
+                }
+
+                // 补完立刻又不在置顶层：多半有独占全屏之类的程序在压制，退避以免 1Hz 互相拉锯。
+                _topmostRepairFailures++;
+                if (OverlayPresencePolicy.ShouldBackOffTopmostRepair(_topmostRepairFailures))
+                {
+                    _topmostRepairBackoffUntilUtc =
+                        DateTime.UtcNow.Add(OverlayPresencePolicy.TopmostRepairBackoff);
+                    _topmostRepairFailures = 0;
+                    DesktopLog.Warn(
+                        $"Overlay topmost repair backing off for " +
+                        $"{OverlayPresencePolicy.TopmostRepairBackoff.TotalSeconds:0}s pos={kv.Key}");
+                    return;
+                }
+            }
+            catch (Exception ex)
+            {
+                DesktopLog.Warn($"PatrolOverlayTopmost pos={kv.Key}: {ex.Message}");
+            }
+        }
+    }
+
+    /// <summary>
+    /// 唤醒/解锁软刷新之后延迟校验一次：先重申窗口状态，仍不达标才回退到销毁重建。
+    /// 软刷新只恢复 WPF 侧渲染开关，管不到 Win32 侧已失效的窗口层级/分层表面。
+    /// </summary>
+    private void ScheduleOverlayPresenceCheck(string reason, int delayMs)
+    {
+        _overlayPresenceTimer ??= new DispatcherTimer();
+        _overlayPresenceTimer.Stop();
+        _overlayPresenceTimer.Interval = TimeSpan.FromMilliseconds(delayMs);
+        _overlayPresenceTimer.Tick -= OnOverlayPresenceCheckTick;
+        _overlayPresenceTimer.Tag = reason;
+        _overlayPresenceTimer.Tick += OnOverlayPresenceCheckTick;
+        _overlayPresenceTimer.Start();
+    }
+
+    private void OnOverlayPresenceCheckTick(object? sender, EventArgs e)
+    {
+        _overlayPresenceTimer?.Stop();
+        var reason = _overlayPresenceTimer?.Tag as string ?? "unknown";
+        try
+        {
+            bool needsRebuild = false;
+            foreach (var kv in _overlays)
+            {
+                var overlay = kv.Value;
+                bool expectedVisible = overlay.IsVisible;
+                var facts = overlay.ReassertPresence();
+                DesktopLog.Info(
+                    $"Overlay presence check reason={reason} pos={kv.Key} " +
+                    $"wpfVisible={expectedVisible} facts=[{facts}]");
+
+                if (OverlayPresencePolicy.NeedsRebuild(expectedVisible, facts))
+                    needsRebuild = true;
+            }
+
+            if (!needsRebuild) return;
+
+            // 重申无效说明这个 HWND 已经救不回来了，走与手动「刷新进度条」相同的销毁重建。
+            DesktopLog.Warn($"Overlay presence check reason={reason}: reassert failed, rebuilding overlays");
+            ResetOverlays($"presence-{reason}");
+        }
+        catch (Exception ex)
+        {
+            DesktopLog.Error($"Overlay presence check failed reason={reason}", ex);
+        }
     }
 
     /// <summary>按当前墙钟向 Headless 索取一帧顶栏状态并刷新 Overlay（休眠唤醒后进度条/图片停滞）。</summary>
@@ -1430,6 +1545,7 @@ public partial class App : Application
         StopSessionSnapshotRetry();
 
         _layoutTimer?.Stop();
+        _overlayPresenceTimer?.Stop();
         _dailyTimer?.Stop();
 
         // 须先隐藏托盘再释放 Icon；否则 set_Visible 会访问已 Dispose 的 Icon.Handle。
