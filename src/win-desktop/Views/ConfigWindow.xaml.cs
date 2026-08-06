@@ -11,6 +11,7 @@ using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using Hope.Desktop;
+using Hope.Desktop.Controls;
 using Hope.Desktop.Ipc;
 using Hope.Desktop.Overlay;
 using Hope.Desktop.Services;
@@ -231,12 +232,37 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
         {
             NowTimeToolbarText.Text = FormatNowLabel();
             foreach (var row in _rows) row.RefreshProgressLabel();
+            UpdateListCrossFadeGate();
         }
 
         Refresh();
         _nowClockTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
         _nowClockTimer.Tick += (_, _) => Refresh();
         _nowClockTimer.Start();
+    }
+
+    /// <summary>
+    /// 可见行为空时停掉内容/表头渐变；有进行中任务时表头在「进度」与「倒计时」间与单元格同步切换。
+    /// </summary>
+    private void UpdateListCrossFadeGate()
+    {
+        int visible = 0;
+        bool anySpan = false;
+        if (_rowsView != null)
+        {
+            foreach (var item in _rowsView)
+            {
+                if (item is not TaskRow row) continue;
+                visible++;
+                if (!string.IsNullOrEmpty(row.ProgressSpanLabel))
+                    anySpan = true;
+            }
+        }
+
+        ListTextCrossFade.SetContentEnabled(visible > 0);
+
+        if (ProgressColumnHeader != null)
+            ProgressColumnHeader.Secondary = visible > 0 && anySpan ? "倒计时" : null;
     }
 
     /// <summary>读取程序集版本信息并格式化为「应用程序版本号 vX.Y.Z」，Debug 构建附加 Debug。</summary>
@@ -1719,6 +1745,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.";
             _appliedTasksRevision = revision;
 
             DesktopLog.Info($"ConfigWindow.ApplyTasksFromServer grid rows={_rows.Count} visible={_rowsView?.Cast<object>().Count() ?? 0}");
+            UpdateListCrossFadeGate();
         }
         catch (Exception ex)
         {
@@ -1749,6 +1776,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.";
         if (sender is not ComboBox box || box.SelectedItem is not ComboBoxItem item) return;
         _filterMode = item.Tag?.ToString() ?? "all";
         _rowsView?.Refresh();
+        UpdateListCrossFadeGate();
         UpdateDeleteCompletedButtonVisibility();
     }
 

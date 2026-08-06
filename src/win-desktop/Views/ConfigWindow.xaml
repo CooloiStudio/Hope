@@ -264,8 +264,8 @@
                                 <TextBlock Text="循环" HorizontalAlignment="Center" />
                             </DataGridTextColumn.Header>
                         </DataGridTextColumn>
-                        <!-- 起止列：表头用 TaskGridCenteredHeaderStyle 居中；单元格外缘 16、相邻内侧 8。 -->
-                        <DataGridTemplateColumn Width="Auto"
+                        <!-- 起止列固定 120；表头用 TaskGridCenteredHeaderStyle 居中；单元格外缘 16、相邻内侧 8。 -->
+                        <DataGridTemplateColumn Width="120" MinWidth="120" MaxWidth="120"
                                                 HeaderStyle="{StaticResource TaskGridCenteredHeaderStyle}">
                             <DataGridTemplateColumn.Header>
                                 <TextBlock Text="开始" HorizontalAlignment="Stretch" TextAlignment="Center" />
@@ -278,7 +278,7 @@
                                 </DataTemplate>
                             </DataGridTemplateColumn.CellTemplate>
                         </DataGridTemplateColumn>
-                        <DataGridTemplateColumn Width="Auto"
+                        <DataGridTemplateColumn Width="120" MinWidth="120" MaxWidth="120"
                                                 HeaderStyle="{StaticResource TaskGridCenteredHeaderStyle}">
                             <DataGridTemplateColumn.Header>
                                 <TextBlock Text="截止" HorizontalAlignment="Stretch" TextAlignment="Center" />
@@ -291,11 +291,13 @@
                                 </DataTemplate>
                             </DataGridTemplateColumn.CellTemplate>
                         </DataGridTemplateColumn>
-                        <!-- 进度列固定 100；表头同样 Stretch + TextAlignment 居中。 -->
+                        <!-- 进度列固定 100；表头与单元格同步在「进度」↔「倒计时」间渐变。 -->
                         <DataGridTemplateColumn Width="100" MinWidth="100" MaxWidth="100"
                                                 HeaderStyle="{StaticResource TaskGridCenteredHeaderStyle}">
                             <DataGridTemplateColumn.Header>
-                                <TextBlock Text="进度" HorizontalAlignment="Stretch" TextAlignment="Center" />
+                                <controls:AlternatingProgressText x:Name="ProgressColumnHeader"
+                                                                  Primary="进度"
+                                                                  HorizontalAlignment="Stretch" />
                             </DataGridTemplateColumn.Header>
                             <DataGridTemplateColumn.CellTemplate>
                                 <DataTemplate>

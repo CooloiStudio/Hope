@@ -20,4 +20,22 @@ public sealed class ResumeSettlePolicyTests
         Assert.True(ResumeSettlePolicy.ShouldForceSettleDespiteFullscreen(
             ResumeSettlePolicy.MaxFullscreenDefers + 3));
     }
+
+    [Fact]
+    public void ShouldDeferOverlayHardReset_WithinSuppressWindow_True()
+    {
+        Assert.True(ResumeSettlePolicy.ShouldDeferOverlayHardReset(TimeSpan.Zero));
+        Assert.True(ResumeSettlePolicy.ShouldDeferOverlayHardReset(TimeSpan.FromSeconds(10)));
+        Assert.True(ResumeSettlePolicy.ShouldDeferOverlayHardReset(
+            TimeSpan.FromSeconds(ResumeSettlePolicy.OverlayHardResetSuppressSeconds - 0.01)));
+    }
+
+    [Fact]
+    public void ShouldDeferOverlayHardReset_AfterSuppressWindow_False()
+    {
+        Assert.False(ResumeSettlePolicy.ShouldDeferOverlayHardReset(
+            TimeSpan.FromSeconds(ResumeSettlePolicy.OverlayHardResetSuppressSeconds)));
+        Assert.False(ResumeSettlePolicy.ShouldDeferOverlayHardReset(TimeSpan.FromMinutes(1)));
+        Assert.False(ResumeSettlePolicy.ShouldDeferOverlayHardReset(TimeSpan.FromSeconds(-1)));
+    }
 }

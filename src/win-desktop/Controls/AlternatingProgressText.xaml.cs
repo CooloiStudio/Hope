@@ -7,14 +7,10 @@ namespace Hope.Desktop.Controls;
 /// <summary>
 /// 列表进度列：进行中时在「百分比」与「剩余/总时长」间交替展示（停留 4s、渐变 0.5s）；
 /// 已完成 / 未开始 / 已到期等仅显示主文案。秒级刷新只换文案，不重启动画。
-/// 列宽由列表固定，超长文案省略显示。
+/// 列宽由列表固定，超长文案省略显示。可见行为空时不启动渐变。
 /// </summary>
 public partial class AlternatingProgressText : UserControl
 {
-    private const double HoldSeconds = 4;
-    private const double FadeSeconds = 0.5;
-    private static readonly TimeSpan CycleDuration = TimeSpan.FromSeconds(HoldSeconds * 2 + FadeSeconds * 2);
-
     public static readonly DependencyProperty PrimaryProperty =
         DependencyProperty.Register(
             nameof(Primary),
@@ -32,6 +28,7 @@ public partial class AlternatingProgressText : UserControl
     private Storyboard? _crossFade;
     private bool _crossFadeActive;
     private bool _hadSecondary;
+    private bool _gateSubscribed;
 
     public string Primary
     {
@@ -48,9 +45,32 @@ public partial class AlternatingProgressText : UserControl
     public AlternatingProgressText()
     {
         InitializeComponent();
-        Loaded += (_, _) => RefreshTexts(restartAnimation: true);
-        Unloaded += (_, _) => StopCrossFade();
+        Loaded += OnLoaded;
+        Unloaded += OnUnloaded;
     }
+
+    private void OnLoaded(object sender, RoutedEventArgs e)
+    {
+        if (!_gateSubscribed)
+        {
+            ListTextCrossFade.ContentEnabledChanged += OnContentEnabledChanged;
+            _gateSubscribed = true;
+        }
+        RefreshTexts(restartAnimation: true);
+    }
+
+    private void OnUnloaded(object sender, RoutedEventArgs e)
+    {
+        if (_gateSubscribed)
+        {
+            ListTextCrossFade.ContentEnabledChanged -= OnContentEnabledChanged;
+            _gateSubscribed = false;
+        }
+        StopCrossFade();
+    }
+
+    private void OnContentEnabledChanged() =>
+        Dispatcher.BeginInvoke(() => RefreshTexts(restartAnimation: true));
 
     private static void OnTextChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
     {
@@ -70,10 +90,11 @@ public partial class AlternatingProgressText : UserControl
 
         PrimaryText.Text = string.IsNullOrEmpty(primary) ? "—" : primary;
 
-        if (!hasSecondary)
+        // 列表为空：停渐变，只留主文案（表头同理，由 Secondary 置空 + ContentEnabled 双重兜底）。
+        if (!ListTextCrossFade.ContentEnabled || !hasSecondary)
         {
             StopCrossFade();
-            SecondaryText.Text = "";
+            SecondaryText.Text = hasSecondary ? secondary! : "";
             SecondaryText.Opacity = 0;
             PrimaryText.Opacity = 1;
             return;
@@ -100,34 +121,7 @@ public partial class AlternatingProgressText : UserControl
     private void StartCrossFade()
     {
         StopCrossFade();
-
-        var hold = TimeSpan.FromSeconds(HoldSeconds);
-        var fadeEnd = hold + TimeSpan.FromSeconds(FadeSeconds);
-        var hold2End = fadeEnd + hold;
-        var cycleEnd = CycleDuration;
-
-        var primaryKeys = new DoubleAnimationUsingKeyFrames { RepeatBehavior = RepeatBehavior.Forever };
-        primaryKeys.KeyFrames.Add(new LinearDoubleKeyFrame(1, KeyTime.FromTimeSpan(TimeSpan.Zero)));
-        primaryKeys.KeyFrames.Add(new LinearDoubleKeyFrame(1, KeyTime.FromTimeSpan(hold)));
-        primaryKeys.KeyFrames.Add(new LinearDoubleKeyFrame(0, KeyTime.FromTimeSpan(fadeEnd)));
-        primaryKeys.KeyFrames.Add(new LinearDoubleKeyFrame(0, KeyTime.FromTimeSpan(hold2End)));
-        primaryKeys.KeyFrames.Add(new LinearDoubleKeyFrame(1, KeyTime.FromTimeSpan(cycleEnd)));
-
-        var secondaryKeys = new DoubleAnimationUsingKeyFrames { RepeatBehavior = RepeatBehavior.Forever };
-        secondaryKeys.KeyFrames.Add(new LinearDoubleKeyFrame(0, KeyTime.FromTimeSpan(TimeSpan.Zero)));
-        secondaryKeys.KeyFrames.Add(new LinearDoubleKeyFrame(0, KeyTime.FromTimeSpan(hold)));
-        secondaryKeys.KeyFrames.Add(new LinearDoubleKeyFrame(1, KeyTime.FromTimeSpan(fadeEnd)));
-        secondaryKeys.KeyFrames.Add(new LinearDoubleKeyFrame(1, KeyTime.FromTimeSpan(hold2End)));
-        secondaryKeys.KeyFrames.Add(new LinearDoubleKeyFrame(0, KeyTime.FromTimeSpan(cycleEnd)));
-
-        _crossFade = new Storyboard { RepeatBehavior = RepeatBehavior.Forever, Duration = cycleEnd };
-        Storyboard.SetTarget(primaryKeys, PrimaryText);
-        Storyboard.SetTargetProperty(primaryKeys, new PropertyPath(OpacityProperty));
-        Storyboard.SetTarget(secondaryKeys, SecondaryText);
-        Storyboard.SetTargetProperty(secondaryKeys, new PropertyPath(OpacityProperty));
-        _crossFade.Children.Add(primaryKeys);
-        _crossFade.Children.Add(secondaryKeys);
-        _crossFade.Begin();
+        _crossFade = ListTextCrossFade.Begin(PrimaryText, SecondaryText);
         _crossFadeActive = true;
     }
 }

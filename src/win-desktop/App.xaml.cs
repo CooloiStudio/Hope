@@ -732,7 +732,7 @@ public partial class App : Application
         _postResumeSettleTimer?.Stop();
         try
         {
-            DesktopLog.Info("Power resume settle: resume rendering + soft refresh");
+            DesktopLog.Info("Power resume settle: resume rendering + soft refresh, schedule hard rebuild");
 
             // 结算前重采布局：解锁后缓存里的 fullscreen=true 往往已过期。
             try
@@ -786,6 +786,10 @@ public partial class App : Application
             ScheduleRefreshScreenLayout("PowerResumeSettle", delayMs: 400);
             // 等状态回来并完成一次布局刷新后再校验，避免把「尚未收到分段所以还没 Show」误判成异常。
             ScheduleOverlayPresenceCheck("PowerResumeSettle", delayMs: 1500);
+            // 休眠后 DWM/分层窗口像素常腐坏成不透明底；软刷新与 RefreshLayout 无法恢复，
+            // 必须像手动「刷新进度条」一样销毁重建 HWND。仍走 ScheduleOverlayReset，
+            // 以遵守唤醒后 12s 硬重建抑制窗，避开 DWM 抖动期的 CLR Fatal。
+            ScheduleOverlayReset("PowerResumeSettle", delayMs: 500);
         }
         catch (Exception ex)
         {
@@ -1394,16 +1398,21 @@ public partial class App : Application
         // 唤醒后短窗内 DWM 抖动 + ShellCompositionWatcher 也可能触发硬重建；延后并避开伪全屏。
         // 与 post-resume settle（10s）对齐，避免静默期结束后立刻硬销毁窗口。
         var sinceResume = DateTime.UtcNow - _lastPowerResumeUtc;
-        if (sinceResume >= TimeSpan.Zero && sinceResume < TimeSpan.FromSeconds(12))
+        if (ResumeSettlePolicy.ShouldDeferOverlayHardReset(sinceResume))
         {
-            var waitMs = (int)Math.Ceiling((TimeSpan.FromSeconds(12) - sinceResume).TotalMilliseconds);
+            var waitMs = (int)Math.Ceiling(
+                (TimeSpan.FromSeconds(ResumeSettlePolicy.OverlayHardResetSuppressSeconds) - sinceResume)
+                    .TotalMilliseconds);
             DesktopLog.Info($"ResetOverlays deferred reason={reason} waitMs={waitMs} (post-resume settle)");
             ScheduleOverlayReset(reason, delayMs: Math.Max(500, waitMs));
             return;
         }
 
-        if (_currentScreenLayout?.HasFullScreenOnPrimary == true &&
-            !string.Equals(reason, "manual", StringComparison.OrdinalIgnoreCase))
+        bool isManual = string.Equals(reason, "manual", StringComparison.OrdinalIgnoreCase);
+        // PowerResumeSettle 本身已在 settle 路径上处理过 fullscreen 推迟；此处再 defer 会让
+        // 「唤醒后分层底腐坏成不透明」一直得不到 HWND 重建（日志中 RefreshLayout 多次仍无效）。
+        bool isResumeHardRebuild = string.Equals(reason, "PowerResumeSettle", StringComparison.OrdinalIgnoreCase);
+        if (_currentScreenLayout?.HasFullScreenOnPrimary == true && !isManual && !isResumeHardRebuild)
         {
             DesktopLog.Info($"ResetOverlays deferred reason={reason} (fullscreen detected)");
             ScheduleOverlayReset(reason, delayMs: 3000);
