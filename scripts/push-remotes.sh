@@ -6,10 +6,8 @@
 # 用法：
 #   ./scripts/push-remotes.sh
 #   ./scripts/push-remotes.sh --force
-#   ./scripts/push-remotes.sh --tag 0.13.90              # 先推 master，再打 tag（已存在则覆盖）
-#   ./scripts/push-remotes.sh --tag-only --tag v0.13.90  # 仅推 tag（不推分支）
-#
-# --tag：本地/远端已存在同名 tag 时，删远端后覆盖到当前 HEAD。
+#   ./scripts/push-remotes.sh --force --tag 0.13.90       # 默认：先推 master，再推 tag
+#   ./scripts/push-remotes.sh --tag-only --tag v0.13.90   # 仅推 tag（不推分支）
 
 set -euo pipefail
 
@@ -68,8 +66,10 @@ fi
 echo "==> FORCE=$FORCE TAG=$TAG TAG_ONLY=$TAG_ONLY → push_branches=$PUSH_BRANCHES (master only)"
 
 PUSH_FLAGS=()
+TAG_FLAGS=()
 if [[ "$FORCE" == "1" ]]; then
   PUSH_FLAGS+=(--force-with-lease)
+  TAG_FLAGS+=(-f)
 fi
 
 if [[ "$PUSH_BRANCHES" == "1" ]]; then
@@ -82,19 +82,17 @@ if [[ "$PUSH_BRANCHES" == "1" ]]; then
 fi
 
 if [[ -n "$tag" ]]; then
-  if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
-    old="$(git rev-list -n 1 "$tag" | cut -c1-7)"
-    echo "==> git tag -f $tag (retarget $old → HEAD)"
-    git tag -f "$tag"
-  else
-    echo "==> git tag $tag"
-    git tag "$tag"
-  fi
+  echo "==> git tag ${TAG_FLAGS[*]:-} $tag"
+  git tag "${TAG_FLAGS[@]}" "$tag"
   for remote in "${REMOTES[@]}"; do
-    echo "==> git push $remote :refs/tags/$tag (delete remote tag if any)"
-    git push "$remote" ":refs/tags/$tag" || true
-    echo "==> git push $remote $tag"
-    git push "$remote" "$tag"
+    # tag 强制推送用 --force：--force-with-lease 对 tag 常因缺少期望跟踪而报 stale info
+    if [[ "$FORCE" == "1" ]]; then
+      echo "==> git push --force $remote $tag"
+      git push --force "$remote" "$tag"
+    else
+      echo "==> git push $remote $tag"
+      git push "$remote" "$tag"
+    fi
   done
 elif [[ "$PUSH_BRANCHES" != "1" ]]; then
   echo "ERROR: nothing to push; pass --tag, or omit --tag-only to push master"
