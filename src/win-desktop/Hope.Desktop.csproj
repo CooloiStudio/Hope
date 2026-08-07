@@ -6,7 +6,7 @@
     <RootNamespace>Hope.Desktop</RootNamespace>
     <AssemblyName>hope-desktop</AssemblyName>
     <!-- 第三位 patch 跨 minor 持续累加（0.12.72 → 0.13.73），不归零 -->
-    <Version>0.15.124</Version>
+    <Version>0.15.125</Version>
     <Product>Hope·盼头</Product>
     <AssemblyTitle>Hope·盼头</AssemblyTitle>
     <Nullable>enable</Nullable>
