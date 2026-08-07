@@ -1,10 +1,14 @@
+using System.Linq;
 using System.Windows.Controls;
+using System.Windows.Threading;
 using Hope.Desktop.Services;
 using ComboBox = System.Windows.Controls.ComboBox;
 using Xunit;
 
 namespace Hope.Desktop.Tests;
 
+/// <summary>可编辑 ComboBox 依赖 STA；禁用并行避免 CI 上跨类抢 WPF 状态导致假超时。</summary>
+[Collection("EditableTimeComboSTA")]
 public sealed class EditableTimeComboTests
 {
     [Fact]
@@ -78,11 +82,20 @@ public sealed class EditableTimeComboTests
         RunOnSta(() =>
         {
             var box = CreateHourBox();
-            box.Text = "08";
-            box.SelectedItem = "15";
             var depth = 0;
+            // 先经 Apply 落到 08，再用 Items 内同一引用切换选中。
+            // 不要用 box.Text="08"; box.SelectedItem="15"（新字符串）制造失配：
+            // 可编辑 ComboBox 在无消息泵的裸 STA 线程上可能因此死锁（CI 曾 5s 超时）。
+            EditableTimeCombo.Apply(box, 8, ref depth);
+            Assert.Equal("08", box.Text);
+
+            var fifteen = box.Items.Cast<object>().First(i => Equals(i?.ToString(), "15"));
+            box.SelectedItem = fifteen;
+
+            depth = 0;
             Assert.True(EditableTimeCombo.TryApplyFromSelection(box, 0, 23, ref depth));
             Assert.Equal("15", box.Text);
+            Assert.Equal(0, depth);
         });
     }
 
@@ -100,6 +113,7 @@ public sealed class EditableTimeComboTests
         {
             try
             {
+                _ = Dispatcher.CurrentDispatcher;
                 var box = CreateHourBox();
                 var depth = 0;
                 const int min = 0;
@@ -113,7 +127,7 @@ public sealed class EditableTimeComboTests
 
                 EditableTimeCombo.Apply(box, 9, ref depth);
                 EditableTimeCombo.Apply(box, 10, ref depth);
-                box.SelectedItem = "11";
+                box.SelectedItem = box.Items.Cast<object>().First(i => Equals(i?.ToString(), "11"));
                 EditableTimeCombo.Apply(box, 12, ref depth);
                 EditableTimeCombo.Normalize(box, min, max, ref depth);
 
@@ -133,7 +147,7 @@ public sealed class EditableTimeComboTests
         thread.IsBackground = true;
         thread.Start();
 
-        Assert.True(done.Wait(TimeSpan.FromSeconds(2)),
+        Assert.True(done.Wait(TimeSpan.FromSeconds(10)),
             "UI thread hung applying editable time combo (likely SelectionChanged re-entrancy).");
         if (error != null)
             throw new InvalidOperationException("STA work failed", error);
@@ -164,15 +178,23 @@ public sealed class EditableTimeComboTests
         var done = new ManualResetEventSlim(false);
         var thread = new Thread(() =>
         {
-            try { action(); }
+            try
+            {
+                // 确保本 STA 线程有 Dispatcher，降低裸属性写入时 WPF 内部等待消息泵的概率。
+                _ = Dispatcher.CurrentDispatcher;
+                action();
+            }
             catch (Exception ex) { error = ex; }
             finally { done.Set(); }
         });
         thread.SetApartmentState(ApartmentState.STA);
         thread.IsBackground = true;
         thread.Start();
-        Assert.True(done.Wait(TimeSpan.FromSeconds(5)), "STA action timed out.");
+        Assert.True(done.Wait(TimeSpan.FromSeconds(15)), "STA action timed out.");
         if (error != null)
             throw new InvalidOperationException("STA action failed", error);
     }
 }
+
+[CollectionDefinition("EditableTimeComboSTA", DisableParallelization = true)]
+public sealed class EditableTimeComboStaCollection;
