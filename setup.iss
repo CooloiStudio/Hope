@@ -12,7 +12,7 @@
 #ifndef AppVersion
   #define AppVersion "0.0.0"
 #endif
-#define AppName "Hope"
+#define AppName "Hope·盼头"
 #define AppPublisher "Hope"
 #define DesktopExe "hope-desktop.exe"
 ; 桌面/开始菜单快捷方式使用独立 ico（非 exe 内嵌），升级换图标时可绕过按 exe 路径缓存的旧图。

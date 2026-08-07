@@ -368,7 +368,7 @@ public partial class App : Application
 
     private void OnHeadlessFatalFailure(string reason)
     {
-        Dispatcher.BeginInvoke(() => FatalExit("Hope · 后端启动失败", reason));
+        Dispatcher.BeginInvoke(() => FatalExit("Hope·盼头 · 后端启动失败", reason));
     }
 
     private void OnIpcFatalDisconnected(string reason)
@@ -382,7 +382,7 @@ public partial class App : Application
             return;
         }
 
-        Dispatcher.BeginInvoke(() => FatalExit("Hope · 通讯异常", reason));
+        Dispatcher.BeginInvoke(() => FatalExit("Hope·盼头 · 通讯异常", reason));
     }
 
     private void OnIpcBackendRecoveryNeeded(string reason)
@@ -467,7 +467,7 @@ public partial class App : Application
         _fatalExiting = true;
         DesktopLog.Error($"FatalExit: {caption} - {message}");
         System.Windows.MessageBox.Show(
-            message + "\n\n点击确定后将关闭 Hope。",
+            message + "\n\n点击确定后将关闭 Hope·盼头。",
             caption,
             MessageBoxButton.OK,
             MessageBoxImage.Error);
@@ -1321,7 +1321,7 @@ public partial class App : Application
 
         // 一次性提醒：notify 弹气球。keep/hide/blink 为持续表现，由 Overlay 依据 Segment 状态驱动。
         if (ev.Behaviors != null && ev.Behaviors.Contains("notify"))
-            _tray?.ShowBalloonTip(5000, "Hope · 任务到期", $"「{ev.Name}」已到达截止时间", ToolTipIcon.Info);
+            _tray?.ShowBalloonTip(5000, "Hope·盼头 · 任务到期", $"「{ev.Name}」已到达截止时间", ToolTipIcon.Info);
     }
 
     private void SetupTray()

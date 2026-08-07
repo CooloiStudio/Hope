@@ -789,7 +789,7 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
     {
         if (!await HopeDialogs.ConfirmAsync(
                 this,
-                "Hope · 彩蛋",
+                "Hope·盼头 · 彩蛋",
                 "恭喜你发现了彩蛋，点击确定打开浏览器访问，如果你打不开，可能需要一点小小的魔法。",
                 primaryText: "确定",
                 closeText: "取消"))
@@ -1341,8 +1341,8 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
         if (_updates == null) return;
         if (!await HopeDialogs.ConfirmAsync(
                 this,
-                "Hope · 安装更新",
-                "将关闭 Hope 并安装新版本，安装完成后会自动重新启动。是否继续？",
+                "Hope·盼头 · 安装更新",
+                "将关闭 Hope·盼头 并安装新版本，安装完成后会自动重新启动。是否继续？",
                 primaryText: "确定",
                 closeText: "取消"))
             return;
@@ -1387,7 +1387,7 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
 
         var win = new Window
         {
-            Title = "Hope · 开源许可证",
+            Title = "Hope·盼头 · 开源许可证",
             Width = 600,
             Height = 620,
             Owner = this,
@@ -1400,7 +1400,7 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
 
     // 本项目使用的第三方 SDK / 库 / 组件及其许可证（均为宽松型，与 MIT 兼容）。
     private const string LicensesText =
-@"Hope（盼头）— 开源组件与许可证
+@"Hope·盼头 — 开源组件与许可证
 
 本软件以 MIT 许可证发布。下列第三方 SDK / 库 / 组件按其各自许可证使用，特此致谢并保留其版权声明。
 
