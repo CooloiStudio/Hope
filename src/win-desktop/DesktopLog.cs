@@ -17,7 +17,21 @@ internal static class DesktopLog
         "Hope", "logs");
     private static readonly string LogPath = System.IO.Path.Combine(LogDirectory, $"{LogBaseName}.log");
 
+    /// <summary>包内读写用的逻辑日志目录（%APPDATA%\Hope\logs）。</summary>
     internal static string LogDirectoryPath => LogDirectory;
+
+    /// <summary>
+    /// 供资源管理器打开的物理日志目录。商店版映射到
+    /// %LOCALAPPDATA%\Packages\{PFN}\LocalCache\Roaming\Hope\logs。
+    /// </summary>
+    internal static string GetExplorerLogDirectoryPath()
+    {
+        // 先在逻辑路径上建目录，触发包进程 AppData 虚拟化落盘。
+        System.IO.Directory.CreateDirectory(LogDirectory);
+        var explorerPath = Services.InstallChannel.ResolveExplorerPathUnderRoaming("Hope", "logs");
+        System.IO.Directory.CreateDirectory(explorerPath);
+        return explorerPath;
+    }
 
     static DesktopLog()
     {

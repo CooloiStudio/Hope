@@ -1355,10 +1355,12 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
     {
         try
         {
-            Directory.CreateDirectory(DesktopLog.LogDirectoryPath);
+            // 商店版须打开 LocalCache 物理路径；逻辑 %APPDATA% 对外面的 Explorer 不可见。
+            var path = DesktopLog.GetExplorerLogDirectoryPath();
+            DesktopLog.Info($"Open log folder path={path} store={Services.InstallChannel.IsStoreManaged}");
             Process.Start(new ProcessStartInfo
             {
-                FileName = DesktopLog.LogDirectoryPath,
+                FileName = path,
                 UseShellExecute = true,
             });
         }
