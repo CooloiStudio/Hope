@@ -2,11 +2,11 @@
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
-    <TargetFramework>net10.0-windows</TargetFramework>
+    <TargetFramework>net10.0-windows10.0.17763.0</TargetFramework>
     <RootNamespace>Hope.Desktop</RootNamespace>
     <AssemblyName>hope-desktop</AssemblyName>
     <!-- 第三位 patch 跨 minor 持续累加（0.12.72 → 0.13.73），不归零 -->
-    <Version>0.15.126</Version>
+    <Version>0.15.127</Version>
     <Product>Hope·盼头</Product>
     <AssemblyTitle>Hope·盼头</AssemblyTitle>
     <Nullable>enable</Nullable>

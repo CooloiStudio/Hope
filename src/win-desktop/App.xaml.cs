@@ -555,18 +555,6 @@ public partial class App : Application
         DesktopLog.Info("RefreshScreenLayout: done");
     }
 
-    /// <summary>读取 HKCU Run\Hope 是否存在，判断系统层面是否已配置开机自启。</summary>
-    private static bool IsAutostartInRegistry()
-    {
-        try
-        {
-            using var key = Registry.CurrentUser.OpenSubKey(
-                @"Software\Microsoft\Windows\CurrentVersion\Run", writable: false);
-            return key?.GetValue("Hope") != null;
-        }
-        catch { return false; }
-    }
-
     private static bool RectsEqual(System.Windows.Rect a, System.Windows.Rect b)
     {
         return Math.Abs(a.X - b.X) < 0.01 &&
@@ -1016,19 +1004,13 @@ public partial class App : Application
                 _telemetry.TrackEvent("app_started");
             }
 
-            // 开机自启对齐：安装程序可能已写入注册表自启项，而配置仍为关闭，
-            // 导致 UI 与系统实际不一致，且任意改设置都会误删该自启项。
-            // 首次读到设置时以注册表实际状态为准，回写配置一次。
+            // 开机自启对齐：侧载以 HKCU Run 为准（安装程序可能已写入）；
+            // 商店版以配置为准，启用清单中的 StartupTask（不能写 Run 键）。
             if (!_autostartReconciled)
             {
                 _autostartReconciled = true;
-                bool regOn = IsAutostartInRegistry();
-                if (regOn != s.Autostart)
-                {
-                    DesktopLog.Info($"Autostart reconcile: registry={regOn} config={s.Autostart} → 以注册表为准对齐配置");
-                    s.Autostart = regOn;
-                    _ipc.Send(new Command { Action = "updateSettings", Settings = s });
-                }
+                _ = AutostartService.ReconcileFromSettingsAsync(s, updated =>
+                    _ipc.Send(new Command { Action = "updateSettings", Settings = updated }));
             }
 
             SyncConfigWindowFromSession();

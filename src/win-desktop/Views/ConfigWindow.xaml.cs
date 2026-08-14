@@ -541,7 +541,7 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
         if (_updates != null) _updates.AutoUpdateEnabled = _settings.AutoUpdate;
 
         _ipc.Send(new Command { Action = "updateSettings", Settings = _settings });
-        ApplyAutostart(_settings.Autostart);
+        _ = ApplyAutostartAsync(_settings.Autostart);
     }
 
     private static void SelectComboByTag(ComboBox box, string? tag)
@@ -1192,26 +1192,21 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
         UpdateRecurVisibility();
     }
 
-    // 写入 / 删除 HKCU Run 项，实现开机自启（§5.3.3 新增 3）。
-    private static void ApplyAutostart(bool enable)
+    // 侧载写 HKCU Run；商店版走 StartupTask（§5.3.3）。
+    private async Task ApplyAutostartAsync(bool enable)
     {
-        const string runKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
-        try
+        var result = await AutostartService.ApplyAsync(enable);
+        if (!enable) return;
+        if (result == AutostartApplyResult.DisabledByUser)
         {
-            using var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(runKey, writable: true)
-                            ?? Microsoft.Win32.Registry.CurrentUser.CreateSubKey(runKey);
-            if (key == null) return;
-            if (enable)
-            {
-                var exe = Environment.ProcessPath;
-                if (!string.IsNullOrEmpty(exe)) key.SetValue("Hope", $"\"{exe}\"");
-            }
-            else
-            {
-                key.DeleteValue("Hope", throwOnMissingValue: false);
-            }
+            ToastCaution("Windows 未允许开机自启，请在「设置 → 应用 → 启动」中打开 Hope·盼头");
+            if (AutostartCheck.IsChecked == true)
+                AutostartCheck.IsChecked = false;
         }
-        catch { /* 注册表不可写时静默；设置仍持久化在 config.json */ }
+        else if (result == AutostartApplyResult.Failed)
+        {
+            ToastDanger("无法设置开机自启");
+        }
     }
 
     // ============ 自动更新（关于页） ============
@@ -1223,6 +1218,7 @@ public partial class ConfigWindow : Wpf.Ui.Controls.FluentWindow
         if (!Services.InstallChannel.IsStoreManaged) return;
         AutoUpdateCheck.IsEnabled = false;
         AutoUpdateCheck.ToolTip = "Microsoft Store 版由商店推送更新；仍会检查并提示新版本。";
+        AutostartCheck.ToolTip = "登录 Windows 后自动启动。商店版由系统「启动应用」管理，若未生效请到「设置 → 应用 → 启动」中允许 Hope·盼头。";
     }
 
     // 根据协调器状态刷新「关于」页的更新区：状态文本、进度、按钮与更新说明的可见性。
