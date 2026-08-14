@@ -17,8 +17,23 @@ public static class InstallChannel
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern int GetCurrentPackageFamilyName(ref uint packageFamilyNameLength, StringBuilder packageFamilyName);
 
+    /// <summary>AppxManifest 中 Application Id，与 PFN 组成 AUMID。</summary>
+    public const string PackageApplicationId = "HopeDesktop";
+
     /// <summary>当前进程是否以 MSIX 包身份运行（含 Microsoft Store 安装）。</summary>
     public static bool IsStoreManaged => TryGetPackageFamilyName(out _);
+
+    /// <summary>商店包 AUMID（{PFN}!HopeDesktop），供激活/互保拉起。</summary>
+    public static bool TryGetAumid(out string aumid)
+    {
+        aumid = "";
+        if (!TryGetPackageFamilyName(out var pfn)) return false;
+        aumid = BuildAumid(pfn);
+        return true;
+    }
+
+    public static string BuildAumid(string packageFamilyName) =>
+        $"{packageFamilyName}!{PackageApplicationId}";
 
     public static bool TryGetPackageFamilyName(out string familyName)
     {

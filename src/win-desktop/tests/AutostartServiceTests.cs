@@ -13,6 +13,7 @@ public class AutostartServiceTests
         var xml = System.IO.File.ReadAllText(manifest!);
         Assert.Contains("windows.startupTask", xml, StringComparison.Ordinal);
         Assert.Contains($"TaskId=\"{AutostartService.StartupTaskId}\"", xml, StringComparison.Ordinal);
+        Assert.Contains($"Application Id=\"{InstallChannel.PackageApplicationId}\"", xml, StringComparison.Ordinal);
     }
 
     [Fact]

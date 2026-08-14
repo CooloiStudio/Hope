@@ -26,12 +26,15 @@ internal static class DesktopLog
     /// </summary>
     internal static string GetExplorerLogDirectoryPath()
     {
-        // 先在逻辑路径上建目录，触发包进程 AppData 虚拟化落盘。
         System.IO.Directory.CreateDirectory(LogDirectory);
         var explorerPath = Services.InstallChannel.ResolveExplorerPathUnderRoaming("Hope", "logs");
         System.IO.Directory.CreateDirectory(explorerPath);
         return explorerPath;
     }
+
+    /// <summary>供提示用户打开的当前会话日志文件（商店版为 LocalCache 物理路径）。</summary>
+    internal static string GetExplorerLogFilePath() =>
+        System.IO.Path.Combine(GetExplorerLogDirectoryPath(), $"{LogBaseName}.log");
 
     static DesktopLog()
     {
