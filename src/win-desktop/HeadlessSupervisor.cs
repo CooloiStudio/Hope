@@ -4,6 +4,7 @@ using System.IO;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using Hope.Desktop.Services;
 
 namespace Hope.Desktop;
 
@@ -137,6 +138,11 @@ public sealed class HeadlessSupervisor : IDisposable
                     {
                         psi.ArgumentList.Add("--desktop");
                         psi.ArgumentList.Add(selfPath);
+                        if (InstallChannel.TryGetAumid(out var aumid))
+                        {
+                            psi.ArgumentList.Add("--desktop-aumid");
+                            psi.ArgumentList.Add(aumid);
+                        }
                     }
 
                     Process? proc = Process.Start(psi);

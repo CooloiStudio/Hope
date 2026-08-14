@@ -16,4 +16,13 @@ public class InstallChannelPathTests
             @"C:\Users\demo\AppData\Local\Packages\Cooloi.Hope_c6tv1djd4qth2\LocalCache\Roaming",
             root);
     }
+
+    [Fact]
+    public void BuildAumid_MatchesPackageApplicationId()
+    {
+        Assert.Equal(
+            "Cooloi.Hope_c6tv1djd4qth2!HopeDesktop",
+            InstallChannel.BuildAumid("Cooloi.Hope_c6tv1djd4qth2"));
+        Assert.Equal("HopeDesktop", InstallChannel.PackageApplicationId);
+    }
 }

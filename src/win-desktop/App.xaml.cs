@@ -1514,7 +1514,7 @@ public partial class App : Application
             DesktopLog.Error("ShowConfigCore failed", ex);
             _config = null;
             System.Windows.MessageBox.Show(
-                $"无法打开设置窗口：{ex.Message}\n\n详情见 %APPDATA%\\Hope\\logs\\hope-desktop.log",
+                $"无法打开设置窗口：{ex.Message}\n\n详情见：\n{DesktopLog.GetExplorerLogFilePath()}",
                 "Hope", MessageBoxButton.OK, MessageBoxImage.Error);
         }
     }

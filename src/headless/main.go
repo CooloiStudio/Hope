@@ -8,7 +8,6 @@ import (
 	"io"
 	"log/slog"
 	"os"
-	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"strings"
@@ -30,11 +29,12 @@ import (
 //
 // 构建时可通过 -ldflags "-X main.Version=vX.Y.Z" 覆盖（CI/CD 场景）。
 // 修改版本号时，请同步更新：CHANGELOG.md 中对应的 headless 相关条目。
-var Version = "0.10.28"
+var Version = "0.10.29"
 
 func main() {
 	debug := flag.Bool("debug", false, "输出日志到控制台并启用 debug 级别")
 	desktop := flag.String("desktop", "", "可选：hope-desktop.exe 路径，提供后将监视并在其退出时重新拉起")
+	desktopAumid := flag.String("desktop-aumid", "", "可选：商店版 AUMID（PFN!AppId），补拉 Desktop 时优先于直接 exec 路径")
 	flag.Parse()
 
 	log := newLogger(*debug)
@@ -72,7 +72,7 @@ func main() {
 	}()
 
 	if *desktop != "" {
-		go superviseDesktop(ctx, log, *desktop, &quitting)
+		go superviseDesktop(ctx, log, *desktop, *desktopAumid, &quitting)
 	}
 
 	// 处理 Ctrl+C / 终止信号，便于调试期优雅退出。
@@ -116,19 +116,18 @@ func runBroadcastLoop(ctx context.Context, store *config.Store, eng *engine.Engi
 // superviseDesktop 轮询监视 Desktop 进程：仅当其不在运行时才拉起，异常退出时补拉（文档 §3.3 互保）。
 // 注意：通常是 Desktop 先拉起本核心并传入 --desktop，故必须先判断 Desktop 是否已在运行，
 // 否则会与已存在的 Desktop 反复重复拉起（后者撞单实例互斥秒退）形成 fork 死循环。
-func superviseDesktop(ctx context.Context, log *slog.Logger, path string, quitting *atomic.Bool) {
+func superviseDesktop(ctx context.Context, log *slog.Logger, path, aumid string, quitting *atomic.Bool) {
 	exeName := filepath.Base(path)
 	for {
 		if ctx.Err() != nil || quitting.Load() {
 			return
 		}
 		if !isProcessRunning(exeName) {
-			cmd := exec.Command(path)
-			cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+			cmd := desktopLaunchCmd(path, aumid)
 			if err := cmd.Start(); err != nil {
-				log.Error("start desktop failed", "err", err)
+				log.Error("start desktop failed", "err", err, "aumid", aumid)
 			} else {
-				log.Info("desktop launched", "pid", cmd.Process.Pid, "exe", exeName)
+				log.Info("desktop launched", "pid", cmd.Process.Pid, "exe", exeName, "aumid", aumid)
 			}
 		}
 		select {
